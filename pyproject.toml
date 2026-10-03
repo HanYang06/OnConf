@@ -1,14 +1,14 @@
 # ============================================================================
 # auto-conf —— 项目元数据与工具链配置
 #
-# TODO(rename): 项目名 / 仓库 URL / description（定位句）三处仍是当前值。
-#               命名定案后统一替换；替换点已在本文件内用 TODO(rename) 标出。
+# TODO(rename): 项目名与仓库 URL 尚未定案（见 README 顶部说明）。
+#               description 已是定稿的官方定位句 —— 改名时不要动它。
 # ============================================================================
 
 [project]
 name = "auto-conf"
 version = "0.1.0"
-description = "Declarative configuration over plain local files — files stay authoritative, concurrent processes never lose an update."
+description = "Configuration has no verbs: one name reads and writes it, in both directions, without losing a byte or an update."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
@@ -254,6 +254,7 @@ module = [
     "test_env_backend",
     "test_json_backend",
     "test_security_invariants",
+    "test_toml_backend",
     "test_vocab",
     "test_yaml_backend",
 ]

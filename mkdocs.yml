@@ -9,7 +9,7 @@
 # ============================================================================
 
 site_name: auto-conf
-site_description: Declarative configuration over plain local files — files stay authoritative, concurrent processes never lose an update.
+site_description: "配置不再有动词：同一个名字读它、写它，两个方向都不丢——不丢一个字节，也不丢一次更新。"
 site_url: https://hanyang06.github.io/auto-conf/
 repo_url: https://github.com/HanYang06/auto-conf
 repo_name: HanYang06/auto-conf

@@ -1,11 +1,18 @@
 # auto-conf
 
-> Declarative configuration over plain local files — files stay authoritative, concurrent processes never lose an update.
+> **配置不再有动词：同一个名字读它、写它，两个方向都不丢——不丢一个字节，也不丢一次更新。**
 >
-> 声明式配置，落在普通的本地文件上 —— 文件永远是权威，并发进程不会丢更新。
+> `Configuration has no verbs: one name reads and writes it, in both directions, without losing a byte or an update.`
+>
+> 以上是**官方定位句**：中文与英文同源，改一句必须同步改另一句，并同步
+> `README.md`、`pyproject.toml` 的 `description` 与本文件的 `site_description`。
 
 **尚未发布到 PyPI。** 当前版本 `0.1.0`，开发状态 Pre-Alpha：公开 API 仍在收敛，
 可能发生破坏性变更；并发写入、事务与审计尚未实现（以[路线图](roadmap.md)为准）。
+
+定位句的最后半句是**可验证**的，所以它同时就是 M3 的验收标准：
+「不丢一个字节」已实现并被测试覆盖（外科手术式回写）；「不丢一次更新」**尚未兑现**
+（没有文件锁、写入非原子），等 M3 的锁 + WAL + 原子写落地后才成立。
 
 ## 当前状态
 

@@ -15,13 +15,21 @@
 [![mypy: strict](https://img.shields.io/badge/mypy-strict-blue.svg)](pyproject.toml)
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](.pre-commit-config.yaml)
 
-**Declarative configuration over plain local files — files stay authoritative, concurrent processes never lose an update.**
+**Configuration has no verbs: one name reads and writes it, in both directions, without losing a byte or an update.**
+
+> **配置不再有动词：同一个名字读它、写它，两个方向都不丢——不丢一个字节，也不丢一次更新。**
+
+以上两句是**官方定位句**，英文与中文同源：改一句就必须同步改另一句，并同步
+`pyproject.toml` 的 `description`、`mkdocs.yml` 的 `site_description` 与 `docs/index.md`。
 
 > [!WARNING]
 > **Pre-Alpha (`0.1.0`) — evaluate only, do not deploy.**
 > The API and the on-disk format can change without a deprecation period.
-> Concurrency safety is **not implemented yet**: there is no file locking and writes are
-> not atomic. See [Known limitations](#known-limitations) and the
+> **The closing clause of the line above is the M3 acceptance criterion, not a delivered fact.**
+> The byte half — *without losing a byte* — is implemented and tested (surgical write-back).
+> The update half is **not**: there is no file locking yet and writes are not atomic, so a crash
+> or a concurrent writer can still lose an update or truncate a file.
+> See [Known limitations](#known-limitations) and the
 > [threat model](docs/security/threat-model.md) before you rely on this.
 
 中文文档（含完整设计与威胁模型）见文档站 <https://hanyang06.github.io/auto-conf/>。
