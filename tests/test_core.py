@@ -195,9 +195,17 @@ class TestReconcile:
         assert not [a for a in actions if a.kind in ("fill", "overwrite")]
 
     def test_rule4_force_overwrites(self) -> None:
-        actions = reconcile([Decl("a.b", 512)], {"a.b": 1024}, {}, force=True)
+        actions = reconcile([Decl("a.b", 512)], {"a.b": 1024}, {}, force_keys={"a.b"})
         over = next(a for a in actions if a.kind == "overwrite")
         assert over.old == 1024 and over.value == 512
+
+    def test_force_is_per_key_not_a_global_switch(self) -> None:
+        """force 逐项生效：同一次对账里，没点名的键仍然尊重文件（§18.6）。"""
+        decls = [Decl("a.b", 512), Decl("c.d", 1)]
+        facts = {"a.b": 1024, "c.d": 2}
+        actions = reconcile(decls, facts, {}, force_keys={"a.b"})
+        assert ("overwrite", "a.b") in _kinds(actions)
+        assert ("skip", "c.d") in _kinds(actions)
 
     def test_rule4_skip_still_updates_vocab_fingerprint(self) -> None:
         """值不动，但词表里的默认值指纹要更新（§18.5 结论 1，归属权）。"""

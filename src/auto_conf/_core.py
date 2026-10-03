@@ -15,6 +15,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+from collections.abc import Container
 from dataclasses import dataclass
 from typing import Any
 
@@ -259,23 +260,47 @@ def reconcile(
     facts: dict[str, Any],
     vocab: dict[str, VocabEntry],
     *,
-    force: bool = False,
+    force_keys: Container[str] = frozenset(),
+    clean_unknown: bool = True,
 ) -> list[Action]:
     """把「代码声明的期望集」对到「事实集」上，产出动作清单。
 
     规则 1 清理未知数据 / 2 补充缺失数据 / 3 补充缺失参数 / 4 保持原有数据。
-    ``force=True`` 是情形 4 的唯一例外，且**逐项生效、没有全局开关**（§18.6）。
+
+    ``force_keys`` 是情形 4 的唯一例外，且**逐项生效、没有全局开关**（§18.6）：
+    只有列在里面的键才允许覆盖文件里已有的值。
+
+    ``clean_unknown`` 为什么必须是个开关
+    ------------------------------------
+    规则 1 的判据是「事实里有、**期望集**里没有」。可它只有在**期望集完整**时
+    才成立。而引擎一次 ``conf()`` 调用只知道**到目前为止**声明过的键：
+
+    .. code-block:: python
+
+        conf("a.b", 1)      # 此刻期望集只有 {a.b}
+        conf("c.d", 2)      # 此刻期望集只有 {a.b, c.d}
+
+    如果第一次调用就按规则 1 对账，文件里所有**还没声明到**的键都会被当成
+    「未知数据」清掉。所以：
+
+    * **增量声明**走 ``clean_unknown=False``，只做补写 / 覆盖 / 补元数据；
+    * **提交点**（``sync()`` / 进程退出）期望集完整，才允许 ``clean_unknown=True``。
+
+    这不是性能优化，是**正确性前提**。
 
     指令键（``$`` 开头）不参与对账，见 :data:`DIRECTIVE_PREFIX`。
     """
     actions: list[Action] = []
     declared = {d.key: d for d in decls}
 
-    # 规则 1：事实有、期望没有 ⇒ 清理（指令键豁免）
-    for key, fact_value in facts.items():
-        if key in declared or _is_directive(key):
-            continue
-        actions.append(Action("clean", key, old=fact_value, reason="事实里有、代码没声明"))
+    # 规则 1：事实有、期望没有 ⇒ 清理（指令键豁免；且必须期望集完整）
+    if clean_unknown:
+        for key, fact_value in facts.items():
+            if key in declared or _is_directive(key):
+                continue
+            actions.append(
+                Action("clean", key, old=fact_value, reason="事实里有、代码没声明")
+            )
 
     for key, decl in declared.items():
         stale = _meta_stale(vocab.get(key), decl)
@@ -300,9 +325,9 @@ def reconcile(
         # 两边都有
         if decl.value is not MISSING and facts[key] != decl.value:
             # 规则 4：值不一致 ⇒ 尊重文件
-            if force:
+            if key in force_keys:
                 actions.append(
-                    Action("overwrite", key, value=decl.value, old=facts[key], reason="force=True")
+                    Action("overwrite", key, value=decl.value, old=facts[key], reason="force")
                 )
             else:
                 actions.append(
