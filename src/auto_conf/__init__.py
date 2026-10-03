@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 HanYang06
+# SPDX-License-Identifier: Apache-2.0
 """auto_conf —— 本地文件配置引擎。
 
 对外只有两个面（§15.2）::
@@ -19,21 +21,22 @@ from ._core import MISSING
 from ._engine import Engine, default_home
 from .errors import (
     ConfError,
-    KeyHasNoValue,
-    KeyNotRegistered,
-    TypeConflict,
-    UnknownEngineParam,
+    KeyHasNoValueError,
+    KeyNotRegisteredError,
+    TypeConflictError,
+    UnknownEngineParamError,
 )
+
 
 __all__ = [
     "AutoConf",
     "ConfError",
     "Engine",
     "EngineParams",
-    "KeyHasNoValue",
-    "KeyNotRegistered",
-    "TypeConflict",
-    "UnknownEngineParam",
+    "KeyHasNoValueError",
+    "KeyNotRegisteredError",
+    "TypeConflictError",
+    "UnknownEngineParamError",
     "conf",
 ]
 
@@ -63,26 +66,26 @@ atexit.register(_sync_at_exit)
 
 def _reset() -> None:
     """仅供测试：丢掉单例。不是公开 API。"""
-    global _engine
+    global _engine  # noqa: PLW0603 - 丢掉单例就是这个函数的全部目的
     _engine = None
 
 
 def _check_engine_params(params: dict[str, Any]) -> None:
     unknown = set(params) - set(EngineParams.__annotations__)
     if unknown:
-        raise UnknownEngineParam(
+        raise UnknownEngineParamError(
             f"未知的引擎参数 {sorted(unknown)}；"
             f"合法参数：{sorted(EngineParams.__annotations__)}"
         )
 
 
-def AutoConf(**engine: Unpack[EngineParams]) -> Engine:
+def AutoConf(**engine: Unpack[EngineParams]) -> Engine:  # noqa: N802 - 公开 API 就是这个名字
     """配置引擎自己。走约定时可完全不调它。
 
     v1 限制：引擎一旦起来就**不能就地改配置**（§15.3 的「口子」仍待实现）。
     无参数调用只是把它取回来。
     """
-    global _engine
+    global _engine  # noqa: PLW0603 - 单例的创建与取回
     _check_engine_params(dict(engine))
 
     if _engine is None:
@@ -100,7 +103,7 @@ def conf(
     value: Any = MISSING,
     *,
     doc: str | None = None,
-    type: type | None = None,
+    type: type | None = None,  # noqa: A002 - 参数名就是 API 的一部分（§15.1）
     force: bool = False,
     **engine: Unpack[EngineParams],
 ) -> Any:
@@ -125,5 +128,4 @@ def conf(
 
 def main() -> None:
     """控制台入口占位。命令行体系（交互式补全等）排在后面。"""
-    home = default_home()
-    print(f"auto_conf：配置目录 {home}")
+    print(f"auto_conf：配置目录 {default_home()}")  # noqa: T201 - 这就是控制台入口的活儿

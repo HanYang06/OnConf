@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 HanYang06
+# SPDX-License-Identifier: Apache-2.0
 """JSON 后端：外科手术式回写的**不变量**测试。
 
 核心不变量只有一条：
@@ -23,6 +25,7 @@ from auto_conf._json_backend import (
     render,
     set_value,
 )
+
 
 REAL = (
     "{\n"
@@ -73,7 +76,8 @@ class TestLoads:
         """透明原则：读回来的是 JSON 原本的类型，不提升、不转换。"""
         data = loads('{"i": 1, "f": 1.5, "s": "1", "b": true, "n": null}')
         assert data == {"i": 1, "f": 1.5, "s": "1", "b": True, "n": None}
-        assert isinstance(data["i"], int) and not isinstance(data["i"], bool)
+        assert isinstance(data["i"], int)
+        assert not isinstance(data["i"], bool)
 
     def test_top_level_must_be_object(self) -> None:
         with pytest.raises(TypeError, match="顶层"):
@@ -83,7 +87,7 @@ class TestLoads:
 class TestRender:
     def test_scalars(self) -> None:
         assert render(1) == "1"
-        assert render(True) == "true"
+        assert render(True) == "true"  # noqa: FBT003 - 被测的就是布尔标量
         assert render(None) == "null"
         assert render("main") == '"main"'
 
@@ -226,7 +230,7 @@ class TestRoundTripOnRealArtifact:
     def test_edit_append_delete_cycle(self) -> None:
         text = REAL
         text = set_value(text, "pack.max.byte", 1024)
-        text = append_key(text, "core.storage.new", True)
+        text = append_key(text, "core.storage.new", True)  # noqa: FBT003 - 被测的就是布尔值
         text = delete_key(text, "gc.auto.byte")
 
         data = loads(text)
@@ -243,5 +247,8 @@ class TestRoundTripOnRealArtifact:
         for key in ("$schema", "hub.default", "index.max.byte", "slot.max.byte.b"):
             old_member = find(REAL, key)
             new_member = find(new, key)
-            assert old_member is not None and new_member is not None
-            assert REAL[old_member.span[0] : old_member.span[1]] == new[new_member.span[0] : new_member.span[1]]
+            assert old_member is not None
+            assert new_member is not None
+            old_text = REAL[old_member.span[0] : old_member.span[1]]
+            new_text = new[new_member.span[0] : new_member.span[1]]
+            assert old_text == new_text

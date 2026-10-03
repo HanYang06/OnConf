@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 HanYang06
+# SPDX-License-Identifier: Apache-2.0
 """引擎装配：把核心、词表、后端接成一个能用的库。
 
 ## v1 的取舍（明确记下，不是遗漏）
@@ -27,28 +29,39 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from . import _json_backend, _yaml_backend
+from . import _env_backend, _json_backend, _yaml_backend
 from ._core import MISSING, Action, Decl, read_value, reconcile
 from ._vocab import Vocabulary
-from .errors import ConfError, TypeConflict
+from .errors import ConfError, TypeConflictError
+
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
 
 HOME_ENV = "AUTO_CONF_HOME"
 VALUES_STEM = "settings"
 SCHEMA_DIR = "schema"
 SCHEMA_POINTER = f"{SCHEMA_DIR}/{VALUES_STEM}.json"
 
-#: 后端模块必须提供同一组函数：loads / iter_members / find / set_value / append_key / delete_key / render
+#: 后端模块必须提供同一组函数：
+#: ``loads`` / ``iter_members`` / ``find`` / ``set_value`` /
+#: ``append_key`` / ``delete_key`` / ``render``
 _BACKENDS = {
     ".json": _json_backend,
     ".yaml": _yaml_backend,
     ".yml": _yaml_backend,
+    ".env": _env_backend,
 }
 
-_VALUES_CANDIDATES = ("settings.yaml", "settings.yml", "settings.json")
+#: 只有「文件里能放一条 ``$schema`` 成员」的后端才吃得下词表指针（§28.6）。
+#: ``.env`` 是纯 KEY=value，放不了 —— 硬塞只会让文件变成语法错误。
+_POINTER_CAPABLE = frozenset({".json", ".yaml", ".yml"})
+
+_VALUES_CANDIDATES = ("settings.yaml", "settings.yml", "settings.json", "settings.env")
 
 
 def default_home() -> Path:
@@ -104,7 +117,7 @@ class Engine:
         value: Any = MISSING,
         *,
         doc: str | None = None,
-        type: type | None = None,
+        type: type | None = None,  # noqa: A002 - 参数名就是 API 的一部分
         force: bool = False,
     ) -> Any:
         """判别式（§17.7 + §15.1）。
@@ -129,11 +142,7 @@ class Engine:
 
     def read(self, key: str) -> Any:
         self._ensure_loaded()
-        declared = self._decls.get(key)
-        declared_type = declared.type if declared is not None else None
-        return read_value(
-            key, self._facts, self._vocab.as_dict(), declared_type=declared_type
-        ).value
+        return read_value(key, self._facts, self._vocab.as_dict()).value
 
     def declare(
         self,
@@ -141,7 +150,7 @@ class Engine:
         value: Any,
         *,
         doc: str | None = None,
-        type: type | None = None,
+        type: type | None = None,  # noqa: A002 - 参数名就是 API 的一部分
         force: bool = False,
     ) -> Any:
         """声明 / 写一个配置项。**返回当前生效值**（值文件优先，不是默认值）。
@@ -150,7 +159,7 @@ class Engine:
         **不参与读取期转换**——引擎对值是透明的（值原样进出）。
         """
         if value is not MISSING and type is not None and not _type_matches(value, type):
-            raise TypeConflict(
+            raise TypeConflictError(
                 f"{key!r} 的默认值 {value!r} 不符合声明的类型 {type.__name__}"
             )
 
@@ -233,12 +242,17 @@ class Engine:
         )
 
     def _ensure_schema_pointer(self, text: str) -> str:
-        """值文件必须带 ``$schema`` 指针。
+        """值文件必须带 ``$schema`` 指针（能吃下的后端）。
 
         没有它，编辑器就不知道词表在哪 —— 用户面对一个几十项的配置只能靠翻文件
         （§27.3）。所以这条**不是新建时才补，是每次落盘都保证有**。
         它是**指令**不是配置键，不参与对账（§18.1）。
+
+        ``.env`` 之类放不下成员的后端直接跳过：硬塞只会让文件变成语法错误。
         """
+        if self.values_path.suffix.lower() not in _POINTER_CAPABLE:
+            return text
         if self.backend.find(text, "$schema") is not None:
             return text
-        return self.backend.append_key(text, "$schema", SCHEMA_POINTER)
+        seeded: str = self.backend.append_key(text, "$schema", SCHEMA_POINTER)
+        return seeded

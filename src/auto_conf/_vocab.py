@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 HanYang06
+# SPDX-License-Identifier: Apache-2.0
 """词表：**库自己的资产**（§18.6 归属权）。
 
 三条设计约束：
@@ -12,9 +14,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ._core import (
     MISSING,
@@ -24,6 +25,11 @@ from ._core import (
     VocabEntry,
     declaration_hash,
 )
+
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
+
 
 SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema"
 HASH_KEY = "x-auto-conf-hash"

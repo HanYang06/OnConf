@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 HanYang06
+# SPDX-License-Identifier: Apache-2.0
 """纯内存核心：不碰文件、不碰进程、不碰 IPC。
 
 这里是全部语义的单一实现点，对应设计文档：
@@ -12,14 +14,17 @@
 
 from __future__ import annotations
 
-import ast
 import hashlib
 import json
-from collections.abc import Container
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from .errors import KeyHasNoValue, KeyNotRegistered, TypeConflict
+from .errors import KeyHasNoValueError, KeyNotRegisteredError
+
+
+if TYPE_CHECKING:
+    from collections.abc import Container
+
 
 # --------------------------------------------------------------------------- #
 # 三态哨兵（§17.7）
@@ -44,96 +49,6 @@ MISSING = _Sentinel("MISSING")
 
 NO_VALUE = _Sentinel("NO_VALUE")
 """词表里「登记了但没有值」。读它要报错，与「值是 ``None``」语义不同。"""
-
-
-# --------------------------------------------------------------------------- #
-# §18.3 类型推断
-# --------------------------------------------------------------------------- #
-
-_TRUE_WORDS = frozenset({"true", "yes", "on"})
-_FALSE_WORDS = frozenset({"false", "no", "off"})
-
-
-def infer(text: str) -> Any:
-    """从文件里读到的字符串推出「草稿类型」。
-
-    判定顺序刻意固定：布尔词 → int → float → 结构 → str。
-    ``"0"`` / ``"1"`` 判为 ``int`` 而不是 ``bool``（配置里数字远比布尔常见，
-    布尔只认 ``true/false/yes/no/on/off`` 这些词），这样才有可预测性。
-    """
-    s = text.strip()
-    if not s:
-        return ""
-
-    low = s.lower()
-    if low in _TRUE_WORDS:
-        return True
-    if low in _FALSE_WORDS:
-        return False
-
-    try:
-        return int(s)
-    except ValueError:
-        pass
-    try:
-        return float(s)
-    except ValueError:
-        pass
-
-    # 结构推断解析：不同语言的结构表达不一致，所以 json 失败再退到 literal_eval
-    if s[0] in "{[":
-        try:
-            return json.loads(s)
-        except ValueError:
-            pass
-        try:
-            return ast.literal_eval(s)
-        except (ValueError, SyntaxError):
-            return text
-    if s[0] == "(":
-        try:
-            got = ast.literal_eval(s)
-        except (ValueError, SyntaxError):
-            return text
-        if isinstance(got, tuple):
-            return got
-
-    return text
-
-
-def coerce(value: Any, target: type | None) -> Any:
-    """把推断值向**声明类型**收敛。声明类型是最终目标，推断只是中间态。
-
-    两个刻意的陷阱处理：
-
-    * ``isinstance(True, int)`` 为真，所以 ``bool`` → ``int`` 必须显式转换；
-    * ``bool("false")`` 在 Python 里是 ``True``，绝不能用 ``target(value)`` 硬转。
-    """
-    if target is None or target is Any:
-        return value
-
-    if isinstance(value, target) and not (target is int and isinstance(value, bool)):
-        return value
-
-    if target is bool:
-        if isinstance(value, str):
-            low = value.strip().lower()
-            if low in _TRUE_WORDS:
-                return True
-            if low in _FALSE_WORDS:
-                return False
-            raise TypeConflict(f"无法把 {value!r} 转成 bool")
-        if isinstance(value, (int, float)):
-            return bool(value)
-        raise TypeConflict(f"无法把 {type(value).__name__} 转成 bool")
-
-    try:
-        return target(value)
-    except (TypeError, ValueError) as exc:
-        raise TypeConflict(
-            f"类型不一致：得到 {type(value).__name__} ({value!r})，"
-            f"声明要求 {target.__name__}"
-        ) from exc
 
 
 # --------------------------------------------------------------------------- #
@@ -183,7 +98,7 @@ class Action:
 
 
 # --------------------------------------------------------------------------- #
-# §18.2 读取五步
+# §18.2 读取
 # --------------------------------------------------------------------------- #
 
 
@@ -191,38 +106,32 @@ def read_value(
     key: str,
     facts: dict[str, Any],
     vocab: dict[str, VocabEntry],
-    *,
-    declared_type: type | None = None,
 ) -> ReadResult:
-    """读一个配置项。
+    """读一个配置项。**取到就返回，一个字节都不加工。**
 
     1. 去事实（文件）里找；
     2. 找到就拿（``None`` 也是值）；
-    3. 找不到就去词表翻译：词表也没有 ⇒ ``KeyNotRegistered``；
-       词表有而事实没有 ⇒ ``KeyHasNoValue``（两类错误责任方不同）；
-    4. 字符串先推断类型；
-    5. 向声明类型收敛，转不过去 ⇒ ``TypeConflict``。
+    3. 找不到就去词表翻译：词表也没有 ⇒ ``KeyNotRegisteredError``；
+       词表有而事实没有 ⇒ ``KeyHasNoValueError``（两类错误责任方不同）。
+
+    这里**没有**类型推断，也**没有**类型转换 —— 引擎对值是**透明**的：
+    文件里是 ``"8080"``，读回来就是字符串 ``"8080"``，不会变成 ``8080``。
+
+    （这条是被测试抓出来的：早先这里挂着一层 ``infer``，于是 JSON 里
+    一个字符串值会莫名其妙变成数字。要数字请在取用处显式 ``int(…)``，
+    这样「哪里发生了转换」在代码里一眼可见。）
+
+    声明期的 ``type=`` 只做**一致性校验**，不参与读取。
     """
     if key in facts:
-        raw: Any = facts[key]
-        origin = "file"
-    else:
-        entry = vocab.get(key)
-        if entry is None:
-            raise KeyNotRegistered(f"配置不存在：{key!r}（词表里没有登记）")
-        if entry.default is NO_VALUE:
-            raise KeyHasNoValue(f"配置不合理：{key!r} 已登记，但事实里没有值")
-        raw = entry.default
-        origin = "vocab"
+        return ReadResult(key=key, value=facts[key], origin="file")
 
-    if isinstance(raw, str):
-        raw = infer(raw)
-
-    target = declared_type
-    if target is None and key in vocab:
-        target = vocab[key].type
-
-    return ReadResult(key=key, value=coerce(raw, target), origin=origin)
+    entry = vocab.get(key)
+    if entry is None:
+        raise KeyNotRegisteredError(f"配置不存在：{key!r}（词表里没有登记）")
+    if entry.default is NO_VALUE:
+        raise KeyHasNoValueError(f"配置不合理：{key!r} 已登记，但事实里没有值")
+    return ReadResult(key=key, value=entry.default, origin="vocab")
 
 
 # --------------------------------------------------------------------------- #
@@ -252,7 +161,7 @@ def _meta_stale(entry: VocabEntry | None, decl: Decl) -> bool:
     if entry.type != decl.type or entry.doc != decl.doc:
         return True
     want = NO_VALUE if decl.value is MISSING else decl.value
-    return entry.default != want
+    return bool(entry.default != want)
 
 
 def reconcile(

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 HanYang06
+# SPDX-License-Identifier: Apache-2.0
 """JSON 值后端：读出 + **外科手术式回写**。
 
 ## 为什么不是 ``json.dumps`` 整篇重写
@@ -26,9 +28,13 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 
 _WS = " \t\r\n"
 
@@ -204,7 +210,8 @@ def append_key(text: str, key: str, value: Any, *, indent: str | None = None) ->
 
     if not members:
         pad = indent or "  "
-        return text[: _open_brace(text) + 1] + f"\n{pad}" + render_pair(key, value) + "\n" + text[close:]
+        head = text[: _open_brace(text) + 1]
+        return f"{head}\n{pad}{render_pair(key, value)}\n{text[close:]}"
 
     if indent is None:
         head = text[_open_brace(text) + 1 : members[0].key_start]

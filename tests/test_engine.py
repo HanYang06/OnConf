@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 HanYang06
+# SPDX-License-Identifier: Apache-2.0
 """引擎装配的端到端测试：声明 → 对账 → 落盘 → 读回。
 
 这里测的是**用户真正看得见的行为**，不是内部函数。
@@ -7,25 +9,29 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from auto_conf import (
     AutoConf,
     ConfError,
-    KeyHasNoValue,
-    KeyNotRegistered,
-    TypeConflict,
+    KeyHasNoValueError,
+    KeyNotRegisteredError,
+    TypeConflictError,
+    _reset,
     conf,
 )
 from auto_conf._engine import SCHEMA_POINTER, Engine
 
 
-@pytest.fixture(autouse=True)
-def _isolate() -> None:
-    from auto_conf import _reset
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from pathlib import Path
 
+
+@pytest.fixture(autouse=True)
+def _isolate() -> Iterator[None]:
     _reset()
     yield
     _reset()
@@ -56,7 +62,7 @@ class TestDeclareAndRead:
         assert data["hub.default"] == "main"
 
     def test_plain_call_is_a_read_not_a_register(self, engine: Engine) -> None:
-        with pytest.raises(KeyNotRegistered):
+        with pytest.raises(KeyNotRegisteredError):
             engine("nope")
 
     def test_metadata_only_call_registers_then_reads(self, engine: Engine) -> None:
@@ -64,11 +70,11 @@ class TestDeclareAndRead:
 
         这正是「启动即校验必填项」：键进了词表，但事实里没有值。
         """
-        with pytest.raises(KeyHasNoValue):
+        with pytest.raises(KeyHasNoValueError):
             engine("probe.doc", doc="这是个必填键")
 
         # 登记是**发生了**的：再读一次，错的是「没有值」而不是「没登记」
-        with pytest.raises(KeyHasNoValue):
+        with pytest.raises(KeyHasNoValueError):
             engine("probe.doc")
         assert "probe.doc" in engine._vocab
 
@@ -260,18 +266,18 @@ class TestCleanIsDeferredToTheCommitPoint:
 
 
 # --------------------------------------------------------------------------- #
-# type= 只做声明期校验
+# ``type=`` 的职责：只做声明期校验
 # --------------------------------------------------------------------------- #
 
 
 class TestDeclaredType:
     def test_mismatched_default_is_rejected_at_declare_time(self, engine: Engine) -> None:
-        with pytest.raises(TypeConflict, match="不符合声明的类型"):
+        with pytest.raises(TypeConflictError, match="不符合声明的类型"):
             engine("a.b", "512", type=int)
 
     def test_bool_is_not_accepted_as_int(self, engine: Engine) -> None:
-        with pytest.raises(TypeConflict):
-            engine("a.b", True, type=int)
+        with pytest.raises(TypeConflictError):
+            engine("a.b", True, type=int)  # noqa: FBT003 - 被测的就是「布尔当真值传」
 
     def test_type_is_not_used_to_convert_on_read(self, engine: Engine) -> None:
         """透明原则：值原样进出，引擎不做读取期转换。"""
@@ -296,7 +302,9 @@ class TestModuleLevelFaces:
         assert conf("a.b", 1) == 1
         assert conf("a.b") == 1
 
-    def test_zero_bootstrap_uses_the_home_env(self, tmp_path: Path, monkeypatch) -> None:
+    def test_zero_bootstrap_uses_the_home_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("AUTO_CONF_HOME", str(tmp_path))
         assert conf("a.b", 1) == 1
         assert (tmp_path / "settings.json").exists()
@@ -313,4 +321,53 @@ class TestModuleLevelFaces:
     def test_unknown_engine_param_is_not_swallowed(self, tmp_path: Path) -> None:
         """开放 kwargs 的默认行为是静默吞掉拼写错误 —— 必须堵死（§15.4）。"""
         with pytest.raises(TypeError, match="未知的引擎参数"):
-            AutoConf(hme=str(tmp_path))
+            # 就是要传一个拼错的参数，看它会不会被静默吞掉
+            AutoConf(hme=str(tmp_path))  # type: ignore[call-arg]
+
+
+# --------------------------------------------------------------------------- #
+# .env 值文件
+# --------------------------------------------------------------------------- #
+
+
+class TestEnvValuesFile:
+    def test_env_file_is_picked_up(self, tmp_path: Path) -> None:
+        (tmp_path / "settings.env").write_text(
+            "# 手写注释\nexport A_B=1\nC_D=two\n", encoding="utf-8"
+        )
+        engine = Engine(tmp_path)
+        assert engine.values_path.name == "settings.env"
+        assert engine("C_D") == "two"
+
+    def test_string_backend_refuses_non_string_values(self, tmp_path: Path) -> None:
+        (tmp_path / "settings.env").write_text("A_B=1\n", encoding="utf-8")
+        engine = Engine(tmp_path)
+        with pytest.raises(TypeError, match="只能存字符串"):
+            engine("PORT", 8080)
+
+    def test_string_values_round_trip(self, tmp_path: Path) -> None:
+        (tmp_path / "settings.env").write_text("A_B=1\n", encoding="utf-8")
+        engine = Engine(tmp_path)
+        assert engine("PORT", "8080") == "8080"
+        assert isinstance(engine("PORT"), str)
+
+    def test_no_schema_pointer_is_forced_into_an_env_file(self, tmp_path: Path) -> None:
+        """``.env`` 放不下成员，硬塞只会让文件变成语法错误。"""
+        values = tmp_path / "settings.env"
+        values.write_text("A_B=1\n", encoding="utf-8")
+        Engine(tmp_path)("C_D", "two")
+
+        text = values.read_text(encoding="utf-8")
+        assert "$schema" not in text
+        assert "A_B=1" in text
+        assert "C_D=two" in text
+
+    def test_comments_survive_a_rewrite(self, tmp_path: Path) -> None:
+        values = tmp_path / "settings.env"
+        values.write_text("# 头注释\nexport A_B=1\nC_D=two\n", encoding="utf-8")
+        Engine(tmp_path)("A_B", "9", force=True)
+
+        text = values.read_text(encoding="utf-8")
+        assert "# 头注释" in text
+        assert "export A_B=9" in text
+        assert "C_D=two" in text

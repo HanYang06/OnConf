@@ -1,11 +1,16 @@
+# SPDX-FileCopyrightText: 2026 HanYang06
+# SPDX-License-Identifier: Apache-2.0
 """词表的三态、JSON Schema 往返、以及哈希短路。"""
 
 from __future__ import annotations
+
+import json
 
 import pytest
 
 from auto_conf._core import NO_VALUE, Decl, declaration_hash, read_value, reconcile
 from auto_conf._vocab import Vocabulary, type_from_json, type_to_json
+from auto_conf.errors import KeyHasNoValueError
 
 
 class TestTypeMapping:
@@ -27,7 +32,7 @@ class TestTypeMapping:
         assert type_to_json(py) == js
 
     def test_bool_is_not_int(self) -> None:
-        """bool 是 int 的子类，映射顺序错了会把 bool 写成 integer。"""
+        """Bool 是 int 的子类，映射顺序错了会把 bool 写成 integer。"""
         assert type_to_json(bool) == "boolean"
 
     def test_json_to_py(self) -> None:
@@ -50,11 +55,9 @@ class TestTriState:
         assert vocab.get("a.b").default is None  # type: ignore[union-attr]
 
     def test_read_after_register_only_raises(self) -> None:
-        from auto_conf.errors import KeyHasNoValue
-
         vocab = Vocabulary()
         vocab.register(Decl("a.b", doc="只登记"))
-        with pytest.raises(KeyHasNoValue):
+        with pytest.raises(KeyHasNoValueError):
             read_value("a.b", {}, vocab.as_dict())
 
     def test_read_explicit_none_returns_none(self) -> None:
@@ -101,8 +104,6 @@ class TestSchemaRoundTrip:
         assert Vocabulary.from_schema(vocab.to_schema()).get("a.b").type is tuple  # type: ignore[union-attr]
 
     def test_schema_is_json_serialisable(self) -> None:
-        import json
-
         vocab = Vocabulary()
         vocab.register(Decl("a.b", 512, type=int, doc="端口"))
         restored = Vocabulary.from_schema(json.loads(json.dumps(vocab.to_schema())))

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 HanYang06
+# SPDX-License-Identifier: Apache-2.0
 """YAML 后端：外科手术式回写的**不变量**测试。
 
 核心不变量（比 JSON 那条更要紧，因为注释只活在 YAML 里）：
@@ -14,7 +16,7 @@ import pytest
 import yaml
 
 from auto_conf._yaml_backend import (
-    YamlFlatRequired,
+    YamlFlatRequiredError,
     append_key,
     delete_key,
     find,
@@ -24,6 +26,7 @@ from auto_conf._yaml_backend import (
     render_key,
     set_value,
 )
+
 
 REAL = (
     "# Cairn 配置值文件\n"
@@ -72,7 +75,7 @@ class TestLoads:
         assert loads("# 只有注释\n") == {}
 
     def test_multi_document_is_rejected(self) -> None:
-        with pytest.raises(YamlFlatRequired, match="多文档"):
+        with pytest.raises(YamlFlatRequiredError, match="多文档"):
             loads("a: 1\n---\nb: 2\n")
 
     def test_top_level_must_be_mapping(self) -> None:
@@ -169,23 +172,23 @@ class TestRefusals:
     """v1 只支持扁平映射。不支持的构造必须**报错**，不能猜。"""
 
     def test_nested_block_mapping(self) -> None:
-        with pytest.raises(YamlFlatRequired, match="下一行|缩进"):
+        with pytest.raises(YamlFlatRequiredError, match=r"下一行|缩进"):
             list(iter_members("pack:\n  max: 1\n"))
 
     def test_key_with_value_on_next_line(self) -> None:
-        with pytest.raises(YamlFlatRequired):
+        with pytest.raises(YamlFlatRequiredError):
             list(iter_members("pack:   # 注释\n  max: 1\n"))
 
     def test_block_scalar(self) -> None:
-        with pytest.raises(YamlFlatRequired, match="块标量"):
+        with pytest.raises(YamlFlatRequiredError, match="块标量"):
             list(iter_members("note: |\n  hello\n"))
 
     def test_multiline_flow_collection(self) -> None:
-        with pytest.raises(YamlFlatRequired, match="跨了多行"):
+        with pytest.raises(YamlFlatRequiredError, match="跨了多行"):
             list(iter_members("a.b: [1,\n  2]\n"))
 
     def test_stray_indented_line_names_the_line(self) -> None:
-        with pytest.raises(YamlFlatRequired, match="第 2 行"):
+        with pytest.raises(YamlFlatRequiredError, match="第 2 行"):
             list(iter_members("a: 1\n  b: 2\n"))
 
 
@@ -214,7 +217,7 @@ class TestSetValue:
         old_lines = REAL.splitlines()
         new_lines = new.splitlines()
         assert len(old_lines) == len(new_lines)
-        for old_line, new_line in zip(old_lines, new_lines):
+        for old_line, new_line in zip(old_lines, new_lines, strict=False):
             if "hub.default" not in old_line:
                 assert old_line == new_line
 
@@ -231,7 +234,7 @@ class TestSetValue:
             set_value(REAL, "nope", 1)
 
     def test_refuses_on_unparsable_file(self) -> None:
-        with pytest.raises(YamlFlatRequired):
+        with pytest.raises(YamlFlatRequiredError):
             set_value("a:\n  b: 1\n", "a", 2)
 
 

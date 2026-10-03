@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 HanYang06
+# SPDX-License-Identifier: Apache-2.0
 """YAML 值后端：读出 + **外科手术式回写**。
 
 YAML 比 JSON 更要紧，因为**注释只活在 YAML 里**（§27.3）。
@@ -24,18 +26,22 @@ YAML 比 JSON 更要紧，因为**注释只活在 YAML 里**（§27.3）。
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
+
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 
 _WS = " \t"
 _DOC_MARKERS = ("---", "...")
 _PLAIN_KEY_OK = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
 
-class YamlFlatRequired(ValueError):
+class YamlFlatRequiredError(ValueError):
     """值文件里出现了 v1 不支持的构造（嵌套 / 块标量 / 跨行集合）。"""
 
 
@@ -83,17 +89,17 @@ def _key_and_colon(s: str) -> tuple[str, int]:
                 break
             i += 1
         else:
-            raise YamlFlatRequired(f"未闭合的键：{s!r}")
+            raise YamlFlatRequiredError(f"未闭合的键：{s!r}")
         key = yaml.safe_load(s[: i + 1])
         rest = s[i + 1 :]
         offset = i + 1 + (len(rest) - len(rest.lstrip(_WS)))
         if offset >= len(s) or s[offset] != ":":
-            raise YamlFlatRequired(f"键后面不是冒号：{s!r}")
+            raise YamlFlatRequiredError(f"键后面不是冒号：{s!r}")
         return str(key), offset
 
     colon = s.find(":")
     if colon <= 0:
-        raise YamlFlatRequired(f"顶层行不是 `键: 值`：{s!r}")
+        raise YamlFlatRequiredError(f"顶层行不是 `键: 值`：{s!r}")
     return s[:colon].strip(), colon
 
 
@@ -126,7 +132,7 @@ def iter_members(text: str) -> Iterator[Member]:
 
         indent = body[: len(body) - len(body.lstrip(_WS))]
         if indent:
-            raise YamlFlatRequired(
+            raise YamlFlatRequiredError(
                 f"第 {text.count(chr(10), 0, line_start) + 1} 行有缩进，v1 只支持扁平映射：{body!r}"
             )
 
@@ -137,11 +143,11 @@ def iter_members(text: str) -> Iterator[Member]:
         value_text = body[colon + 1 + lead :]
 
         if not value_text.strip():
-            raise YamlFlatRequired(f"键 {key!r} 的值在下一行（嵌套或块标量），v1 不支持")
+            raise YamlFlatRequiredError(f"键 {key!r} 的值在下一行（嵌套或块标量），v1 不支持")
         if value_text.lstrip().startswith(("|", ">")):
-            raise YamlFlatRequired(f"键 {key!r} 用了块标量，v1 不支持")
+            raise YamlFlatRequiredError(f"键 {key!r} 用了块标量，v1 不支持")
         if not _is_balanced(value_text):
-            raise YamlFlatRequired(f"键 {key!r} 的值跨了多行，v1 不支持")
+            raise YamlFlatRequiredError(f"键 {key!r} 的值跨了多行，v1 不支持")
 
         value_end = value_start + len(value_text[: _comment_index(value_text)].rstrip(_WS))
         yield Member(key, line_start, line_end, value_start, value_end)
@@ -190,7 +196,7 @@ def loads(text: str) -> dict[str, Any]:
     """读出值文件。拒绝多文档；不做任何类型加工（透明原则）。"""
     documents = list(yaml.safe_load_all(text))
     if len(documents) > 1:
-        raise YamlFlatRequired("多文档 YAML 不支持（v1 一份文件 = 一个顶层对象）")
+        raise YamlFlatRequiredError("多文档 YAML 不支持（v1 一份文件 = 一个顶层对象）")
     data = documents[0] if documents else None
     if data is None:
         return {}

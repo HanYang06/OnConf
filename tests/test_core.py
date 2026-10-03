@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 HanYang06
+# SPDX-License-Identifier: Apache-2.0
 """纯内存核心的语义测试。
 
 这些测试就是「API 契约」本身：设计文档 §17 / §18 的每一条规则，
@@ -10,110 +12,18 @@ import pytest
 
 from auto_conf._core import (
     NO_VALUE,
+    Action,
     Decl,
     VocabEntry,
-    coerce,
     declaration_hash,
-    infer,
     read_value,
     reconcile,
 )
-from auto_conf.errors import KeyHasNoValue, KeyNotRegistered, TypeConflict
-
-# --------------------------------------------------------------------------- #
-# §18.3 类型推断
-# --------------------------------------------------------------------------- #
-
-
-class TestInfer:
-    def test_int(self) -> None:
-        assert infer("512") == 512
-
-    def test_negative_int(self) -> None:
-        assert infer("-7") == -7
-
-    def test_float(self) -> None:
-        assert infer("1.5") == 1.5
-
-    @pytest.mark.parametrize("word", ["true", "True", "YES", "on"])
-    def test_bool_true_words(self, word: str) -> None:
-        assert infer(word) is True
-
-    @pytest.mark.parametrize("word", ["false", "False", "NO", "off"])
-    def test_bool_false_words(self, word: str) -> None:
-        assert infer(word) is False
-
-    def test_zero_one_are_int_not_bool(self) -> None:
-        """可预测性：布尔只认词，数字一律走 int。"""
-        zero, one = infer("0"), infer("1")
-        assert zero == 0 and one == 1
-        assert not isinstance(zero, bool) and not isinstance(one, bool)
-
-    def test_json_list(self) -> None:
-        assert infer("[1, 2]") == [1, 2]
-
-    def test_json_dict(self) -> None:
-        assert infer('{"a": 1}') == {"a": 1}
-
-    def test_single_quoted_dict_falls_back_to_literal_eval(self) -> None:
-        """不同语言的结构表达不一致 —— json 失败要退到 literal_eval。"""
-        assert infer("{'a': 1}") == {"a": 1}
-
-    def test_tuple(self) -> None:
-        assert infer("(1, 2)") == (1, 2)
-
-    def test_plain_string(self) -> None:
-        assert infer("main") == "main"
-
-    def test_value_with_colon_survives(self) -> None:
-        """值里带冒号不能被撕开（§20.2 的格式坑）。"""
-        assert infer("sqlite:///data/app.db") == "sqlite:///data/app.db"
-
-    def test_empty(self) -> None:
-        assert infer("   ") == ""
+from auto_conf.errors import KeyHasNoValueError, KeyNotRegisteredError
 
 
 # --------------------------------------------------------------------------- #
-# §18.3 转换
-# --------------------------------------------------------------------------- #
-
-
-class TestCoerce:
-    def test_same_type_passthrough(self) -> None:
-        assert coerce(512, int) == 512
-
-    def test_str_to_int(self) -> None:
-        assert coerce("512", int) == 512
-
-    def test_bool_to_int_must_convert(self) -> None:
-        """isinstance(True, int) 为真，所以这条必须显式处理。"""
-        got = coerce(True, int)
-        assert got == 1 and not isinstance(got, bool)
-
-    def test_str_false_to_bool(self) -> None:
-        """bool("false") 在 Python 里是 True —— 绝不能硬转。"""
-        assert coerce("false", bool) is False
-
-    def test_numeric_str_to_bool_is_rejected(self) -> None:
-        with pytest.raises(TypeConflict):
-            coerce("0", bool)
-
-    def test_int_to_bool(self) -> None:
-        assert coerce(1, bool) is True
-
-    def test_int_to_str(self) -> None:
-        assert coerce(512, str) == "512"
-
-    def test_unconvertible_raises(self) -> None:
-        with pytest.raises(TypeConflict):
-            coerce("abc", int)
-
-    def test_none_target_passthrough(self) -> None:
-        assert coerce("whatever", None) == "whatever"
-
-
-# --------------------------------------------------------------------------- #
-# §18.2 读取五步
+# §18.2 读取 —— 引擎对值是**透明**的
 # --------------------------------------------------------------------------- #
 
 
@@ -128,34 +38,29 @@ class TestRead:
         assert got.value is None
         assert got.origin == "file"
 
-    def test_string_value_gets_inferred(self) -> None:
-        assert read_value("a.b", {"a.b": "512"}, {}).value == 512
+    def test_string_stays_a_string(self) -> None:
+        """透明原则：文件里是 `"512"`，读回来就是字符串，不许变成 512。
 
-    def test_vocab_default_used_when_fact_absent(self) -> None:
+        这条是回归测试 —— 早先这里挂着一层类型推断，于是 JSON 里的字符串值
+        会莫名其妙变成数字。要数字请在取用处显式 `int(…)`。
+        """
+        got = read_value("a.b", {"a.b": "512"}, {})
+        assert got.value == "512"
+        assert isinstance(got.value, str)
+
+    def test_vocab_default_is_returned_verbatim(self) -> None:
         vocab = {"a.b": VocabEntry("a.b", type=int, default=8080)}
         got = read_value("a.b", {}, vocab)
         assert (got.value, got.origin) == (8080, "vocab")
 
     def test_unknown_key_raises_key_not_registered(self) -> None:
-        with pytest.raises(KeyNotRegistered):
+        with pytest.raises(KeyNotRegisteredError):
             read_value("nope", {}, {})
 
     def test_registered_without_value_raises_key_has_no_value(self) -> None:
         """「配置不存在」和「配置不合理」是两类错误，责任方不同。"""
-        with pytest.raises(KeyHasNoValue):
+        with pytest.raises(KeyHasNoValueError):
             read_value("a.b", {}, {"a.b": VocabEntry("a.b", default=NO_VALUE)})
-
-    def test_declared_type_wins_over_inference(self) -> None:
-        """声明类型是最终目标，推断只是中间态。"""
-        assert read_value("a.b", {"a.b": "512"}, {}, declared_type=str).value == "512"
-
-    def test_declared_type_conflict_raises(self) -> None:
-        with pytest.raises(TypeConflict):
-            read_value("a.b", {"a.b": "abc"}, {}, declared_type=int)
-
-    def test_vocab_type_used_when_no_declared_type(self) -> None:
-        vocab = {"a.b": VocabEntry("a.b", type=int)}
-        assert read_value("a.b", {"a.b": "512"}, vocab).value == 512
 
 
 # --------------------------------------------------------------------------- #
@@ -163,7 +68,7 @@ class TestRead:
 # --------------------------------------------------------------------------- #
 
 
-def _kinds(actions: list) -> list[tuple[str, str]]:
+def _kinds(actions: list[Action]) -> list[tuple[str, str]]:
     return [(a.kind, a.key) for a in actions]
 
 
@@ -191,16 +96,18 @@ class TestReconcile:
         """两边都有、值不一致 ⇒ 尊重文件，一个字都不改。"""
         actions = reconcile([Decl("a.b", 512)], {"a.b": 1024}, {})
         skip = next(a for a in actions if a.kind == "skip")
-        assert skip.old == 1024 and skip.value == 512
+        assert skip.old == 1024
+        assert skip.value == 512
         assert not [a for a in actions if a.kind in ("fill", "overwrite")]
 
     def test_rule4_force_overwrites(self) -> None:
         actions = reconcile([Decl("a.b", 512)], {"a.b": 1024}, {}, force_keys={"a.b"})
         over = next(a for a in actions if a.kind == "overwrite")
-        assert over.old == 1024 and over.value == 512
+        assert over.old == 1024
+        assert over.value == 512
 
     def test_force_is_per_key_not_a_global_switch(self) -> None:
-        """force 逐项生效：同一次对账里，没点名的键仍然尊重文件（§18.6）。"""
+        """Force 逐项生效：同一次对账里，没点名的键仍然尊重文件（§18.6）。"""
         decls = [Decl("a.b", 512), Decl("c.d", 1)]
         facts = {"a.b": 1024, "c.d": 2}
         actions = reconcile(decls, facts, {}, force_keys={"a.b"})
