@@ -228,6 +228,21 @@ def read_value(
 # §18.1 写入 = 三集合全量对账
 # --------------------------------------------------------------------------- #
 
+DIRECTIVE_PREFIX = "$"
+"""指令键的前缀。``$schema`` / ``$id`` / ``$comment`` 是**指令**，不是配置项。
+
+真实产物里就有这一行（``Cairn/config/settings.json``）::
+
+    {"$schema": "schema/settings.json", "pack.max.byte": 2147483648}
+
+它必须**不参与对账**——否则规则 1「事实有、期望没有 ⇒ 清理」会在第一次运行时
+把 ``$schema`` 删掉，等于删掉用户的编辑器工具链。指令也不许被声明。
+"""
+
+
+def _is_directive(key: str) -> bool:
+    return key.startswith(DIRECTIVE_PREFIX)
+
 
 def _meta_stale(entry: VocabEntry | None, decl: Decl) -> bool:
     """词表是否需要更新：类型、文档、或**默认值指纹**（§17.8）有变。"""
@@ -250,16 +265,17 @@ def reconcile(
 
     规则 1 清理未知数据 / 2 补充缺失数据 / 3 补充缺失参数 / 4 保持原有数据。
     ``force=True`` 是情形 4 的唯一例外，且**逐项生效、没有全局开关**（§18.6）。
+
+    指令键（``$`` 开头）不参与对账，见 :data:`DIRECTIVE_PREFIX`。
     """
     actions: list[Action] = []
     declared = {d.key: d for d in decls}
 
-    # 规则 1：事实有、期望没有 ⇒ 清理
+    # 规则 1：事实有、期望没有 ⇒ 清理（指令键豁免）
     for key, fact_value in facts.items():
-        if key not in declared:
-            actions.append(
-                Action("clean", key, old=fact_value, reason="事实里有、代码没声明")
-            )
+        if key in declared or _is_directive(key):
+            continue
+        actions.append(Action("clean", key, old=fact_value, reason="事实里有、代码没声明"))
 
     for key, decl in declared.items():
         stale = _meta_stale(vocab.get(key), decl)

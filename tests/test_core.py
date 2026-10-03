@@ -222,6 +222,42 @@ class TestReconcile:
         assert set(_kinds(actions)) >= {("clean", "old"), ("fill", "new")}
 
 
+class TestDirectiveKeys:
+    """``$`` 开头的是**指令**，不是配置项：不许被清理，也不许被声明。
+
+    这条来自真实产物 ``Cairn/config/settings.json``：
+
+        {"$schema": "schema/settings.json", "pack.max.byte": 2147483648}
+
+    规则 1 若不给它豁免，第一次运行就会把 ``$schema`` 删掉。
+    """
+
+    def test_schema_directive_is_not_cleaned(self) -> None:
+        facts = {"$schema": "schema/settings.json", "a.b": 1}
+        actions = reconcile([Decl("a.b", 1)], facts, {})
+        assert ("clean", "$schema") not in _kinds(actions)
+
+    def test_unknown_directives_are_kept(self) -> None:
+        assert reconcile([], {"$id": "x", "$comment": "y"}, {}) == []
+
+    def test_real_cairn_payload_shape(self) -> None:
+        facts = {
+            "$schema": "schema/settings.json",
+            "slot.max.byte.b": 512,
+            "pack.max.byte": 2147483648,
+            "hub.default": "main",
+        }
+        decls = [
+            Decl("slot.max.byte.b", 512, type=int),
+            Decl("pack.max.byte", 2 * 1024**3, type=int),
+            Decl("hub.default", "main", type=str),
+        ]
+        actions = reconcile(decls, facts, {})
+        assert [a for a in actions if a.kind == "clean"] == []
+        # 稳态下只该产出元数据登记
+        assert {a.kind for a in actions} <= {"update_meta"}
+
+
 # --------------------------------------------------------------------------- #
 # §18.7 声明集哈希
 # --------------------------------------------------------------------------- #
