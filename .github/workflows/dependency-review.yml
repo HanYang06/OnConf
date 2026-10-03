@@ -1,0 +1,39 @@
+# ============================================================================
+# Dependency Review —— 在 PR 上拦截新增的高危依赖/许可证问题
+#
+# 只在 pull_request 上触发：这是"比对 base...head 的依赖差异"的场景，
+# push 到 main 时没有可比对的两端。
+# ============================================================================
+name: Dependency Review
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # 读取 pyproject.toml / uv.lock 差异
+      pull-requests: write # 把 review summary 作为评论写回 PR
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # fail-on-severity: moderate —— 低危噪声不阻断，中危及以上直接失败。
+      # comment-summary-in-pr: on-failure —— 只在拦截时评论，避免每个 PR 都刷一条。
+      - name: Dependency review
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          comment-summary-in-pr: on-failure

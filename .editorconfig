@@ -1,12 +1,40 @@
 # EditorConfig is awesome: https://EditorConfig.org
+#
+# 本项目全仓统一 LF（见 .gitattributes）。Windows 上请勿依赖 core.autocrlf=true，
+# 该文件与 .gitattributes 共同保证 checkout 出来的字节在任何平台上一致。
 
 # top-most EditorConfig file
 root = true
 
 [*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
 indent_style = space
 indent_size = 4
-end_of_line = crlf
-charset = utf-8
+trim_trailing_whitespace = true
+
+[*.{py,pyi}]
+max_line_length = 100
+
+[*.{yml,yaml,json,jsonc,toml}]
+indent_size = 2
+
+[*.{md,markdown}]
+indent_size = 2
+# Markdown 行尾两个空格表示硬换行，不能裁掉
+trim_trailing_whitespace = false
+max_line_length = off
+
+[*.{ps1,psm1,psd1}]
+indent_size = 4
+
+[*.{sh,bash}]
+indent_size = 2
+
+[Makefile]
+indent_style = tab
+
+[*.{patch,diff}]
 trim_trailing_whitespace = false
 insert_final_newline = false

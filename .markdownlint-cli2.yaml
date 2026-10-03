@@ -1,0 +1,72 @@
+# ============================================================================
+# markdownlint-cli2 配置
+#
+# 面向中文技术文档。默认规则全开，只关掉与中文排版/ MkDocs Material 冲突的项，
+# 每一条关闭都写明理由 —— 不要在这里加「无理由的 false」。
+# ============================================================================
+
+config:
+  default: true
+
+  # 标题统一 ATX（# 形式）
+  MD003:
+    style: atx
+  # 无序列表统一短横线（与仓库内既有文档一致）
+  MD004:
+    style: dash
+  MD005: true
+  # 嵌套列表缩进 2 空格（与 .editorconfig 的 [*.md] indent_size = 2 一致）
+  MD007:
+    indent: 2
+  # MD013 行宽限制：中文文档按显示宽度换行毫无意义（一个汉字占 2 列），关闭
+  MD013: false
+  # 同一个父级下的重名标题才报错（跨章节重名是正常的）
+  MD024:
+    siblings_only: true
+  MD025:
+    front_matter_title: ""
+  # 有序列表统一使用递增数字
+  MD029:
+    style: ordered
+  # MD033 内联 HTML：MkDocs Material 的提示框、图片尺寸、居中都需要，关闭
+  MD033: false
+  # MD034 裸 URL：中文技术文档里裸链接极常见且更易读，关闭
+  MD034: false
+  # MD041 首行必须是顶级标题：部分页面以注释或 front matter 开头，关闭
+  MD041: false
+  # MD060 表格列风格（markdownlint 0.41 新增）：按「字符数」强制对齐表格管道符。
+  # 本仓库是中文文档，一个汉字占两列显示宽度，按字符数补齐只会让表格渲染后
+  # 视觉上错位 —— 对 CJK 表格是负收益。实测它占全仓 204 条违规中的 178 条（87%）。
+  MD060: false
+  # MD046 代码块风格：原本要求「围栏式、禁止缩进式」。但 MkDocs 的 admonition
+  # （`!!! warning "..."`）必须把正文缩进 4 个空格才能归属该块，markdownlint 不认识
+  # 这个语法，会一律判成缩进式代码块 —— docs/ 下 5 处全是误报。
+  # 路径级 overrides 在 markdownlint-cli2 0.23.3 上实测未生效，故全局关闭：
+  # 这条规则对一份 MkDocs 文档站不可用，而围栏式仍是本仓库的实际写法。
+  MD046: false
+  # 围栏统一用反引号
+  MD048:
+    style: backtick
+  # 强调统一用星号
+  MD049:
+    style: asterisk
+  # 加粗统一用星号
+  MD050:
+    style: asterisk
+
+globs:
+  - "**/*.md"
+
+ignores:
+  - ".venv/**"
+  - "site/**"
+  - ".mypy_cache/**"
+  - ".ruff_cache/**"
+  - ".pytest_cache/**"
+  - "node_modules/**"
+  # CODE_OF_CONDUCT.md 是 Contributor Covenant 2.1 官方简体中文译本的逐字引用。
+  # 为它改排版等于让译本偏离官方文本，所以不改它，而是排除它。
+  - "CODE_OF_CONDUCT.md"
+  # 设计稿是持续演进的内部文档（1875 行、含 ❓ 待拍板项），
+  # 不为 lint 规则让步 —— 否则每次讨论都要顺手改一遍排版。
+  - "docs/design/DESIGN.md"

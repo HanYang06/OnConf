@@ -1,0 +1,72 @@
+# ============================================================================
+# Dependabot —— 依赖与 action 的自动更新
+#
+# 说明：Dependabot 开的 PR 走的是普通 pull_request 流程，
+# 因此会自动触发 ci.yml（lint / typecheck / test / security）与
+# dependency-review.yml；合并前必须等这些检查通过。
+# ============================================================================
+version: 2
+updates:
+  # --------------------------------------------------------------------------
+  # Python 依赖
+  #
+  # 用 "pip" ecosystem：它解析 pyproject.toml / uv.lock，并按 uv 的
+  # dependency-groups 归类，是当前最成熟的写法。
+  # （uv 官方也已提供 package-ecosystem: "uv"，但上游仍列有未覆盖场景，
+  #  本仓库暂用 pip；后续要切换只需改这一行。）
+  # --------------------------------------------------------------------------
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    groups:
+      # 运行时依赖（[project].dependencies）：会被下游使用者继承，
+      # 单独成组便于逐条评估兼容性影响。
+      runtime-dependencies:
+        dependency-type: production
+      # docs 组（mkdocs-material / mkdocstrings）：只影响文档站构建，
+      # 与 dev 组同为 development 类型，因此必须先按名字精确分流。
+      docs-dependencies:
+        dependency-type: development
+        patterns:
+          - "mkdocs*"
+          - "mkdocstrings*"
+      # dev 组（pytest / mypy / ruff / bandit 等）：只影响开发者本地与 CI。
+      # 用 exclude-patterns 把上面已归入 docs 的包排除，避免同一个包
+      # 同时落进两个组（Dependabot 对重复匹配的行为是"先匹配到的组胜出"，
+      # 显式排除比依赖顺序更可靠）。
+      dev-dependencies:
+        dependency-type: development
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "mkdocs*"
+          - "mkdocstrings*"
+
+  # --------------------------------------------------------------------------
+  # GitHub Actions
+  #
+  # 本仓库所有 action 都固定在 commit SHA 上；Dependabot 会连同行尾的
+  # `# vX.Y.Z` 版本注释一起更新——注释缺失时它无法识别当前版本，
+  # 所以每个 uses 行都必须保留版本注释。
+  # --------------------------------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - github-actions
+    groups:
+      # 所有 action 更新合成一个 PR：action 升级之间常互相牵连
+      # （例如同时需要新的 runner 特性），分批反而更难验证。
+      github-actions:
+        patterns:
+          - "*"

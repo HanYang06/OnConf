@@ -1,0 +1,95 @@
+name: 功能请求
+description: 提出一个新能力或改进建议（请先对齐场景，再谈 API 形态）
+title: "[功能] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你提出建议。本项目的公开面被**刻意收得很小**，所以在讨论怎么写之前，
+        请先把「要解决什么场景」讲清楚：**场景决定方案，API 形态只是结果。**
+
+        这会显著提高被采纳的概率，也能避免双方在实现细节上反复拉扯。
+
+        如果你想要的只是「怎么用现有能力做到这件事」，那属于用法问题，
+        请走 [Discussions](https://github.com/HanYang06/auto-conf/discussions)。
+
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 要解决的场景
+      description: 你在做什么、遇到了什么障碍、为什么现有能力解决不了。请描述真实的使用场景，不要先写 API。
+      placeholder: 例如：同一个程序被起多份，每份都要往同一个配置文件写自己那部分配置，现在……
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_workaround
+    attributes:
+      label: 当前做法
+      description: 你现在是怎么绕过这个问题的？为什么这个绕法不能接受（多写了代码 / 语义不干净 / 有并发风险 / 会破坏文件格式等）。
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_api
+    attributes:
+      label: 期望的 API 形态
+      description: 如果你已经想好了写法，请写在这里；同时说明调用方式、参数、返回值与错误行为。
+      placeholder: |
+        from auto_conf import conf
+
+        conf("app.port", 9090, ...)
+      render: python
+    validations:
+      required: false
+
+  - type: dropdown
+    id: breaks_file_authority
+    attributes:
+      label: 是否会破坏「文件绝对优先」
+      description: 本项目规定：代码不构成读取来源，事实只存在于文件里。你的方案是否会让代码里的值变成一种配置来源？
+      options:
+        - 不会 —— 代码只发出写请求，读仍然只认文件
+        - 会 —— 需要让代码里的值直接参与读取（请在下方说明为什么必须这样）
+        - 不确定
+    validations:
+      required: true
+
+  - type: dropdown
+    id: breaks_single_entry
+    attributes:
+      label: 是否会破坏「单一入口」
+      description: 本项目对外只暴露一个入口。你的方案是否需要新增一个公开符号、公开类或新的配置面？
+      options:
+        - 不会 —— 可以收敛进现有入口
+        - 会 —— 需要新增公开入口（请在下方说明为什么无法收敛）
+        - 不确定
+    validations:
+      required: true
+
+  - type: textarea
+    id: semantic_notes
+    attributes:
+      label: 对核心语义的影响说明
+      description: 如果上面两项选了「会」或「不确定」，请在这里展开：为什么无法用现有语义表达，以及你建议的取舍。
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 考虑过的其他方案
+      description: 你比较过的替代方案与被否掉的原因；如果你知道别的项目怎么解决，也欢迎列出。
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索过现有 Issue 与 Discussions，没有找到相同建议。
+          required: true
+        - label: 我描述的是真实场景，而不是仅为某一种实现写法投票。
+          required: true

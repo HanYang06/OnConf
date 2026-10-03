@@ -1,0 +1,80 @@
+# ============================================================================
+# Docs —— 构建 mkdocs 站点并发布到 GitHub Pages
+#
+# 只在文档相关文件变化时触发，避免改一行 src 就重建整站。
+# 注意 paths 里包含 pyproject.toml：mkdocstrings 的站点内容依赖包元数据与
+# 依赖组定义，改了这些同样可能影响文档站输出。
+# ============================================================================
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "pyproject.toml"
+  # 允许在文档改动之外手动重建（例如主题升级后想立刻刷站点）。
+  workflow_dispatch:
+
+# Pages 部署必须串行：同一个 concurrency group 下 cancel-in-progress: false，
+# 让正在进行的部署跑完，避免出现"半发布"状态。
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Build and deploy docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      pages: write # 写入 GitHub Pages
+      id-token: write # deploy-pages 通过 OIDC 校验部署来源
+      contents: read # 读取仓库
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # setup-uv 在前（安装 uv），setup-python 在后（装解释器）。
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.22"
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Sync dependencies
+        run: uv sync --all-groups --frozen
+
+      # 先读站点元数据（base_url 等），供后续构建复用；
+      # 它不会修改仓库，只是把 Pages 配置暴露成 action 输出。
+      - name: Configure Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      # --strict：把死链、缺失引用等警告升级为错误。文档站是公开产物，
+      # 宁可构建失败也不要发布带死链的站点。
+      - name: Build docs
+        run: uv run mkdocs build --strict
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+      # 需要 id 以便 environment.url 引用 page_url 输出。
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

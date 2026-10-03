@@ -1,0 +1,65 @@
+# ============================================================================
+# OpenSSF Scorecard —— 供应链健康度评分
+#
+# 该 action 属于 GitHub 官方之外的第三方（ossf），因此额外注意两点：
+#   1) 固定到不可变 SHA；
+#   2) publish_results: true 会把评分结果发布到 OpenSSF 公开 API，
+#      这一步通过 OIDC（id-token: write）完成，不需要任何长期密钥。
+# ============================================================================
+name: Scorecard
+
+on:
+  # branch_protection_rule：仓库保护规则变更时立即重评（这类改动本身就是评分项）。
+  branch_protection_rule:
+  schedule:
+    # 每周一 04:23 UTC（错开 CodeQL 的 03:17，避免同刻抢 runner）。
+    - cron: "23 4 * * 1"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      security-events: write # 上传 SARIF 到 code scanning
+      id-token: write # publish_results 所需的 OIDC 令牌
+      contents: read # 读取仓库内容
+      actions: read # 读取工作流运行信息，用于 Token-Permissions 等检查项
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run Scorecard analysis
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      # 先上传 SARIF：它决定 Security 面板里能否看到告警。
+      - name: Upload SARIF to code scanning
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
+        with:
+          sarif_file: results.sarif
+
+      # 再留一份原始文件：code scanning 面板只展示摘要，
+      # 排查评分波动时要看完整 SARIF（例如某检查项的详细 reason）。
+      - name: Upload SARIF as artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scorecard-results
+          path: results.sarif
+          if-no-files-found: error
+          retention-days: 7

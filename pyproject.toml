@@ -1,12 +1,48 @@
+# ============================================================================
+# auto-conf —— 项目元数据与工具链配置
+#
+# TODO(rename): 项目名 / 仓库 URL / description（定位句）三处仍是当前值。
+#               命名定案后统一替换；替换点已在本文件内用 TODO(rename) 标出。
+# ============================================================================
+
 [project]
 name = "auto-conf"
 version = "0.1.0"
-description = "Add your description here"
+description = "Declarative configuration over plain local files — files stay authoritative, concurrent processes never lose an update."
 readme = "README.md"
-authors = [
-    { name = "HanYang06", email = "jihanyang123@163.com" }
-]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.14"
+authors = [{ name = "HanYang06", email = "jihanyang123@163.com" }]
+maintainers = [{ name = "HanYang06", email = "jihanyang123@163.com" }]
+keywords = [
+    "configuration",
+    "config",
+    "settings",
+    "layered-config",
+    "local-file",
+    "yaml",
+    "json",
+    "toml",
+    "dotenv",
+    "environment-variables",
+    "multiprocess",
+    "concurrency",
+    "wal",
+    "declarative",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Natural Language :: Chinese (Simplified)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Systems Administration",
+    "Typing :: Typed",
+]
 dependencies = [
     "httpx>=0.28.1",
     "pyyaml>=6.0.3",
@@ -16,14 +52,278 @@ dependencies = [
 [project.scripts]
 auto-conf = "auto_conf:main"
 
+# TODO(rename): 仓库地址待定，改名后此处 7 条 URL 一并替换。
+[project.urls]
+Homepage = "https://github.com/HanYang06/auto-conf"
+Documentation = "https://hanyang06.github.io/auto-conf/"
+Repository = "https://github.com/HanYang06/auto-conf"
+Issues = "https://github.com/HanYang06/auto-conf/issues"
+Discussions = "https://github.com/HanYang06/auto-conf/discussions"
+Changelog = "https://github.com/HanYang06/auto-conf/blob/main/CHANGELOG.md"
+Security = "https://github.com/HanYang06/auto-conf/security/policy"
+
 [build-system]
 requires = ["uv_build>=0.12.22,<0.13.0"]
 build-backend = "uv_build"
 
+# ============================================================================
+# 依赖组
+#
+# uv 默认只装 dev 组；要预览文档站请用 `uv sync --all-groups`。
+# ============================================================================
 [dependency-groups]
 dev = [
+    "bandit[toml]>=1.9.4",
+    "codespell>=2.4.3",
     "mypy>=2.4.0",
+    "pip-audit>=2.10.1",
+    "pre-commit>=4.6.2",
     "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
     "ruff>=0.16.10",
     "types-pyyaml>=6.0.12.20260906",
+    "zizmor>=1.30.1",
 ]
+docs = [
+    "mkdocs-material>=9.7.7",
+    "mkdocstrings[python]>=1.0.6",
+]
+
+# ============================================================================
+# uv
+# ============================================================================
+[tool.uv]
+# 与 CI 中 astral-sh/setup-uv 的 version 保持一致，避免本地与 CI 解析出不同结果
+required-version = ">=0.12.22"
+
+# ============================================================================
+# Ruff —— lint + format
+# ============================================================================
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+src = ["src", "tests", "scripts"]
+extend-exclude = [".venv", "site", "docs/design"]
+output-format = "concise"
+preview = false
+
+[tool.ruff.lint]
+select = [
+    "A",    # 内建名遮蔽
+    "ANN",  # 类型注解
+    "ARG",  # 未使用参数
+    "B",    # flake8-bugbear
+    "BLE",  # 盲捕异常
+    "C4",   # 推导式
+    "C90",  # 圈复杂度
+    "CPY",  # 版权头（SPDX）
+    "D",    # pydocstyle
+    "DTZ",  # 时区
+    "E",    # pycodestyle error
+    "EM",   # 异常消息
+    "ERA",  # 注释掉的死代码
+    "F",    # pyflakes
+    "FA",   # from __future__ import annotations
+    "FBT",  # 布尔参数陷阱
+    "FLY",  # f-string 优化
+    "FURB", # refurb
+    "G",    # logging 格式
+    "I",    # isort
+    "ICN",  # 导入命名约定
+    "INP",  # 隐式命名空间包
+    "INT",  # gettext
+    "ISC",  # 隐式字符串拼接
+    "LOG",  # logging 用法
+    "N",    # pep8-naming
+    "PERF", # 性能反模式
+    "PGH",  # pygrep-hooks
+    "PIE",  # 杂项
+    "PL",   # pylint
+    "PT",   # pytest 风格
+    "PTH",  # pathlib
+    "RET",  # return 简化
+    "RSE",  # raise 简化
+    "RUF",  # ruff 自有规则
+    "S",    # bandit 安全规则
+    "SIM",  # 可简化代码
+    "SLF",  # 私有成员访问
+    "T10",  # 调试器残留
+    "T20",  # print
+    "TC",   # 类型检查专用导入
+    "TD",   # TODO 格式
+    "TID",  # 整洁导入
+    "TRY",  # tryceratops
+    "UP",   # pyupgrade
+    "W",    # pycodestyle warning
+]
+ignore = [
+    # --- 与 formatter 冲突，必须关 ---
+    "COM812", # 尾随逗号交给 formatter
+    "ISC001", # 单行隐式拼接与 formatter 冲突
+    # --- pydocstyle 互斥项 ---
+    "D203",   # 与 D211 互斥
+    "D213",   # 与 D212 互斥
+    # --- 全中文代码库的必然误伤 ---
+    # RUF001/002/003 把「，。：；（）」判为 ambiguous-unicode（实测 265 处）。
+    # 本项目注释与文档统一使用中文标点，这是有意为之，不是笔误。
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    # --- 中文文档串以「。」结尾，D400/D415 只认 . ! ? ---
+    "D400",   # 首行必须以句号结尾
+    "D415",   # 首行必须以 . ! ? 结尾
+    # --- 本项目语义上必须允许 Any ---
+    # 配置引擎的 value 就是任意 JSON/YAML 可表达值，Any 是接口的一部分。
+    "ANN401",
+    # --- 约定式噪声，经评估不引入收益 ---
+    "EM101",  # 异常里直接写字符串字面量
+    "EM102",  # 异常里直接写 f-string
+    "TRY003", # 异常消息过长且不在异常类里定义
+    "PLR0913", # 参数过多（conf() 的重载形态本身就是宽签名）
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",     # 测试用 assert 是本分
+    "ANN",      # 测试函数不必全注解
+    "D101", "D102", "D103",  # 测试不需要 docstring
+    "PLR2004",  # 测试里的魔法值就是断言值
+    "SLF001",   # 测试需要触碰私有实现
+    "INP001",   # tests 不是包
+    "PT011",    # pytest.raises 不强制 match（部分场景无法稳定匹配）
+]
+"docs/**" = ["INP001"]
+"scripts/**" = ["T201", "INP001"]
+
+[tool.ruff.lint.flake8-copyright]
+# 源码必须有 SPDX 许可头（Apache-2.0）
+notice-rgx = "(?i)SPDX-License-Identifier:\\s*Apache-2\\.0"
+min-file-size = 1
+
+[tool.ruff.lint.isort]
+known-first-party = ["auto_conf"]
+force-single-line = false
+lines-after-imports = 2
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.pylint]
+max-args = 12
+max-branches = 15
+max-returns = 8
+max-statements = 60
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+docstring-code-format = true
+skip-magic-trailing-comma = false
+
+# ============================================================================
+# mypy —— 严格模式
+# ============================================================================
+[tool.mypy]
+python_version = "3.14"
+strict = true
+files = ["src", "tests"]
+warn_unreachable = true
+warn_unused_configs = true
+show_error_codes = true
+show_column_numbers = true
+pretty = true
+extra_checks = true
+no_implicit_reexport = true
+disallow_any_unimported = true
+disallow_any_explicit = false
+
+# 测试可以宽松：pytest fixture 的注入形态与严格注解天然冲突。
+#
+# 注意模块名：tests/ 下没有 __init__.py，mypy 把它们当**顶层模块**
+# （test_engine，而不是 tests.test_engine）。所以 "tests.*" 匹配不到任何东西
+# —— mypy 会报 "unused section"；而 mypy 也不接受 "test_*" 这种部分通配
+# （通配只能占整段，如 spam.*.eggs）。只能逐个列。加测试文件时记得补这里。
+[[tool.mypy.overrides]]
+module = [
+    "test_core",
+    "test_engine",
+    "test_env_backend",
+    "test_json_backend",
+    "test_security_invariants",
+    "test_vocab",
+    "test_yaml_backend",
+]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+disallow_any_unimported = false
+warn_return_any = false
+
+# ============================================================================
+# pytest
+# ============================================================================
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--import-mode=importlib",
+    "-ra",
+]
+xfail_strict = true
+# 警告即错误：本项目在 Windows/POSIX 两侧都要行为确定，
+# 任何 ResourceWarning / DeprecationWarning 都必须当场处理。
+filterwarnings = ["error"]
+
+# ============================================================================
+# coverage
+# ============================================================================
+[tool.coverage.run]
+branch = true
+source = ["src"]
+omit = ["src/auto_conf/__main__.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+precision = 2
+# fail_under 由 pytest-cov 在报告阶段强制（CI 的 test job 会因此变红）。
+# 当前实测 93.95%（门槛 90%）；基线说明见 README「Quality gates」。
+fail_under = 90
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "@overload",
+    "@typing.overload",
+    "\\.\\.\\.",
+]
+
+[tool.coverage.html]
+show_contexts = true
+
+# ============================================================================
+# bandit —— 安全静态扫描（由 -c pyproject.toml 读取）
+# ============================================================================
+[tool.bandit]
+targets = ["src"]
+exclude_dirs = [".venv", "tests", "docs", "scripts", "site"]
+# 本项目的运行语义本身就包含文件读写与环境变量读取，
+# 相应规则的逐条豁免理由记录在 docs/security/threat-model.md。
+skips = []
+
+# ============================================================================
+# codespell —— 拼写检查
+# ============================================================================
+[tool.codespell]
+skip = "./.venv,./uv.lock,./.git,./site,./docs/design/DESIGN.md,./.mypy_cache,./.ruff_cache,./.pytest_cache"
+count = true
+quiet-level = 2
+# 中文正文里的英文术语白名单
+ignore-words-list = "conf,creat,nd,ue,fo,ba,ot,te,ans,hel,meaned,ist,wich,thru,clas,datas"

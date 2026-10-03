@@ -1,0 +1,123 @@
+# ============================================================================
+# MkDocs Material —— auto-conf 文档站
+#
+# 两条约定，改本文件时必须一起守：
+#
+# 1. nav 里出现的每个文件都必须真实存在。strict: true 会把「nav 指向缺失文件」
+#    从警告升级为构建失败，这是有意的：导航不该出现死链。
+# 2. nav 与 docs/ 下的页面一一对应。页面新增 / 改名时，本文件的 nav 同步改。
+# ============================================================================
+
+site_name: auto-conf
+site_description: Declarative configuration over plain local files — files stay authoritative, concurrent processes never lose an update.
+site_url: https://hanyang06.github.io/auto-conf/
+repo_url: https://github.com/HanYang06/auto-conf
+repo_name: HanYang06/auto-conf
+edit_uri: edit/main/docs/
+copyright: Copyright 2026 HanYang06 — Apache-2.0
+
+docs_dir: docs
+site_dir: site
+use_directory_urls: true
+strict: true
+
+# ---------------------------------------------------------------------------
+# 主题
+# ---------------------------------------------------------------------------
+theme:
+  name: material
+  language: zh
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: 切换到深色模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: 切换到浅色模式
+
+# ---------------------------------------------------------------------------
+# Markdown 扩展
+# ---------------------------------------------------------------------------
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      title: 本页目录
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.snippets
+
+# ---------------------------------------------------------------------------
+# 插件
+#
+# search.separator 是中文检索的关键：lunr 默认按空格切词，中文正文没有空格，
+# 整段会变成一个巨大的 token，导致搜不到。补上「零宽空格 / 连字符」作为分隔符后
+# 中文才可用（这也是 Material 官方给中文站点的写法）。
+# ---------------------------------------------------------------------------
+plugins:
+  - search:
+      separator: '[\s\u200b\-]'
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            members_order: source
+
+# ---------------------------------------------------------------------------
+# 导航（与 docs/ 下的页面一一对应）
+# ---------------------------------------------------------------------------
+nav:
+  - 首页: index.md
+  - 快速开始: getting-started.md
+  - 路线图: roadmap.md
+  - API 参考:
+      - API 总览: api/index.md
+  - 架构:
+      - 架构总览: architecture/index.md
+  - 设计稿:
+      - 设计稿索引: design/index.md
+  - 安全:
+      - 安全总览: security/index.md
+      - 威胁模型: security/threat-model.md
+  - 社区:
+      - 参与方式: community/index.md
+      - 变更日志: community/changelog.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/HanYang06/auto-conf
+      name: GitHub 仓库

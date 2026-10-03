@@ -1,0 +1,9 @@
+auto-conf
+Copyright 2026 HanYang06 <jihanyang123@163.com>
+
+This product is licensed under the Apache License, Version 2.0.
+A copy of that license is provided in the LICENSE file.
+
+This product includes software developed by third parties. The complete list of
+third-party components, together with their licenses and required notices, is
+generated into THIRD_PARTY_NOTICES.md by scripts/gen_third_party_notices.py.

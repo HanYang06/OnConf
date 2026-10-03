@@ -1,0 +1,68 @@
+# ============================================================================
+# CodeQL —— 代码扫描（Python）
+#
+# 权限刻意只写在 job 上：security-events: write 是上传 SARIF 结果必需的，
+# 其余 job 不需要它，放在顶层等于把写权限扩散到整个工作流。
+# actions: read 是 CodeQL 读取本工作流/上传动作元数据所需的最小附加权限。
+# ============================================================================
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # 每周一 03:17 UTC 跑一次：查询包与 QL 规则更新后，
+    # 即使代码没变也可能出现新告警，定时扫描才能发现。
+    # 用 :17 而非 :00 是避开整点排队高峰。
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      security-events: write # 上传 code scanning 结果
+      contents: read # 读取仓库代码
+      actions: read # 读取工作流运行信息（仅私有仓库必需，公开仓库无害）
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # CodeQL 的 Python 提取需要在"已装好依赖"的环境里做构建，
+      # 否则对第三方导入的解析会退化。因此先同步锁定依赖再 init。
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.22"
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Sync dependencies
+        run: uv sync --all-groups --frozen
+
+      # 同一个 SHA 覆盖 init/analyze 两个子动作（github/codeql-action 根目录的
+      # action.yml 是 stub，真正入口在 init/ 与 analyze/ 子路径下）。
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
+        with:
+          languages: python
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4

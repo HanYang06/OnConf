@@ -1,0 +1,84 @@
+name: 文档问题
+description: 指出文档中不清楚、不准确或缺失的地方
+title: "[文档] "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        文档问题同样是问题，欢迎直接报上来。
+
+        请把「哪一篇、哪一段」说到能被直接定位的程度 —— **贴链接或引原文**最省事。
+        如果你发现的是**代码行为与文档不一致**，请改用
+        [缺陷报告模板](https://github.com/HanYang06/auto-conf/issues/new?template=bug_report.yml)，
+        因为那属于行为缺陷。
+
+        文档语言以中文为主，英文原版只存在于 README。
+
+  - type: dropdown
+    id: doc_area
+    attributes:
+      label: 哪篇文档
+      description: 请选择涉及的位置；如果是多处，选最主要的那一处并在下方列全。
+      options:
+        - README
+        - 文档站（MkDocs Material）
+        - docs/design/DESIGN.md 设计草案
+        - CONTRIBUTING.md 贡献指南
+        - SUPPORT.md 获取支持
+        - SECURITY.md 安全策略
+        - CODE_OF_CONDUCT.md 行为准则
+        - 代码里的 docstring
+        - 其他（请在下方说明）
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: 具体位置
+      description: 文件路径 + 小节标题或行号，或文档站链接。
+      placeholder: 例如 docs/design/DESIGN.md 第 18.2 节「读取 = 五步」
+    validations:
+      required: true
+
+  - type: textarea
+    id: unclear
+    attributes:
+      label: 哪里不清楚
+      description: 请引用原文，并说明你是怎么理解的、为什么这个理解走不通。
+      placeholder: |
+        原文：
+        > ……
+
+        我的理解：……
+        卡住的地方：……
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_content
+    attributes:
+      label: 期望补充什么
+      description: 你希望看到什么内容才能解决疑惑？示例代码、术语定义、边界说明、流程图、命令输出都可以。
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
+      description: 其他相关上下文，例如你阅读这份文档时想完成的任务、你依据的版本。
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索过现有 Issue，没有找到相同的文档问题。
+          required: true
+        - label: 这只是文档表述问题，不是代码行为与文档不一致（后者我会改用缺陷模板）。
+          required: true
