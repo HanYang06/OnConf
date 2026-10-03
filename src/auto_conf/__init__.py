@@ -50,6 +50,7 @@ class EngineParams(TypedDict, total=False):
 
     home: str
     audit: bool
+    flush_window: float
 
 
 _engine: Engine | None = None

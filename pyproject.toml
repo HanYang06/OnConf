@@ -326,5 +326,7 @@ skips = []
 skip = "./.venv,./uv.lock,./.git,./site,./docs/design/DESIGN.md,./.mypy_cache,./.ruff_cache,./.pytest_cache"
 count = true
 quiet-level = 2
-# 中文正文里的英文术语白名单
-ignore-words-list = "conf,creat,nd,ue,fo,ba,ot,te,ans,hel,meaned,ist,wich,thru,clas,datas"
+# 中文正文里的英文术语白名单。
+# `tipe` 不是笔误漏网：设计文档里**故意**用 `conf("a.b", 1, tipe=int)`
+# 当「参数拼错」的示例（§15.4 那条防静默失效的规则）。
+ignore-words-list = "conf,creat,nd,ue,fo,ba,ot,te,ans,hel,meaned,ist,wich,thru,clas,datas,tipe"

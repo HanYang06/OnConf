@@ -9,6 +9,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
+import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -23,6 +26,7 @@ from auto_conf import (
     conf,
 )
 from auto_conf._engine import SCHEMA_POINTER, Engine
+from auto_conf._lock import LockTimeoutError, exclusive
 
 
 if TYPE_CHECKING:
@@ -426,3 +430,178 @@ class TestTomlValuesFile:
         assert "$schema" not in text
         assert "a = 1" in text
         assert "b = 2" in text
+
+
+# --------------------------------------------------------------------------- #
+# 攒批窗口（**按需开**；默认是当场落盘）
+# --------------------------------------------------------------------------- #
+
+
+class TestFlushWindow:
+    def test_immediate_by_default(self, tmp_path: Path) -> None:
+        Engine(tmp_path)("a.b", 1)
+        assert (tmp_path / "settings.json").exists()
+
+    def test_window_batches_instead_of_writing_each_time(self, tmp_path: Path) -> None:
+        engine = Engine(tmp_path, flush_window=60.0)
+        engine("a.one", 1)
+        engine("a.two", 2)
+        engine("a.three", 3)
+        assert not engine.values_path.exists()  # 窗口没到，一次都没写
+
+        engine.flush()
+        data = json.loads(engine.values_path.read_text(encoding="utf-8"))
+        assert [data["a.one"], data["a.two"], data["a.three"]] == [1, 2, 3]
+
+    def test_a_read_flushes_first(self, tmp_path: Path) -> None:
+        """R3/R5：读之前必须先把自己的待写落盘，否则读不到自己刚声明的事实。"""
+        engine = Engine(tmp_path, flush_window=60.0)
+        assert engine("a.b", 1) == 1
+        assert not engine.values_path.exists()
+
+        assert engine("a.b") == 1  # 这一次读强制提交
+        assert engine.values_path.exists()
+
+    def test_window_expiry_commits_on_the_next_call(self, tmp_path: Path) -> None:
+        engine = Engine(tmp_path, flush_window=0.05)
+        engine("a.b", 1)
+        assert not engine.values_path.exists()
+
+        time.sleep(0.08)
+        engine("c.d", 2)  # 机会式检查：窗口到期 ⇒ 先把攒着的落了
+
+        data = json.loads(engine.values_path.read_text(encoding="utf-8"))
+        assert data["a.b"] == 1
+        assert data["c.d"] == 2
+
+    def test_sync_commits_the_whole_batch(self, tmp_path: Path) -> None:
+        engine = Engine(tmp_path, flush_window=60.0)
+        engine("a.b", 1)
+        engine("c.d", 2)
+        engine.sync()
+        assert json.loads(engine.values_path.read_text(encoding="utf-8"))["c.d"] == 2
+
+    def test_window_defers_but_never_loses(self, tmp_path: Path) -> None:
+        """窗口只改「什么时候写」，不改「写什么」。"""
+        deferred = Engine(tmp_path, flush_window=60.0)
+        deferred("a.b", 1)
+        deferred("c.d", 2)
+        deferred.sync()
+
+        immediate = Engine(tmp_path)
+        immediate("a.b", 1)
+        immediate("c.d", 2)
+
+        assert json.loads(deferred.values_path.read_text(encoding="utf-8")) == json.loads(
+            immediate.values_path.read_text(encoding="utf-8")
+        )
+
+
+# --------------------------------------------------------------------------- #
+# 提交期的并发：锁 + 锁内重读
+# --------------------------------------------------------------------------- #
+
+
+class TestCommitReReadsUnderTheLock:
+    def test_another_process_s_update_is_not_clobbered(self, tmp_path: Path) -> None:
+        """锁内重读：别人在这期间写的键，不许被我们整篇盖掉。"""
+        engine = Engine(tmp_path, flush_window=60.0)
+        engine("mine", 1)  # 进缓冲，还没落盘
+
+        # 模拟另一个进程：它已经往值文件里写了一个键
+        (tmp_path / "settings.json").write_text(
+            json.dumps({"$schema": SCHEMA_POINTER, "theirs": 2}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        engine.flush()  # 锁内重读 ⇒ 看得见 theirs
+
+        data = json.loads(engine.values_path.read_text(encoding="utf-8"))
+        assert data["theirs"] == 2
+        assert data["mine"] == 1
+
+    def test_vocabulary_entries_from_another_process_are_kept(self, tmp_path: Path) -> None:
+        """只动词表的提交也要能看见 —— 所以指纹得同时看值文件和词表。"""
+        engine = Engine(tmp_path, flush_window=60.0)
+        engine("mine", 1)
+
+        schema_dir = tmp_path / "schema"
+        schema_dir.mkdir(exist_ok=True)
+        (schema_dir / "settings.json").write_text(
+            json.dumps(
+                {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {"theirs": {"default": 2}},
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        engine("mine", 1)  # 再声明一次，触发一次提交
+        engine.flush()
+
+        props = json.loads(engine.schema_path.read_text(encoding="utf-8"))["properties"]
+        assert "theirs" in props
+        assert "mine" in props
+
+
+class TestRealProcesses:
+    """真开进程：多个进程各写各的键，一个都不许丢。"""
+
+    _WORKER = (
+        "import sys\n"
+        "from auto_conf import Engine\n"
+        "eng = Engine(sys.argv[1], flush_window=0.0)\n"
+        "for key in sys.argv[2:]:\n"
+        "    eng(key, key)\n"
+        "eng.flush()\n"
+    )
+
+    def test_four_processes_do_not_lose_each_others_keys(self, tmp_path: Path) -> None:
+        keys = [f"key.of.proc{n}" for n in range(4)]
+        procs = [
+            subprocess.Popen(  # noqa: S603 - 参数全是本测试自己造的，没有外部输入
+                [sys.executable, "-c", self._WORKER, str(tmp_path), *keys[n::4]],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            for n in range(4)
+        ]
+        for proc in procs:
+            _, stderr = proc.communicate(timeout=120)
+            assert proc.returncode == 0, stderr.decode("utf-8", "replace")
+
+        data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+        for key in keys:
+            assert key in data, f"{key} 被别的进程盖掉了"
+
+
+# --------------------------------------------------------------------------- #
+# 锁本身
+# --------------------------------------------------------------------------- #
+
+
+class TestLockPrimitive:
+    def test_second_acquire_in_the_same_process_times_out(self, tmp_path: Path) -> None:
+        """互斥是真的 —— 同一进程里换个句柄也拿不到。"""
+        target = tmp_path / "x.lock"
+        with exclusive(target, timeout=1.0):  # noqa: SIM117 - 外层得先进去，内层才拿不到
+            with pytest.raises(LockTimeoutError), exclusive(target, timeout=0.05):
+                pass
+
+    def test_lock_is_released_after_the_context(self, tmp_path: Path) -> None:
+        target = tmp_path / "x.lock"
+        with exclusive(target, timeout=1.0):
+            pass
+        with exclusive(target, timeout=1.0):  # 不该超时
+            pass
+
+    def test_lock_file_is_just_a_handshake_point(self, tmp_path: Path) -> None:
+        target = tmp_path / "sub" / "x.lock"
+        with exclusive(target, timeout=1.0):
+            pass
+        assert target.exists()
