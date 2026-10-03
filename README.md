@@ -28,10 +28,12 @@ changing one requires changing the other — plus `README.zh-CN.md`, `pyproject.
 > [!WARNING]
 > **Pre-Alpha (`0.1.0`) — evaluate only, do not deploy.**
 > The API and the on-disk format can change without a deprecation period.
-> **The closing clause of the line above is the M3 acceptance criterion, not a delivered fact.**
-> The byte half — *without losing a byte* — is implemented and tested (surgical write-back).
-> The update half is **not**: there is no file locking yet and writes are not atomic, so a crash
-> or a concurrent writer can still lose an update or truncate a file.
+> **Both halves of the line above now have mechanism behind them**: *without losing a byte* by
+> surgical write-back, and *without losing an update* by a cross-process OS lock plus a re-read
+> under that lock.
+> What is **not** in place yet is durability: writes are still in-place (`write_text`, no
+> temp+rename, no `fsync`), so a crash mid-write can truncate a config file; new files also follow
+> the system umask.
 > See [Known limitations](#known-limitations) and the
 > [threat model](docs/security/threat-model.md) before you rely on this.
 
@@ -119,7 +121,7 @@ Everything goes through two callables. That is the whole public surface.
 
 | Face | Purpose |
 |---|---|
-| `AutoConf(**engine)` | Configure **the engine itself**: `home` (config directory) and `audit`. Optional — the conventions work without it. |
+| `AutoConf(**engine)` | Configure **the engine itself**: `home` (config directory), `audit`, and `flush_window` (batching window; `0` = commit immediately). Optional — the conventions work without it. |
 | `conf(key, value=..., *, doc=..., type=..., force=..., **engine)` | Do all the work: read, write, register. |
 
 `conf` infers the operation from the **shape of the call**, not from an `op` argument:
@@ -139,7 +141,9 @@ Notes on semantics that surprise people:
 - Reading a key that was never declared raises `KeyNotRegisteredError`; a declared key with no
   value raises `KeyHasNoValueError`; a value contradicting its declared type raises
   `TypeConflictError`.
-- The commit point is **immediate** (`atexit` triggers a final `sync()`), not a batching window.
+- The commit point is **immediate by default** (`atexit` triggers a final `sync()`). A batching
+  window is opt-in via `flush_window`; with it on, disk is touched at four commit points —
+  window expiry, a read, `sync()`, and process exit.
 - The engine is a singleton: once started, it cannot be reconfigured in place.
 
 ## Currently implemented
@@ -152,6 +156,9 @@ Notes on semantics that surprise people:
 | TOML value backend — table headers normalized to dotted keys | ✅ |
 | Vocabulary (key space) — persisted, JSON Schema round-trip, hash short-circuit | ✅ |
 | Engine assembly — `conf` / `AutoConf` end-to-end | ✅ |
+| Cross-process exclusive lock — an **OS** lock (`msvcrt.locking` on Windows, `fcntl.flock` elsewhere), released by the OS even if the process dies; `LockTimeoutError` after a 10 s wait | ✅ |
+| Re-read under that lock — fingerprint (`mtime` + `size`) over **both** the values file and the vocabulary, so a concurrent registration is never clobbered | ✅ |
+| Optional batching window — `flush_window` (default `0`, i.e. commit immediately) | ✅ |
 | Value-as-key (indirect addressing) + guaranteed `$schema` pointer on every write | ✅ |
 | Error taxonomy — `ConfError`, `KeyNotRegisteredError`, `KeyHasNoValueError`, `TypeConflictError`, `UnknownEngineParamError`, `EnvSyntaxError` | ✅ |
 | Test suite — one file per module plus security invariants | ✅ green locally; CI runs it on ubuntu / windows / macos |
@@ -162,10 +169,10 @@ Do not plan around these; they are **not implemented**:
 
 | Capability | Milestone |
 |---|---|
-| File locking + WAL + prefix-sharded locks (actually-safe cross-process writes) | M3 |
-| Atomic write (temp file + rename) and `fsync` | M3 |
+| Atomic write (temp file + rename) and `fsync` — DESIGN §31.2 lists atomic replacement as part of the commit, but the write path is still in-place `write_text` | M3 |
 | Restrictive file permissions for newly created config files | M3 |
-| Transaction batching / write coalescing | M3 |
+| WAL (write-ahead log) — the OS lock plus re-read already delivers *no lost update*, so whether WAL is still needed is an open design question (§19.5 planned "WAL first"; §31 shipped the lock instead) | open |
+| Prefix-sharded locks — the current lock is a single lock per config directory | — |
 | Audit report and audit event stream (`audit=` is accepted but inert) | M4 |
 | System environment variables as a configuration **source** (`AUTO_CONF_HOME` only locates the config dir) | — |
 | Per-format vocabulary export | — |
@@ -211,7 +218,6 @@ Invariants this project commits to (each one has a regression test in
 
 | Limitation | Consequence |
 |---|---|
-| **No file locking** | Concurrent writers to the same value file can lose updates or interleave content |
 | **Writes are not atomic** | A crash mid-write can leave a truncated config file (`write_text`, no temp+rename, no `fsync`) |
 | **File permissions are not set** | New files follow the system umask; on umask 022 a `.env` holding secrets may be readable by other users |
 | **Symlinks are followed** | If a value file is a symlink, the write lands on its target |
@@ -228,6 +234,7 @@ src/auto_conf/
   _core.py           # reconciliation: the three-set algorithm
   _vocab.py          # vocabulary + JSON Schema
   _textscan.py       # shared byte-level scanning used by the backends
+  _lock.py           # cross-process exclusive lock (OS lock; used by _engine)
   _json_backend.py   # JSON value backend
   _yaml_backend.py   # YAML value backend
   _env_backend.py    # .env value backend

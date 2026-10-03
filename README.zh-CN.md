@@ -28,10 +28,10 @@
 > [!WARNING]
 > **Pre-Alpha（`0.1.0`）—— 只可用于评估，不要上生产。**
 > 公开 API 与磁盘格式都可能在没有弃用期的情况下变更。
-> **定位句的最后半句是 M3 的验收标准，不是已交付的事实。**
-> 「不丢一个字节」这一半已实现并被测试覆盖（外科手术式回写）；
-> 「不丢一次更新」这一半**还没有**——目前没有文件锁，写入也不是原子的，
-> 崩溃或并发写入仍可能丢更新、或把配置文件截断。
+> **定位句的两个半句现在都有机制支撑**：「不丢一个字节」由外科手术式回写保证；
+> 「不丢一次更新」由跨进程 OS 锁 + 锁内按需重读保证。
+> 尚未到位的是**持久性**：写入仍是原地覆写（`write_text`，无临时文件 + rename、无 `fsync`），
+> 崩溃中途可能把配置文件截断；新建文件也沿用系统 umask。
 > 依赖它之前，请先读下面的「已知限制」与[威胁模型](docs/security/threat-model.md)。
 
 文档站（含完整设计稿与威胁模型）：<https://hanyang06.github.io/auto-conf/>
@@ -116,7 +116,7 @@ $ uv run python -c "from auto_conf import conf; print(conf('app.server.port', 80
 
 | 面 | 职责 |
 |---|---|
-| `AutoConf(**engine)` | 配置**引擎自己**：`home`（配置目录）与 `audit`。可省略——不调用它也能按约定工作。 |
+| `AutoConf(**engine)` | 配置**引擎自己**：`home`（配置目录）、`audit`、`flush_window`（攒批窗口，`0` = 当场落盘）。可省略——不调用它也能按约定工作。 |
 | `conf(key, value=..., *, doc=..., type=..., force=..., **engine)` | 干所有的活：读、写、登记。 |
 
 `conf` 从**调用形态**推断这次要做什么，而不是靠一个 `op` 参数：
@@ -134,7 +134,8 @@ conf("app.port", 9090, force=True)  # 覆盖文件里已有的值
   想从 `.env` 里拿到 `int`？写 `int(conf("PORT"))`——显式，而且在调用点看得见。
 - 读一个从未声明过的键抛 `KeyNotRegisteredError`；声明过但没值的键抛
   `KeyHasNoValueError`；值与自己声明的类型冲突抛 `TypeConflictError`。
-- 提交点是**立即**的（`atexit` 触发最后一次 `sync()`），不是攒批窗口。
+- 提交点**默认是立即的**（`atexit` 触发最后一次 `sync()`）。攒批窗口需显式开启（`flush_window`）；
+  开启后落盘发生在四个提交点：窗口到期 / 一次读 / `sync()` / 进程退出。
 - 引擎是单例：起来之后不能就地改配置。
 
 ## 当前已实现
@@ -147,6 +148,9 @@ conf("app.port", 9090, force=True)  # 覆盖文件里已有的值
 | TOML 值后端 —— 表头归一成点分键 | ✅ |
 | 词表（键空间）—— 持久化 + JSON Schema 往返 + 哈希短路 | ✅ |
 | 引擎装配 —— `conf` / `AutoConf` 端到端 | ✅ |
+| 跨进程排他锁 —— **操作系统**级锁（Windows `msvcrt.locking`、其它 `fcntl.flock`），进程崩溃也由 OS 释放；等 10 秒拿不到抛 `LockTimeoutError` | ✅ |
+| 锁内按需重读 —— 指纹（`mtime` + 大小）同时看值文件与词表，别人刚登记的键不会被挤掉 | ✅ |
+| 可选攒批窗口 —— `flush_window`（默认 `0`，当场落盘） | ✅ |
 | 用值当键（间接寻址）+ 每次落盘都保证 `$schema` 指针 | ✅ |
 | 异常族 —— `ConfError`、`KeyNotRegisteredError`、`KeyHasNoValueError`、`TypeConflictError`、`UnknownEngineParamError`、`EnvSyntaxError` | ✅ |
 | 测试 —— 每个模块一个测试文件，外加安全不变量 | ✅ 本地全绿；CI 在 ubuntu / windows / macos 上跑 |
@@ -157,10 +161,10 @@ conf("app.port", 9090, force=True)  # 覆盖文件里已有的值
 
 | 能力 | 里程碑 |
 |---|---|
-| 文件锁 + WAL + 前缀分片锁（真正安全的跨进程写） | M3 |
-| 原子写（临时文件 + rename）与 `fsync` | M3 |
+| 原子写（临时文件 + rename）与 `fsync` —— DESIGN §31.2 把「原子替换」写成了提交的一部分，但落盘仍是原地 `write_text` | M3 |
 | 新建配置文件的最小权限（`0600`） | M3 |
-| 事务攒批 / 写合并 | M3 |
+| WAL（预写日志）—— 锁 + 锁内重读已经给出「不丢更新」，是否仍需要 WAL 属待定设计问题（§19.5 原计划「先 WAL」，§31 实际落地的是 OS 锁） | 待定 |
+| 前缀分片锁 —— 当前是每个配置目录一把锁 | — |
 | 审计报告与审计事件流（`audit=` 目前被接受但不起作用） | M4 |
 | 把系统环境变量当作配置**来源**（`AUTO_CONF_HOME` 只用来定位配置目录） | — |
 | 按格式导出词表 | — |
@@ -206,7 +210,6 @@ CodeQL、依赖审查与 OpenSSF Scorecard。
 
 | 限制 | 后果 |
 |---|---|
-| **没有文件锁** | 多个进程同时写同一个值文件会丢更新，或写出交错内容 |
 | **写入不是原子的** | 写入中途崩溃可能留下被截断的配置文件（`write_text`，无临时文件 + rename，无 `fsync`） |
 | **不设置文件权限** | 新建文件沿用系统 umask；在 umask 022 的 POSIX 系统上，含密钥的 `.env` 可能对同组或其他用户可读 |
 | **符号链接会被跟随** | 值文件是符号链接时，写入会落到链接目标上 |
@@ -223,6 +226,7 @@ src/auto_conf/
   _core.py           # 对账：三集合算法
   _vocab.py          # 词表 + JSON Schema
   _textscan.py       # 各后端共用的字节级扫描
+  _lock.py           # 跨进程排他锁（OS 锁，供 _engine 使用）
   _json_backend.py   # JSON 值后端
   _yaml_backend.py   # YAML 值后端
   _env_backend.py    # .env 值后端

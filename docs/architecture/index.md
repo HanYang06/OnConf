@@ -25,10 +25,13 @@
 | [`_json_backend.py`](https://github.com/HanYang06/auto-conf/blob/main/src/auto_conf/_json_backend.py) | JSON 值后端：外科手术式回写 |
 | [`_yaml_backend.py`](https://github.com/HanYang06/auto-conf/blob/main/src/auto_conf/_yaml_backend.py) | YAML 值后端：注释、缩进、键序逐字保留 |
 | [`_env_backend.py`](https://github.com/HanYang06/auto-conf/blob/main/src/auto_conf/_env_backend.py) | `.env` 值后端：纯字符串，不做键名映射；`EnvSyntaxError` 也定义在这里 |
-| [`_engine.py`](https://github.com/HanYang06/auto-conf/blob/main/src/auto_conf/_engine.py) | 引擎装配：后端选择、落盘、`$schema` 指针、`sync()` |
+| [`_textscan.py`](https://github.com/HanYang06/auto-conf/blob/main/src/auto_conf/_textscan.py) | 各后端共用的字节级扫描 |
+| [`_lock.py`](https://github.com/HanYang06/auto-conf/blob/main/src/auto_conf/_lock.py) | 跨进程排他锁：操作系统级锁（`msvcrt` / `fcntl`），进程崩溃由 OS 释放 |
+| [`_engine.py`](https://github.com/HanYang06/auto-conf/blob/main/src/auto_conf/_engine.py) | 引擎装配：后端选择、锁与提交点、落盘、`$schema` 指针、`sync()` |
 
 ## 尚未定稿的部分
 
-并发模型（WAL、文件锁、前缀分片锁、IPC 与子进程写者）在
-[路线图](../roadmap.md)里标记为**未实现**，当前不可用；
-它们的取舍与实测数据散落在设计稿的 §5、§13、§19、§22、§25。
+**跨进程锁已经落地**（见 DESIGN §31 与 `_lock.py`），因此并发写不再是「未实现」。
+仍未定稿的是：原子写与文件权限收紧、WAL 是否仍需要、前缀分片锁、IPC 与子进程写者模型 ——
+这些在[路线图](../roadmap.md)里标记为**未实现**，当前不可用；
+它们的取舍与实测数据散落在设计稿的 §5、§13、§19、§22、§25、§30、§31。
