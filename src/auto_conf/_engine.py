@@ -32,7 +32,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import _env_backend, _json_backend, _yaml_backend
+from . import _env_backend, _json_backend, _toml_backend, _yaml_backend
 from ._core import MISSING, Action, Decl, read_value, reconcile
 from ._vocab import Vocabulary
 from .errors import ConfError, TypeConflictError
@@ -55,13 +55,21 @@ _BACKENDS = {
     ".yaml": _yaml_backend,
     ".yml": _yaml_backend,
     ".env": _env_backend,
+    ".toml": _toml_backend,
 }
 
 #: 只有「文件里能放一条 ``$schema`` 成员」的后端才吃得下词表指针（§28.6）。
-#: ``.env`` 是纯 KEY=value，放不了 —— 硬塞只会让文件变成语法错误。
+#: ``.env`` / ``.toml`` 放不了成员 —— 硬塞只会让文件变成语法错误。
+#: （TOML 那边另有 Taplo 的 ``#:schema`` 注释指令，留待后续。）
 _POINTER_CAPABLE = frozenset({".json", ".yaml", ".yml"})
 
-_VALUES_CANDIDATES = ("settings.yaml", "settings.yml", "settings.json", "settings.env")
+_VALUES_CANDIDATES = (
+    "settings.yaml",
+    "settings.yml",
+    "settings.json",
+    "settings.toml",
+    "settings.env",
+)
 
 
 def default_home() -> Path:

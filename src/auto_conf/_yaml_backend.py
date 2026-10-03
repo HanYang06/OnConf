@@ -31,6 +31,8 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from ._textscan import balanced_on_one_line, value_span
+
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -48,32 +50,6 @@ class YamlFlatRequiredError(ValueError):
 # --------------------------------------------------------------------------- #
 # 行级扫描
 # --------------------------------------------------------------------------- #
-
-
-def _comment_index(s: str) -> int:
-    """返回行内注释 ``#`` 的下标；没有则返回 ``len(s)``。
-
-    ``#`` 只有位于行首或前面是空白时才是注释（YAML 规则），
-    且引号里的 ``#`` 不算。
-    """
-    quote: str | None = None
-    i = 0
-    while i < len(s):
-        c = s[i]
-        if quote is not None:
-            if quote == '"' and c == "\\":
-                i += 2
-                continue
-            if c == quote:
-                quote = None
-            i += 1
-            continue
-        if c in "\"'":
-            quote = c
-        elif c == "#" and (i == 0 or s[i - 1] in _WS):
-            return i
-        i += 1
-    return len(s)
 
 
 def _key_and_colon(s: str) -> tuple[str, int]:
@@ -146,38 +122,11 @@ def iter_members(text: str) -> Iterator[Member]:
             raise YamlFlatRequiredError(f"键 {key!r} 的值在下一行（嵌套或块标量），v1 不支持")
         if value_text.lstrip().startswith(("|", ">")):
             raise YamlFlatRequiredError(f"键 {key!r} 用了块标量，v1 不支持")
-        if not _is_balanced(value_text):
+        if not balanced_on_one_line(value_text):
             raise YamlFlatRequiredError(f"键 {key!r} 的值跨了多行，v1 不支持")
 
-        value_end = value_start + len(value_text[: _comment_index(value_text)].rstrip(_WS))
+        value_end = line_start + value_span(body, colon + 1 + lead)
         yield Member(key, line_start, line_end, value_start, value_end)
-
-
-def _is_balanced(s: str) -> bool:
-    """流式集合必须在同一行闭合（引号内的括号不算）。"""
-    depth = 0
-    quote: str | None = None
-    i = 0
-    while i < len(s):
-        c = s[i]
-        if quote is not None:
-            if quote == '"' and c == "\\":
-                i += 2
-                continue
-            if c == quote:
-                quote = None
-            i += 1
-            continue
-        if c in "\"'":
-            quote = c
-        elif c in "[{":
-            depth += 1
-        elif c in "]}":
-            depth -= 1
-            if depth < 0:
-                return False
-        i += 1
-    return depth == 0 and quote is None
 
 
 def find(text: str, key: str) -> Member | None:

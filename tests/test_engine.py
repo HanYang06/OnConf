@@ -371,3 +371,58 @@ class TestEnvValuesFile:
         assert "# 头注释" in text
         assert "export A_B=9" in text
         assert "C_D=two" in text
+
+
+# --------------------------------------------------------------------------- #
+# TOML 值文件
+# --------------------------------------------------------------------------- #
+
+
+class TestTomlValuesFile:
+    def test_toml_file_is_picked_up(self, tmp_path: Path) -> None:
+        (tmp_path / "settings.toml").write_text(
+            "# 手写注释\n\n[gc]\nauto.byte = 0   # 行尾注释\n", encoding="utf-8"
+        )
+        engine = Engine(tmp_path)
+        assert engine.values_path.name == "settings.toml"
+        assert engine("gc.auto.byte") == 0
+
+    def test_table_header_is_normalised_to_a_dotted_key(self, tmp_path: Path) -> None:
+        """对上层完全透明：它只看得见点分键（§28.4）。"""
+        (tmp_path / "settings.toml").write_text("[pack.max]\nbyte = 512\n", encoding="utf-8")
+        assert Engine(tmp_path)("pack.max.byte") == 512
+
+    def test_new_key_lands_in_the_matching_section(self, tmp_path: Path) -> None:
+        values = tmp_path / "settings.toml"
+        values.write_text("[gc]\nauto.byte = 0\n", encoding="utf-8")
+        Engine(tmp_path)("gc.threshold", 1024)
+
+        text = values.read_text(encoding="utf-8")
+        assert text.index("[gc]") < text.index("threshold = 1024")
+        assert "threshold = 1024" in text
+
+    def test_comments_survive_a_rewrite(self, tmp_path: Path) -> None:
+        values = tmp_path / "settings.toml"
+        values.write_text("# 头注释\n\ngc.auto.byte = 0   # 行尾注释\n", encoding="utf-8")
+        Engine(tmp_path)("gc.auto.byte", 4096, force=True)
+
+        text = values.read_text(encoding="utf-8")
+        assert "# 头注释" in text
+        assert "gc.auto.byte = 4096   # 行尾注释" in text
+
+    def test_none_cannot_be_written(self, tmp_path: Path) -> None:
+        """TOML 没有 null。"""
+        (tmp_path / "settings.toml").write_text("a = 1\n", encoding="utf-8")
+        engine = Engine(tmp_path)
+        with pytest.raises(TypeError, match="没有 null"):
+            engine("b", None)
+
+    def test_no_schema_pointer_is_forced_into_a_toml_file(self, tmp_path: Path) -> None:
+        values = tmp_path / "settings.toml"
+        values.write_text("a = 1\n", encoding="utf-8")
+        Engine(tmp_path)("b", 2)
+
+        text = values.read_text(encoding="utf-8")
+        assert "$schema" not in text
+        assert "a = 1" in text
+        assert "b = 2" in text
