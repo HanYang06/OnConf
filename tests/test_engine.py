@@ -158,6 +158,62 @@ class TestArtifacts:
         assert engine.schema_path.stat().st_mtime_ns == schema_stamp
 
 
+class TestIndirection:
+    """值代表另一个配置项 —— 引擎不设限（§28.3）。
+
+    ``conf(conf("alias"))`` 的**第一实参仍是字面量**，静态扫描看得见 ``alias`` 这一层；
+    看不见的只有它解出来的那一层，这是明示的代价，不是禁令。
+    """
+
+    def test_value_can_be_another_key(self, engine: Engine) -> None:
+        engine("real.key", 512)
+        engine("alias.key", "real.key")
+        assert engine(engine("alias.key")) == 512
+
+    def test_direct_and_indirect_agree(self, engine: Engine) -> None:
+        engine("real.key", 512)
+        engine("alias.key", "real.key")
+        assert engine(engine("alias.key")) == engine("real.key")
+
+    def test_chain_of_three(self, engine: Engine) -> None:
+        engine("third", "second")
+        engine("second", "first")
+        engine("first", "终点")
+        assert engine(engine(engine("third"))) == "终点"
+
+    def test_non_string_key_names_the_real_problem(self, engine: Engine) -> None:
+        engine("a.number", 512)
+        with pytest.raises(TypeError, match="键必须是字符串"):
+            engine(engine("a.number"))
+
+
+class TestSchemaPointer:
+    def test_pointer_is_added_to_an_existing_file(self, tmp_path: Path) -> None:
+        """老文件缺指针也要补 —— 没有它编辑器不知道词表在哪（§28.6）。"""
+        values = tmp_path / "settings.yaml"
+        values.write_text("# 注释\npack.max.byte: 1\n", encoding="utf-8")
+
+        Engine(tmp_path)("hub.default", "main")
+
+        text = values.read_text(encoding="utf-8")
+        assert "$schema" in text
+        assert SCHEMA_POINTER in text
+        assert "# 注释" in text
+        assert "pack.max.byte: 1" in text
+
+    def test_pointer_is_idempotent(self, tmp_path: Path) -> None:
+        values = tmp_path / "settings.yaml"
+        values.write_text("# 注释\npack.max.byte: 1\n", encoding="utf-8")
+
+        Engine(tmp_path)("hub.default", "main")
+        once = values.read_text(encoding="utf-8")
+        Engine(tmp_path)("index.max.byte", 2)
+        twice = values.read_text(encoding="utf-8")
+
+        assert twice.count("$schema") == 1
+        assert twice.startswith(once.splitlines()[0])
+
+
 class TestCleanIsDeferredToTheCommitPoint:
     """规则 1（清理未知数据）只有在**期望集完整**时才允许跑。
 

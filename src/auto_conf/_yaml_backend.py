@@ -219,8 +219,15 @@ def render(value: Any) -> str:
 
 
 def render_key(key: str) -> str:
-    """需要时给键加引号。我们的键是点分小写，通常不用。"""
-    return key if _PLAIN_KEY_OK.match(key) else yaml.safe_dump(key, allow_unicode=True).strip()
+    """需要时给键加引号。我们的键是点分小写，通常不用。
+
+    注意：PyYAML 给**裸标量文档**会补一个 ``...`` 结束标记，
+    必须像 :func:`render` 那样剥掉，否则键里会混进一个换行。
+    """
+    if _PLAIN_KEY_OK.match(key):
+        return key
+    dumped = yaml.safe_dump(key, allow_unicode=True)
+    return dumped.removesuffix("\n...\n").removesuffix("\n")
 
 
 def render_pair(key: str, value: Any) -> str:

@@ -118,6 +118,11 @@ class Engine:
 
         也就是说，判据不是「value 位空没空」，而是**这一行到底在不在声明**。
         """
+        if not isinstance(key, str):
+            raise TypeError(
+                f"键必须是字符串，拿到 {key.__class__.__name__}（{key!r}）。"
+                "如果是 conf(conf(…)) 这种间接寻址，说明内层取到的值不是键名。"
+            )
         if value is MISSING and doc is None and type is None:
             return self.read(key)
         return self.declare(key, value, doc=doc, type=type, force=force)
@@ -197,11 +202,10 @@ class Engine:
 
     def _commit(self, actions: Iterable[Action]) -> None:
         """把对账动作落到两个文件上。"""
-        touched = any(a.kind in ("fill", "overwrite", "clean") for a in actions)
         creating = self._text is None
-        # 先播种 $schema，再落动作 —— 反过来的话，等落完动作文件已经不是空对象了，
-        # 播种条件就再不成立（这是个真踩过的坑）。
-        text = self._seed_schema_pointer(self._text if self._text is not None else "{}")
+        original = self._text if self._text is not None else "{}"
+        # 指针先补、动作后落 —— 反过来的话，等落完动作文件已经不是空对象了。
+        text = self._ensure_schema_pointer(original)
 
         for action in actions:
             if action.kind in ("fill", "overwrite"):
@@ -215,7 +219,7 @@ class Engine:
                     text = self.backend.delete_key(text, action.key)
                 self._facts.pop(action.key, None)
 
-        if touched or creating:
+        if creating or text != original:
             self.values_path.parent.mkdir(parents=True, exist_ok=True)
             self.values_path.write_text(text, encoding="utf-8")
             self._text = text
@@ -228,10 +232,13 @@ class Engine:
             encoding="utf-8",
         )
 
-    def _seed_schema_pointer(self, text: str) -> str:
-        """新建值文件时写下 ``$schema`` 指令，让编辑器立刻有补全。"""
+    def _ensure_schema_pointer(self, text: str) -> str:
+        """值文件必须带 ``$schema`` 指针。
+
+        没有它，编辑器就不知道词表在哪 —— 用户面对一个几十项的配置只能靠翻文件
+        （§27.3）。所以这条**不是新建时才补，是每次落盘都保证有**。
+        它是**指令**不是配置键，不参与对账（§18.1）。
+        """
         if self.backend.find(text, "$schema") is not None:
-            return text
-        if text.strip() not in ("", "{}"):
             return text
         return self.backend.append_key(text, "$schema", SCHEMA_POINTER)
