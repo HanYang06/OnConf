@@ -43,6 +43,17 @@ class _Sentinel:
     def __bool__(self) -> bool:
         return False
 
+    def __reduce__(self) -> str:
+        """过线时**按名字还原成模块级那个单例**，不是重建一个同名对象。
+
+        没有这一条，哨兵跨进程就废了：pickle 默认会构造出一个**新的**
+        ``_Sentinel``，于是对面那句 ``value is MISSING`` 永远是 ``False``
+        —— 「只登记不给值」会静默变成「给了一个哨兵当值」。
+        ``__reduce__`` 返回字符串是 pickle 的约定：这个对象就是本模块里
+        叫这个名字的全局对象。
+        """
+        return self._name
+
 
 MISSING = _Sentinel("MISSING")
 """调用时「参数位没填」。空着 ⇒ 读；填了（哪怕 ``None``）⇒ 写。"""
