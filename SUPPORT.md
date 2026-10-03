@@ -4,7 +4,7 @@
 
 在提问之前，请先花两分钟：
 
-- 读一遍 [README](README.md) 与[文档站](https://hanyang06.github.io/auto-conf/)；
+- 读一遍 [README](README.md)（[中文版](README.zh-CN.md)）与[文档站](https://hanyang06.github.io/auto-conf/)；
 - 在 [Issues](https://github.com/HanYang06/auto-conf/issues) 与
   [Discussions](https://github.com/HanYang06/auto-conf/discussions) 里搜一下关键词
   （报错全文、键名、文件名都值得搜）；

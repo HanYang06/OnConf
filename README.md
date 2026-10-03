@@ -1,8 +1,8 @@
 <!--
   TODO(rename): 项目名与仓库地址尚未定案。定案后需全局替换的字符串：
     auto-conf / auto_conf / HanYang06/auto-conf / hanyang06.github.io/auto-conf
-  替换点：本文件徽章与链接、pyproject.toml、mkdocs.yml、CONTRIBUTING.md、
-          SECURITY.md、docs/**、.github/**、NOTICE、CODE_OF_CONDUCT.md。
+  替换点：README.md、README.zh-CN.md、pyproject.toml、mkdocs.yml、CONTRIBUTING.md、
+          SECURITY.md、SUPPORT.md、docs/**、.github/**、NOTICE、CODE_OF_CONDUCT.md。
 -->
 
 # auto-conf
@@ -15,12 +15,15 @@
 [![mypy: strict](https://img.shields.io/badge/mypy-strict-blue.svg)](pyproject.toml)
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](.pre-commit-config.yaml)
 
-**Configuration has no verbs: one name reads and writes it, in both directions, without losing a byte or an update.**
+**English** · [简体中文](README.zh-CN.md)
 
+> **Configuration has no verbs: one name reads and writes it, in both directions, without losing a byte or an update.**
+>
 > **配置不再有动词：同一个名字读它、写它，两个方向都不丢——不丢一个字节，也不丢一次更新。**
 
-以上两句是**官方定位句**，英文与中文同源：改一句就必须同步改另一句，并同步
-`pyproject.toml` 的 `description`、`mkdocs.yml` 的 `site_description` 与 `docs/index.md`。
+The two lines above are the **official positioning statement**; English and Chinese are one pair, so
+changing one requires changing the other — plus `README.zh-CN.md`, `pyproject.toml`'s `description`,
+`mkdocs.yml`'s `site_description` and `docs/index.md`.
 
 > [!WARNING]
 > **Pre-Alpha (`0.1.0`) — evaluate only, do not deploy.**
@@ -32,7 +35,8 @@
 > See [Known limitations](#known-limitations) and the
 > [threat model](docs/security/threat-model.md) before you rely on this.
 
-中文文档（含完整设计与威胁模型）见文档站 <https://hanyang06.github.io/auto-conf/>。
+Chinese documentation (design draft and threat model included) lives at
+<https://hanyang06.github.io/auto-conf/>.
 
 ---
 
@@ -45,7 +49,7 @@ A configuration engine for programs that keep their settings in **plain files th
 - **Surgical write-back.** When the engine changes one key, every byte it did not need to
   touch stays exactly where it was — comments, indentation, key order, blank lines.
 - **One flat key space, many backends.** `app.server.port` addresses the same logical key
-  whether it lives in JSON, YAML or a `.env` file.
+  whether it lives in JSON, YAML, TOML or a `.env` file.
 - **A vocabulary next to your values.** The engine maintains a JSON Schema describing
   which keys exist, so your editor can autocomplete and validate the config file.
 - **No server, no daemon, no network.** It is a library that runs in your process.
@@ -145,11 +149,12 @@ Notes on semantics that surprise people:
 | JSON value backend — surgical write-back | ✅ |
 | YAML value backend — comments, anchors, key order preserved | ✅ |
 | `.env` value backend — string-only, no inline comments, no key renaming | ✅ |
+| TOML value backend — table headers normalized to dotted keys | ✅ |
 | Vocabulary (key space) — persisted, JSON Schema round-trip, hash short-circuit | ✅ |
 | Engine assembly — `conf` / `AutoConf` end-to-end | ✅ |
 | Value-as-key (indirect addressing) + guaranteed `$schema` pointer on every write | ✅ |
 | Error taxonomy — `ConfError`, `KeyNotRegisteredError`, `KeyHasNoValueError`, `TypeConflictError`, `UnknownEngineParamError`, `EnvSyntaxError` | ✅ |
-| Test suite | ✅ 212 passing |
+| Test suite — one file per module plus security invariants | ✅ green locally; CI runs it on ubuntu / windows / macos |
 
 ## Roadmap — not available yet
 
@@ -163,7 +168,6 @@ Do not plan around these; they are **not implemented**:
 | Transaction batching / write coalescing | M3 |
 | Audit report and audit event stream (`audit=` is accepted but inert) | M4 |
 | System environment variables as a configuration **source** (`AUTO_CONF_HOME` only locates the config dir) | — |
-| TOML backend | — |
 | Per-format vocabulary export | — |
 | IPC (TCP loopback + HTTP) and the subprocess writer model | — |
 | A real CLI (`auto-conf` currently prints the config directory and exits) | — |
@@ -188,8 +192,8 @@ CI runs on **ubuntu / windows / macos × Python 3.14** and enforces: `ruff check
 `pytest` with a coverage floor, `bandit`, `pip-audit`, `zizmor`, `actionlint`, `gitleaks`,
 CodeQL, dependency review and OpenSSF Scorecard.
 
-`ruff format --check` is currently **non-blocking**: 9 files predate the formatter and the team
-decided not to churn them while the library is still being written.
+`ruff format --check` is currently **non-blocking** (`continue-on-error` in CI): the team decided
+not to reflow the existing files while the library is still being written.
 
 ## Security
 
@@ -219,18 +223,22 @@ Full analysis, per threat with code evidence: [`docs/security/threat-model.md`](
 
 ```text
 src/auto_conf/
-  __init__.py       # the two faces: AutoConf + conf
-  _engine.py        # engine assembly, directory conventions, write-back
-  _core.py          # reconciliation: the three-set algorithm
-  _vocab.py         # vocabulary + JSON Schema
-  _json_backend.py  # JSON value backend
-  _yaml_backend.py  # YAML value backend
-  _env_backend.py   # .env value backend
-  errors.py         # error taxonomy
-tests/              # 212 tests, one file per module + security invariants
-docs/               # documentation site sources (Chinese)
-  design/DESIGN.md  # the design draft — authoritative for *intent*, not for *status*
+  __init__.py        # the two faces: AutoConf + conf
+  _engine.py         # engine assembly, directory conventions, write-back
+  _core.py           # reconciliation: the three-set algorithm
+  _vocab.py          # vocabulary + JSON Schema
+  _textscan.py       # shared byte-level scanning used by the backends
+  _json_backend.py   # JSON value backend
+  _yaml_backend.py   # YAML value backend
+  _env_backend.py    # .env value backend
+  _toml_backend.py   # TOML value backend
+  errors.py          # error taxonomy
+tests/               # one file per module + security invariants
+docs/                # documentation site sources (Chinese)
+  design/DESIGN.md   # the design draft — authoritative for *intent*, not for *status*
 ```
+
+The module list grows as backends land; `src/auto_conf/` itself is authoritative.
 
 ## Contributing
 

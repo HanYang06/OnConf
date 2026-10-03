@@ -5,7 +5,8 @@
 > `Configuration has no verbs: one name reads and writes it, in both directions, without losing a byte or an update.`
 >
 > 以上是**官方定位句**：中文与英文同源，改一句必须同步改另一句，并同步
-> `README.md`、`pyproject.toml` 的 `description` 与本文件的 `site_description`。
+> `README.md`、`README.zh-CN.md`、`pyproject.toml` 的 `description`
+> 与本文件的 `site_description`。
 
 **尚未发布到 PyPI。** 当前版本 `0.1.0`，开发状态 Pre-Alpha：公开 API 仍在收敛，
 可能发生破坏性变更；并发写入、事务与审计尚未实现（以[路线图](roadmap.md)为准）。
@@ -23,7 +24,7 @@
 | 版本 | `0.1.0` |
 | 开发状态 | Pre-Alpha（`Development Status :: 2 - Pre-Alpha`，PyPI 未发布） |
 | 公开 API | `AutoConf` / `conf` 两个面，`__all__` 共 9 个符号 |
-| 值后端 | JSON、YAML、`.env`（字符串后端） |
+| 值后端 | JSON、YAML、TOML、`.env`（字符串后端） |
 | 提交点 | 每次 `conf(key, value)` 当场对账并落盘；进程退出时 `atexit` 触发 `Engine.sync()` |
 | 测试 | 见[路线图](roadmap.md)的状态小节 |
 
@@ -32,13 +33,14 @@
 - **JSON 值后端**：外科手术式回写，未触及的字节逐字不动。
 - **YAML 值后端**：注释、缩进、键序逐字保留。
 - **`.env` 值后端**：纯字符串后端，不做键名映射，不认行内注释（`#` 出现在值里时就是值的一部分）。
+- **TOML 值后端**：表头归一成点分键。
 - **词表**：三态持久化 + JSON Schema 往返 + 哈希短路，落在 `<home>/schema/` 下。
 - **引擎装配**：`conf` / `AutoConf` 两个面端到端接通，声明到读回可用。
 - **用值当键**：支持 `conf(conf("app.key_name"))` 这类间接寻址。
 - **`$schema` 指针**：每次落盘都保证值文件里有指向词表的指针。
 - **异常族**：`ConfError` 及其四类子类，见 [快速开始](getting-started.md)的常见问题。
 
-尚未实现的能力（WAL 与文件锁、原子写、事务攒批、审计事件流、TOML 后端、把系统环境变量
+尚未实现的能力（WAL 与文件锁、原子写、事务攒批、审计事件流、把系统环境变量
 当作配置源、IPC、真正的命令行）**当前不可用**，一份完整清单见[路线图](roadmap.md)。
 
 ## 最小示例
