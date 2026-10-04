@@ -237,12 +237,27 @@ def claim(home: Path) -> ipc.Listener | None:
     **这个返回值就是选举结果**，没有第二次确认 —— 抢绑是原子的。
     """
     address = endpoint_for(home)
-    if os.name != "nt":  # pragma: no cover - 本机是 Windows；POSIX 见 _reap_stale
+    if os.name != "nt":  # pragma: no cover - 本机是 Windows；POSIX 见下面两个函数
+        _ensure_endpoint_dir(address)
         _reap_stale(address)
     try:
         return ipc.Listener(address)
     except OSError:
         return None
+
+
+def _ensure_endpoint_dir(address: str) -> None:
+    """POSIX：socket 文件得落在一个**已经存在**的目录里 —— ``bind`` 不会替你建。
+
+    ``<home>/schema`` 不存在时 ``bind`` 就是 ``ENOENT``，而 :func:`claim` 把它翻译成
+    「抢不到」，于是**第一个写者都当不上**、所有请求退到就地执行（Linux CI 上 16 条
+    测试一起倒）。这一步以前没有：目录是靠 :func:`claim` 顺手调 :func:`authkey_for`
+    的 ``mkdir`` 建出来的 —— 一个副作用。写者本来就会自己读钥匙，所以那个调用一挪走，
+    这个隐式依赖就露出来了。macOS 上看不见：那边走了短端点，目录由 :func:`_short_socket`
+    建。Windows 不用这一段：命名管道不进文件系统。
+    """
+    with contextlib.suppress(OSError):
+        Path(address).parent.mkdir(parents=True, exist_ok=True)
 
 
 def connect(home: Path, *, timeout: float = HELLO_TIMEOUT) -> Conn | None:

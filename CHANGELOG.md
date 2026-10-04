@@ -91,6 +91,10 @@
 - 清残留的探活原本是**打一次招呼**：写者一忙（正在做一轮读改写），那句问候就等到超时
   被读成「没人」，于是**活写者的端点被当成残骸删掉**，下一个进程绑上来就是两个写者写
   同一个目录。改成纯 `connect`（3.14 的 `Client(authkey=None)` 不做挑战应答）。
+- 端点所在目录现在**显式创建**：`bind` 不会替你建 `<home>/schema`，`ENOENT` 会被
+  `claim` 翻译成「抢不到」—— 而这一步以前靠 `claim` 顺手调 `authkey_for` 的 `mkdir`
+  兜着（写者本来就会自己读钥匙，那个调用一挪走，Linux 上第一个写者都当不上、所有请求
+  退到就地执行，16 条测试一起倒）。macOS 反而看不见：那边走了短端点。
 - `release.yml` 的产物校验用了 `ls dist/ | grep -c`：shellcheck `SC2010`（文件名里有
   空格/换行时还会数错），改成逐个文件的 glob 计数。
 - `Security` 作业没给 gitleaks-action v3 传 `GITHUB_TOKEN`，也没给作业级

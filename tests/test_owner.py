@@ -101,6 +101,35 @@ def test_a_path_too_long_for_sun_path_falls_back_to_a_short_endpoint(tmp_path: P
     assert mode & 0o077 == 0, "端点搬进了共享的临时目录，那个目录必须只有本人可进"
 
 
+def test_the_endpoint_directory_is_created_explicitly(tmp_path: Path) -> None:
+    """``AF_UNIX`` 的 socket 文件所在目录必须**先建出来** —— ``bind`` 不会替你建。
+
+    这条依赖以前是隐式的（``claim`` 顺手调 ``authkey_for``，那一步的 ``mkdir`` 把
+    ``<home>/schema`` 建了出来）。隐式的东西一挪走就露头：Linux CI 上第一个 ``claim``
+    就返回 ``None``（``ENOENT`` 被翻译成「抢不到」），16 条测试跟着倒；macOS 看不见，
+    那边走了短端点，目录由 ``_short_socket`` 建。
+    """
+    home = tmp_path / "conf"
+    _owner._ensure_endpoint_dir(str(home / "schema" / "settings.sock"))
+
+    assert (home / "schema").is_dir()
+    assert home.is_dir()
+
+
+def test_claiming_prepares_the_directory_the_socket_lives_in(tmp_path: Path) -> None:
+    """全新目录上的第一次抢绑必须成功 —— 目录得由 ``claim`` 自己准备好。"""
+    home = tmp_path / "conf"
+    assert not home.exists()
+
+    listener = _owner.claim(home)
+    assert listener is not None, "第一个写者应该抢得到"
+    try:
+        if os.name != "nt":  # pragma: no cover - 本机是 Windows
+            assert Path(_owner.endpoint_for(home)).parent.is_dir()
+    finally:
+        listener.close()
+
+
 def test_authkey_is_created_once_and_atomically(tmp_path: Path) -> None:
     """认证码只能有一把：并发的首次创建者拿到不同的钥匙 = 有一个永远连不上。"""
     home = tmp_path / "conf"
