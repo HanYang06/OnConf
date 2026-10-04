@@ -18,12 +18,20 @@
 #    pypa/gh-action-pypi-publish 走 trusted publishing（OIDC），
 #    项目身份由 PyPI 侧的 Trusted Publisher 配置决定，而不是写在这里。
 #
-#    发布前需要在 PyPI 配置 Trusted Publisher，**四项**必须与此处完全一致：
+#    发布前需要在 PyPI 配置 Trusted Publisher，**四项**必须与下面一致（大小写按 claim 填：
+#    PyPI 只对 `repository_owner` 做**大小写敏感**的 `str.__eq__`，其余几项它自己折叠大小写）：
 #      Owner:            HanYang06
 #      Repository:       OnConf      ← 仓库改名会动这一项，改完必须同步 PyPI
-#      Workflow name:    release.yml
+#      Workflow name:    release.yml    ← 只填文件名，不要带 .github/workflows/ 路径
 #      Environment name: pypi
-#    先在 PyPI 创建 `onconf` 项目（或提交 pending publisher），再打 v* tag 触发本工作流。
+#
+#    首次发布（`onconf` 在 PyPI 上还不存在）必须用 **pending publisher**：
+#      https://pypi.org/manage/account/publishing/ ，PyPI Project Name 填 `onconf`，
+#      再加上面四项；项目由第一次成功上传创建。没注册、或任一项对不上，mint-token
+#      就会以 `invalid-publisher: valid token, but no corresponding publisher` 拒绝
+#      （实测踩过一次，见 CONTRIBUTING §4.4）。修好之后在原来那次失败的运行上点
+#      **Re-run failed jobs** 即可，无需重新打 tag（claims 不变，artifact 也还在）。
+#
 #    仓库侧还可以给 `pypi` environment 加「只允许 main 部署」的保护规则当第二道锁。
 #
 #    权限说明：id-token: write 是 OIDC 换取短期凭据的前提；
