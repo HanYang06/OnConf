@@ -10,7 +10,7 @@ body:
 
         请把「哪一篇、哪一段」说到能被直接定位的程度 —— **贴链接或引原文**最省事。
         如果你发现的是**代码行为与文档不一致**，请改用
-        [缺陷报告模板](https://github.com/HanYang06/onconf/issues/new?template=bug_report.yml)，
+        [缺陷报告模板](https://github.com/HanYang06/OnConf/issues/new?template=bug_report.yml)，
         因为那属于行为缺陷。
 
         文档语言以中文为主，英文原版只存在于 README。
