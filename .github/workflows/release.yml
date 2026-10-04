@@ -7,7 +7,7 @@
 #
 #    发布前需要在 PyPI 配置 Trusted Publisher，**四项**必须与此处完全一致：
 #      Owner:            HanYang06
-#      Repository:       onconf      ← 仓库改名会动这一项，改完必须同步 PyPI
+#      Repository:       OnConf      ← 仓库改名会动这一项，改完必须同步 PyPI
 #      Workflow name:    release.yml
 #      Environment name: pypi
 #    先在 PyPI 创建 `onconf` 项目（或提交 pending publisher），再打 v* tag 触发本工作流。
@@ -137,7 +137,14 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           ls -l dist/
-          matching=$(ls dist/ | grep -c -F "$VERSION" || true)
+          # 逐个文件数，不用 `ls dist/ | grep`：文件名里有空格/换行时它会数错，
+          # 那种写法本身也过不了静态检查（SC2010）—— 而且别在注释里以工具名
+          # 打头写「工具名 的」，会被读成指示范式（SC1072/SC1073）。
+          matching=0
+          for artifact in dist/*"$VERSION"*; do
+            [ -f "$artifact" ] || continue
+            matching=$((matching + 1))
+          done
           if [ "$matching" -lt 2 ]; then
             echo "::error::dist/ 里没有同时带着版本 $VERSION 的 sdist 与 wheel"
             exit 1
