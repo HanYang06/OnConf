@@ -226,10 +226,21 @@ git tag -a v0.2.0 -m "0.2.0"                     # 3) tag 必须等于 uv versio
 git push origin main --follow-tags               # 4) 推 tag 触发 release.yml
 ```
 
-`release.yml` 的第一个 job 会读 `uv version --short`，要求触发的 tag 正是 `v<那个版本>`，
-不一致就**直接失败**；构建之后还会核对 `dist/` 里同时存在带着该版本号的 sdist 与 wheel
-（见 `.github/workflows/release.yml` 的 `version` job）。这样「tag 是 v0.2.0、包里其实
-还是 0.1.0」这种发布出不了门 —— PyPI 上的版本号是不可撤回的。
+`release.yml` 的 `version` job 有三道闸门，任一不过则 build 与 publish 都不跑：
+
+| 闸门 | 要求 |
+|---|---|
+| tag 与版本号 | tag 必须正是 `v<pyproject.toml 里的版本>`（`uv version --short`） |
+| tag 落在哪 | tag 指向的提交必须在 `main` 上 —— **先合并到主分支，再在 main 的提交上打标签** |
+| 产物命名 | 构建后 `dist/` 里必须同时有带着该版本号的 sdist 与 wheel |
+
+这样「tag 是 v0.2.0、包里其实还是 0.1.0」和「在没合并的分支上打个 tag 就发版」两种发布
+都出不了门 —— PyPI 上的版本号是不可撤回的。
+
+**发布只有一个入口：推 `v*` tag。** `workflow_dispatch` 是**只构建**的验证入口
+（版本解析 → 构建 → 产物校验 → 来源证明），它没有任何「发布」模式 —— 手动点什么都不会
+发版，这样手动入口就不可能把上面三道闸门绕过去。仓库侧还可以给 `pypi` environment 加一条
+「只允许 `main` 部署」的分支保护规则当第二道锁。
 
 发版时还要把 `CHANGELOG.md` 的 `[Unreleased]` 收成 `## [x.y.z] - YYYY-MM-DD`，
 并在文件末尾补上对应的对比链接。
@@ -323,7 +334,7 @@ $schema 这类以 $ 开头的指令键不参与「清理未知数据」，
    | `.github/workflows/codeql.yml` | `analyze` | CodeQL |
    | `.github/workflows/dependency-review.yml` | `dependency-review` | 依赖变更审查 |
    | `.github/workflows/docs.yml` | `deploy` | MkDocs → GitHub Pages |
-   | `.github/workflows/release.yml` | `build` / `publish` | 构建与 PyPI trusted publishing（手动触发 + tag 触发） |
+   | `.github/workflows/release.yml` | `build` / `publish` | 构建与 PyPI trusted publishing（**只有 tag 推送会发布**；手动触发只构建） |
    | `.github/workflows/scorecard.yml` | `analysis` | OpenSSF Scorecard |
 
    检查档位里还包含 **gitleaks**（密钥泄漏扫描）与 **actionlint**（工作流语法检查），

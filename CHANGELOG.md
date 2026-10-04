@@ -46,6 +46,10 @@
 - 版本号的唯一来源定为 `pyproject.toml`，改动一律走 `uv version`（它同时改 `uv.lock`）；
   `release.yml` 新增版本闸门：tag 必须等于 `v<pyproject 版本>`，构建产物也必须带着它。
   发版 runbook 见 `CONTRIBUTING.md` §4.4。
+- **发布的触发条件收紧成一条路**：只有推 `v*` tag 才会 build + publish，而且 tag 指向的
+  提交必须在 `main` 上 —— 以前只强制 `tag == 版本号`，「在没合并进主分支的提交上打个 tag」
+  同样能把包发出去，而 PyPI 上的版本号不可撤回。`workflow_dispatch` 同时从「可以关掉
+  dry-run 真发版」改成**只构建**的验证入口：手动触发再也绕不过那三道闸门。
 - **项目改名**：`auto-conf` → **OnConf**；仓库、PyPI 发布名、import 名与 CLI 入口统一为
   `onconf`。历史提交信息里的旧名保留不动 —— 改它只能重写历史，收益不抵风险。
 - 仓库与文档站地址统一成**真实大小写**：`github.com/HanYang06/OnConf`、

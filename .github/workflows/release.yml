@@ -1,6 +1,19 @@
 # ============================================================================
 # Release —— 构建 + 来源证明 + 发布到 PyPI
 #
+# ## 什么时候会跑，什么时候**真的发**
+#
+#     push 一个 `v*` tag   →  build + **publish**（唯一的发布入口）
+#     workflow_dispatch    →  只 build + 来源证明，**永不发布**
+#
+# 发布前的三道闸门：前两道在 `version` job，第三道在 `build` job。任一不过就出不去：
+#   1. tag 必须正是 `v<pyproject.toml 里的版本>`；
+#   2. tag 指向的提交必须在 `main` 上 —— 合并进主分支才算数；
+#   3. 构建之后核对 `dist/` 里同时有带着该版本号的 sdist 与 wheel。
+#
+# 「先合并到 main、再在 main 的提交上打 tag」因此在 CI 里是**被强制的**，不只是约定；
+# 反过来，「在任意分支的提交上打个 tag」或「手动点一下」都发不出去。
+#
 # ⚠️ 项目名（PyPI 发布名）是 `onconf`，但本工作流里**刻意不出现**它：
 #    pypa/gh-action-pypi-publish 走 trusted publishing（OIDC），
 #    项目身份由 PyPI 侧的 Trusted Publisher 配置决定，而不是写在这里。
@@ -11,6 +24,7 @@
 #      Workflow name:    release.yml
 #      Environment name: pypi
 #    先在 PyPI 创建 `onconf` 项目（或提交 pending publisher），再打 v* tag 触发本工作流。
+#    仓库侧还可以给 `pypi` environment 加「只允许 main 部署」的保护规则当第二道锁。
 #
 #    权限说明：id-token: write 是 OIDC 换取短期凭据的前提；
 #    attestations: write 用于写来源证明。二者都不需要长期 secret。
@@ -18,14 +32,12 @@
 name: Release
 
 on:
+  # 唯一的发布入口：在 main 上打好 v<版本> tag 后推它（完整 runbook 见 CONTRIBUTING §4.4）。
   push:
     tags: ["v*"]
+  # 只构建、不发布的手动入口：用来在真正打 tag 之前验证版本解析 / 构建 / 产物命名 /
+  # 来源证明这几步。它**没有**「发布」这个模式，所以手动触发不可能误发版。
   workflow_dispatch:
-    inputs:
-      dry-run:
-        description: "只构建与生成来源证明，跳过真正的 PyPI 发布"
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -39,10 +51,11 @@ jobs:
   # 版本闸门：**版本号只有一个来源 —— `pyproject.toml` 的 `[project] version`**，
   # 改动一律走 `uv version`（它会把 pyproject.toml 与 uv.lock 一起改好）。
   #
-  # 这里做两件事：
+  # 这里做三件事：
   #   1. 打 tag 触发时，要求 tag 就是 `v<pyproject 里的版本>`。否则「tag 写 v0.2.0、
   #      包里还是 0.1.0」这种发布会被放出门，而 PyPI 上的版本号不可撤回；
-  #   2. 把版本号交给下游 job —— 构建与发布都用它，而不是各自去猜。
+  #   2. 打 tag 触发时，要求 tag 指向的提交**已经在 main 上**（合并进主分支才算数）；
+  #   3. 把版本号交给下游 job —— 构建与发布都用它，而不是各自去猜。
   # --------------------------------------------------------------------------
   version:
     name: Resolve version from pyproject.toml
@@ -57,6 +70,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # 下面那道「tag 必须在 main 上」的闸门要真的走历史：浅克隆会让 merge-base
+          # 答不上来。fetch-depth: 0 取全部分支与 tag 的历史（origin/main 因此存在）。
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
@@ -70,7 +86,7 @@ jobs:
         id: version
         run: echo "version=$(uv version --short --frozen)" >> "$GITHUB_OUTPUT"
 
-      # 只有 tag 触发才有「tag 与版本」可比；workflow_dispatch（dry-run）跳过。
+      # 只有 tag 触发才有「tag 与版本」可比；workflow_dispatch（只构建）跳过。
       # 注意走 env 而不是把 ${{ }} 直接塞进 run：这是 zizmor 的模板注入审计点。
       - name: Tag must match the project version
         if: github.event_name == 'push'
@@ -84,10 +100,24 @@ jobs:
             exit 1
           fi
 
+      # 第二道闸门：tag 指向的提交必须已经在 main 上。
+      # 「先合并到主分支、再在 main 的提交上打 tag」这句话以前只是约定 —— 没有这一步，
+      # 在**任意分支**的提交上打一个 `v1.2.3` 也能把包发出去，而 PyPI 的版本号不可撤回。
+      # 失败是「关闭」的：origin/main 不存在（浅克隆之类）时这里同样非 0 退出、照样挡住发布。
+      - name: Tag must point at a commit on main
+        if: github.event_name == 'push'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::tag $TAG 指向的提交不在 main 上：先把改动合并进 main，再在 main 的提交上打标签。"
+            exit 1
+          fi
+
       - name: Summary
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: echo "本次发布的版本（来自 pyproject.toml）：$VERSION" >> "$GITHUB_STEP_SUMMARY"
+        run: echo "本次运行的版本（来自 pyproject.toml）：$VERSION" >> "$GITHUB_STEP_SUMMARY"
 
   # --------------------------------------------------------------------------
   # 构建 sdist/wheel，并为其生成可验证的构建来源证明
@@ -160,7 +190,7 @@ jobs:
           retention-days: 30
 
       # 对 dist/* 生成 SLSA 构建来源证明：使用者可用
-      # `gh attestation verify <file> --repo HanYang06/onconf` 校验产物
+      # `gh attestation verify <file> --repo HanYang06/OnConf` 校验产物
       # 确实由本仓库的这次运行构建，而非事后被替换。
       - name: Generate build provenance attestation
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -168,18 +198,20 @@ jobs:
           subject-path: "dist/*"
 
   # --------------------------------------------------------------------------
-  # 发布到 PyPI（dry-run 时整体跳过）
+  # 发布到 PyPI —— **只有 tag 推送会走到这里**（手动触发只构建，见文件头）
   # --------------------------------------------------------------------------
   publish:
     name: Publish to PyPI
     needs: [version, build]
-    # dry-run 语义：workflow_dispatch 勾选 dry-run（默认 true）时只构建不发版；
-    # 打 tag 推送时不带该输入（inputs 上下文为空），因此会真正发布。
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry-run == false }}
+    # 唯一的发布入口是推 `v*` tag（届时 version job 的三道闸门都过了才会轮到这一步）。
+    # 手动触发一概跳过 —— 「勾一个框就能发版」那条路等于把三道闸门全绕过去，
+    # 而 PyPI 上的版本号不可撤回。
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # environment: pypi —— 与 PyPI Trusted Publisher 里登记的 Environment name 对应，
-    # 同时让这次发布受环境保护规则（审批/限制分支）约束。
+    # 同时让这次发布受环境保护规则（审批/限制分支）约束；建议再给它加一条
+    # 「只允许 main 部署」的分支规则当第二道锁。
     environment: pypi
     permissions:
       id-token: write # 向 PyPI 交换 OIDC 短期发布凭据，无需 API token
