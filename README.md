@@ -77,9 +77,9 @@ Then, from a scratch directory:
 ```python
 from onconf import AutoConf, conf
 
-AutoConf(home="./conf")        # optional — omit it and the engine follows its conventions
+AutoConf(home="./conf")  # optional — omit it and the engine follows its conventions
 conf("app.server.port", 8080)  # declare + write; returns the now-effective value
-print(conf("app.server.port")) # read
+print(conf("app.server.port"))  # read
 ```
 
 This is the actual, verified output of that snippet:
@@ -124,9 +124,9 @@ Everything goes through two callables. That is the whole public surface.
 `conf` infers the operation from the **shape of the call**, not from an `op` argument:
 
 ```python
-conf("app.port")                    # read; raises if the key has no value
-conf("app.port", 9090)              # declare + write; returns the effective value
-conf("app.port", doc="服务端口")     # register a key without a value (required key)
+conf("app.port")  # read; raises if the key has no value
+conf("app.port", 9090)  # declare + write; returns the effective value
+conf("app.port", doc="服务端口")  # register a key without a value (required key)
 conf("app.port", 9090, force=True)  # overwrite a value already present in the file
 ```
 

@@ -238,9 +238,7 @@ class TestRoundTripOnRealArtifact:
         assert data["core.storage.new"] is True
         assert "gc.auto.byte" not in data
         assert data["$schema"] == "schema/settings.json"
-        assert set(data) == (
-            set(loads(REAL)) - {"gc.auto.byte"} | {"core.storage.new"}
-        )
+        assert set(data) == (set(loads(REAL)) - {"gc.auto.byte"} | {"core.storage.new"})
 
     def test_untouched_keys_are_byte_identical(self) -> None:
         new = set_value(REAL, "gc.auto.byte", 4096)

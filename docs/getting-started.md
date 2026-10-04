@@ -42,9 +42,9 @@ uv run pytest
 ```python
 from onconf import AutoConf, conf
 
-AutoConf(home="./conf")      # 可省略，走约定
+AutoConf(home="./conf")  # 可省略，走约定
 conf("app.server.port", 8080)  # 声明 + 写，返回当前生效值
-print(conf("app.server.port")) # 读
+print(conf("app.server.port"))  # 读
 ```
 
 三条语义值得单独记住：
@@ -126,10 +126,10 @@ $ uv run python -c "from onconf import conf; conf('app.server.port', 8080)"
 去向与开关在**第一次调用之前**一次性配好（引擎是单例，起来之后不能再改）：
 
 ```python
-AutoConf(log="./onconf.log")            # 改去文件（文件形态带完整日期、不截断）
-AutoConf(log="stdout")                  # 或者 stdout
-AutoConf(audit=True)                    # 再加一份 append-only 的 <home>/audit.log（0600、按大小轮转）
-AutoConf(identity="order-svc@host-3")   # 每行多一个 id=，回答「哪个部署改的」
+AutoConf(log="./onconf.log")  # 改去文件（文件形态带完整日期、不截断）
+AutoConf(log="stdout")  # 或者 stdout
+AutoConf(audit=True)  # 再加一份 append-only 的 <home>/audit.log（0600、按大小轮转）
+AutoConf(identity="order-svc@host-3")  # 每行多一个 id=，回答「哪个部署改的」
 ```
 
 写记录里的 `at=` 是**调用点**（`app/config.py:12`），它回答的是「哪段代码改的」——

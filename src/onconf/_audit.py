@@ -515,9 +515,7 @@ class AuditLog:
             )
         )
 
-    def failed(
-        self, *, item: str, file: str, err: str, message: str = "", at: str = ""
-    ) -> Record:
+    def failed(self, *, item: str, file: str, err: str, message: str = "", at: str = "") -> Record:
         """记一次失败。**失败必须留痕**，否则审计只记录成功的历史（§20.2）。"""
         return self._record(
             Record(
@@ -672,9 +670,7 @@ class AuditLog:
         if self.audit_path is None:
             return
         try:
-            _append_file(
-                self.audit_path, _render_compact(records, full_date=True), rotate=True
-            )
+            _append_file(self.audit_path, _render_compact(records, full_date=True), rotate=True)
         except OSError as exc:
             raise ConfError(f"审计文件写入失败：{self.audit_path}（{exc}）") from exc
 

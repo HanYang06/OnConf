@@ -221,7 +221,7 @@ def set_value(text: str, key: str, value: Any) -> str:
     member = find(text, key)
     if member is None:
         raise KeyError(key)
-    return text[: member.value_start] + render(value) + text[member.value_end:]
+    return text[: member.value_start] + render(value) + text[member.value_end :]
 
 
 def delete_key(text: str, key: str) -> str:
@@ -229,7 +229,7 @@ def delete_key(text: str, key: str) -> str:
     member = find(text, key)
     if member is None:
         raise KeyError(key)
-    return text[: member.line_start] + text[member.line_end:]
+    return text[: member.line_start] + text[member.line_end :]
 
 
 def _section_spans(text: str) -> dict[tuple[str, ...], int]:
@@ -273,7 +273,7 @@ def append_key(text: str, key: str, value: Any) -> str:
             if raw.strip().startswith("[") and not raw.strip().startswith("[[")
         ]
         if headers:
-            return text[: headers[0]] + line + text[headers[0]:]
+            return text[: headers[0]] + line + text[headers[0] :]
         return _append_block(text, line)
 
     spans = _section_spans(text)

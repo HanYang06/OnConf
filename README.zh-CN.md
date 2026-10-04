@@ -72,9 +72,9 @@ uv sync --all-groups
 ```python
 from onconf import AutoConf, conf
 
-AutoConf(home="./conf")        # 可省略——省略时引擎按自己的约定找配置目录
+AutoConf(home="./conf")  # 可省略——省略时引擎按自己的约定找配置目录
 conf("app.server.port", 8080)  # 声明 + 写；返回当前生效值
-print(conf("app.server.port")) # 读
+print(conf("app.server.port"))  # 读
 ```
 
 上面这段是**实测**输出：
@@ -119,9 +119,9 @@ $ uv run python -c "from onconf import conf; print(conf('app.server.port', 8080)
 `conf` 从**调用形态**推断这次要做什么，而不是靠一个 `op` 参数：
 
 ```python
-conf("app.port")                    # 读；键没有值就报错
-conf("app.port", 9090)              # 声明 + 写；返回当前生效值
-conf("app.port", doc="服务端口")     # 只登记一个键、不给值（必填键）
+conf("app.port")  # 读；键没有值就报错
+conf("app.port", 9090)  # 声明 + 写；返回当前生效值
+conf("app.port", doc="服务端口")  # 只登记一个键、不给值（必填键）
 conf("app.port", 9090, force=True)  # 覆盖文件里已有的值
 ```
 

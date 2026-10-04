@@ -136,7 +136,7 @@ def test_key_name_cannot_escape_the_config_home(tmp_path: Path) -> None:
 
     # 写出来的东西**全都在 home 里面**，一个都不许落到外面。
     # 用相对路径的 parts 比用文件名强：文件名相同不代表路径安全
-    #（schema/settings.json 与 settings.json 同名），而且 parts 不看平台分隔符。
+    # （schema/settings.json 与 settings.json 同名），而且 parts 不看平台分隔符。
     written = sorted(p.relative_to(home) for p in home.rglob("*") if p.is_file())
     assert Path("settings.json") in written
     assert all(p.parts[0] in {"settings.json", "schema"} for p in written)

@@ -16,11 +16,7 @@
 
 ``Cairn/config/settings.json`` 的真实形态::
 
-    {
-      "$schema": "schema/settings.json",
-      "pack.max.byte": 2147483648,
-      "slot.max.byte.b": 512
-    }
+    {"$schema": "schema/settings.json", "pack.max.byte": 2147483648, "slot.max.byte.b": 512}
 
 键是点分**字面量**，不做嵌套。所以这里只需要扫**顶层**成员，不需要路径栈。
 """
@@ -200,7 +196,7 @@ def set_value(text: str, key: str, value: Any) -> str:
     member = find(text, key)
     if member is None:
         raise KeyError(key)
-    return text[: member.value_start] + render(value) + text[member.value_end:]
+    return text[: member.value_start] + render(value) + text[member.value_end :]
 
 
 def append_key(text: str, key: str, value: Any, *, indent: str | None = None) -> str:

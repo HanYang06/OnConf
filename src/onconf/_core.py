@@ -200,8 +200,8 @@ def reconcile(
 
     .. code-block:: python
 
-        conf("a.b", 1)      # 此刻期望集只有 {a.b}
-        conf("c.d", 2)      # 此刻期望集只有 {a.b, c.d}
+        conf("a.b", 1)  # 此刻期望集只有 {a.b}
+        conf("c.d", 2)  # 此刻期望集只有 {a.b, c.d}
 
     如果第一次调用就按规则 1 对账，文件里所有**还没声明到**的键都会被当成
     「未知数据」清掉。所以：
@@ -221,9 +221,7 @@ def reconcile(
         for key, fact_value in facts.items():
             if key in declared or _is_directive(key):
                 continue
-            actions.append(
-                Action("clean", key, old=fact_value, reason="事实里有、代码没声明")
-            )
+            actions.append(Action("clean", key, old=fact_value, reason="事实里有、代码没声明"))
 
     for key, decl in declared.items():
         stale = _meta_stale(vocab.get(key), decl)
