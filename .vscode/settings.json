@@ -1,0 +1,73 @@
+{
+  "python.REPL.enableREPLSmartSend": false,
+  "python.languageServer": "Pylance",
+  "python.analysis.languageServerMode": "full",
+  "python.analysis.autoFormatStrings": true,
+  "python.analysis.autoTranslateDocstrings": true,
+  "python.analysis.diagnosticsSource": "Pylance",
+  "mypy-type-checker.path": [
+    "${workspaceFolder}/.venv/Scripts/mypy.exe"
+  ],
+  "mypy-type-checker.interpreter": [
+    "${workspaceFolder}/.venv/Scripts/python.exe"
+  ],
+  "mypy-type-checker.reportingScope": "file",
+  "mypy-type-checker.ignorePatterns": [
+    "**/tests/**"
+  ],
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": [
+    "tests"
+  ],
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    },
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "editor.detectIndentation": false,
+    "files.trimTrailingWhitespace": true
+  },
+  "files.trimFinalNewlines": true,
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.egg-info": true,
+    "**/.mypy_cache": true,
+    "**/.ruff_cache": true,
+    "**/.pytest_cache": true,
+    "**/.coverage": true,
+    "**/htmlcov": true
+  },
+  "search.exclude": {
+    ".venv": true,
+    "build": true,
+    "dist": true,
+    ".mypy_cache": true,
+    ".ruff_cache": true,
+    ".pytest_cache": true
+  },
+  "editor.inlineSuggest.enabled": false,
+  "files.autoSave": "afterDelay",
+  "python.analysis.aiCodeActions": {
+    "generateDocstring": true,
+    "convertLambdaToNamedFunction": true,
+    "implementAbstractClasses": true,
+    "generateSymbol": true,
+    "convertFormatString": true
+  },
+  "python.analysis.enableTroubleshootMissingImports": true,
+  "python.analysis.generateWithTypeAnnotation": true,
+  "python.analysis.inlayHints.functionReturnTypes": true,
+  "python.analysis.inlayHints.pytestParameters": true,
+  "files.autoSaveDelay": 500,
+  "files.autoSaveWhenNoErrors": false,
+  "files.autoSaveWorkspaceFilesOnly": true,
+  "files.insertFinalNewline": true,
+  "files.simpleDialog.enable": true,
+  "python.terminal.activateEnvironment": false,
+  "python.analysis.typeCheckingMode": "off",
+  "python.terminal.shellIntegration.enabled": true
+}
