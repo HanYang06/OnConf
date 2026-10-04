@@ -13,18 +13,28 @@
 
 两者同源，所以不会出现「日志文件与终端说的不是一回事」。
 
-## 四个级别
+## 七个级别：把进程结构也记下来
 
-``[R]`` 读 / ``[W]`` 写（含 ``op=``）/ ``[C]`` 值真的变了（``old → new``）/ ``[E]`` 失败。
+配置事实四个（§20.5 原本用单字母，实现期改成完整词 —— 一眼看得懂比少敲几个字母重要）：
 
-* **写全量、永不聚合**：每条对账动作一行，``op`` 取 fill / overwrite / clean /
+``[Read]`` 读 / ``[Write]`` 写（含 ``op=``）/ ``[Change]`` 值真的变了（``old → new``）/
+``[Error]`` 失败。
+
+进程结构三个（§20 的「日志即调用日志」，把 IPC 那一层摊开）：
+
+``[Start]`` 引擎起来了（pid / ``id=`` / 值文件）/ ``[Link]`` 和写者的关系定下来了
+（``op=bind`` 我成了写者 / ``op=connect`` 连上了写者 / ``op=fallback`` 端点不通、就地执行）/
+``[Send]`` 一次请求真的交给了写者（``op=read`` / ``op=commit``，commit 的 ``data=`` 是本批声明数）。
+
+* **写与进程结构全量、永不聚合**：每条对账动作一行，``op`` 取 fill / overwrite / clean /
   register / update_meta / skip / noop（§20.2 的 ``skip`` 尤其重要：值不一致但尊重
   文件、**想改没改**，不记它用户会以为声明没生效）；
 * **读按事务去重聚合**：同一事务内重复读同一个键合并成一行 ``n=<次数>``（§20.1）。
   循环里 ``conf("x")`` 一万次只会留下一行；
 * 读的记录**不立即输出**，而是攒在事务里等下一个提交点（写提交 / ``flush()`` /
   ``sync()`` / 进程退出）—— 这正是 §21.2 说的「批次本来就存在，批次内对齐因此免费」。
-  代价要写明：纯读的程序在退出前看不到自己的日志行。
+  代价要写明：纯读的程序在退出前看不到自己的日志行。``[Start]`` / ``[Link]`` / ``[Send]``
+  各自立即输出（它们描述的是「此刻进程在干什么」，攒着就失去意义了）。
 
 ## 谁记账
 
@@ -32,16 +42,19 @@
 但记录里的 ``pid`` / ``id=``（身份）/ ``at=``（调用点）仍然是**发起方**的：
 调用点在客户端抓（写时一帧 ``sys._getframe``，§20.3），随声明一起过线。
 
-客户端也会在**自己的终端**上补一份（写者把这一批记录回传），所以每个进程都看得见
-自己发起的操作；**审计文件只由执行点写**，因此不会两个进程往同一个文件里交错。
+客户端补的是执行点**真正输出出去的**记录（写 / 变更 / 被这次提交收口的读），
+所以每个进程都看得见自己发起的操作；失败则两边各记一条（执行点 + 发起方）。
+**审计文件只由执行点写**，因此常规路径上不会两个进程往同一个文件里交错。
 
 ## 不变量
 
 * 日志的字段是**白名单**，不是「把整个值对象 dump 出去」；
 * 审计文件**只追加不重写**（``O_APPEND``，0600），超过 ``AUDIT_MAX_BYTES`` 才按
   时间戳轮转成 ``audit-<时间戳>.log``；
-* 日志写出失败**不阻断配置读写** —— 唯一的例外是审计文件：它的失败抛
-  :class:`~onconf.errors.ConfError`（审计缺席不是「少看几行」）。
+* 日志写出失败**不阻断配置读写**（连渲染失败都不阻断）—— 唯一的例外是审计文件：
+  它的失败抛 :class:`~onconf.errors.ConfError`（审计缺席不是「少看几行」）。
+  唯一的例外之例外是 ``[Start]`` / ``[Link]`` 这两行信息性的记录：它们是「顺带说一下」，
+  不该拦住第一次 ``conf()``。
 """
 
 from __future__ import annotations
@@ -67,11 +80,17 @@ if TYPE_CHECKING:
     from typing import TextIO
 
 
-#: 四个级别（§20.5：用大写 —— 视觉锚点、``grep '^\[W\]'`` 精确）
-LEVEL_READ = "R"
-LEVEL_WRITE = "W"
-LEVEL_CHANGE = "C"
-LEVEL_ERROR = "E"
+#: 四个**配置事实**级别。§20.5 原本定的是单字母 ``[R]/[W]/[C]/[E]``，实现期改成完整词：
+#: 一眼看得懂比少敲几个字母重要，``grep '^\[Write\]'`` 一样精确。
+LEVEL_READ = "Read"
+LEVEL_WRITE = "Write"
+LEVEL_CHANGE = "Change"
+LEVEL_ERROR = "Error"
+
+#: 三个**进程结构**级别：启动、与写者的关系、把请求交出去。
+LEVEL_START = "Start"
+LEVEL_LINK = "Link"
+LEVEL_SEND = "Send"
 
 #: 审计文件名（相对配置目录）
 AUDIT_NAME = "audit.log"
@@ -156,10 +175,15 @@ class Origin:
 
 @dataclass(frozen=True)
 class Record:
-    """一条日志 / 审计记录。**纯数据**，可以直接过 IPC 回传给发起方。"""
+    """一条日志 / 审计记录。**纯数据**，可以直接过 IPC 回传给发起方。
+
+    ``txn`` 为 ``None`` 表示「登记时再分配」；显式写 ``0`` 表示**不属于任何配置事务**
+    （``[Start]`` / ``[Link]`` / ``[Send]`` 这类进程结构记录）。这个区分是必要的：
+    客户端自己的 txn 计数与写者的各数各的，混在一个文件里会出现两个同号批次。
+    """
 
     level: str
-    txn: int
+    txn: int | None
     pid: int
     item: str
     file: str
@@ -449,7 +473,9 @@ class AuditLog:
     def read(self, *, item: str, file: str, source: str, data: Any) -> Record:
         """记一次读。同一事务内重复读同一个键会**合并**成一行 ``n=<次数>``。"""
         return self._record(
-            Record(level=LEVEL_READ, txn=0, pid=0, item=item, file=file, origin=source, data=data)
+            Record(
+                level=LEVEL_READ, txn=None, pid=0, item=item, file=file, origin=source, data=data
+            )
         )
 
     def wrote(
@@ -468,7 +494,7 @@ class AuditLog:
         return self._record(
             Record(
                 level=LEVEL_WRITE,
-                txn=0,
+                txn=None,
                 pid=0,
                 item=item,
                 file=file,
@@ -484,7 +510,9 @@ class AuditLog:
     def changed(self, *, item: str, file: str, old: Any, new: Any, at: str = "") -> Record:
         """记一次**真正的值变化**：``old → new``（§20.2 缺的第一样东西）。"""
         return self._record(
-            Record(level=LEVEL_CHANGE, txn=0, pid=0, item=item, file=file, old=old, new=new, at=at)
+            Record(
+                level=LEVEL_CHANGE, txn=None, pid=0, item=item, file=file, old=old, new=new, at=at
+            )
         )
 
     def failed(
@@ -494,7 +522,7 @@ class AuditLog:
         return self._record(
             Record(
                 level=LEVEL_ERROR,
-                txn=0,
+                txn=None,
                 pid=0,
                 item=item,
                 file=file,
@@ -502,6 +530,33 @@ class AuditLog:
                 message=message,
                 at=at,
             )
+        )
+
+    # ---------------------------------------------------------- 进程结构三行
+
+    def started(self, *, file: str) -> Record:
+        """记一次「**引擎起来了**」：进程结构里最先出现的那一行。
+
+        它只带 pid / ``id=`` / 值文件名 —— 「谁在什么时候开始用这个配置目录」。
+        """
+        return self._record(Record(level=LEVEL_START, txn=0, pid=0, item="", file=file))
+
+    def linked(self, *, op: str, file: str) -> Record:
+        """记一次「**和写者的关系定下来了**」。
+
+        ``op`` 取 ``bind``（抢绑成功，我成了写者）/ ``connect``（连上了写者）/
+        ``fallback``（端点不通，退到就地执行）。重选主会再记一行 —— 关系确实又定了一次。
+        """
+        return self._record(Record(level=LEVEL_LINK, txn=0, pid=0, item="", file=file, op=op))
+
+    def sent(self, *, op: str, item: str, file: str, data: Any = MISSING) -> Record:
+        """记一次「**请求真的交给了写者**」：``op`` 取 ``read`` / ``commit``。
+
+        ``commit`` 时 ``data=`` 是本批声明数。它只记**真的过了 IPC** 的那一次：
+        退到就地执行时没有「发送」这回事。
+        """
+        return self._record(
+            Record(level=LEVEL_SEND, txn=0, pid=0, item=item, file=file, op=op, data=data)
         )
 
     # ------------------------------------------------------ 事务 / 操作边界
@@ -566,10 +621,19 @@ class AuditLog:
             return stamped
 
     def _stamp(self, record: Record) -> Record:
-        if self._txn is None:
-            self._txn = self._next_txn
-            self._next_txn += 1
-        return replace(record, txn=self._txn, pid=self.origin.pid, identity=self.origin.identity)
+        """补上发起方身份；``txn`` 只在记录没带的时候分配。
+
+        生命周期记录（``[Start]`` / ``[Link]`` / ``[Send]``）显式带 ``txn=0``：
+        它们不属于任何一个配置事务，硬塞一个号只会在「客户端 + 写者」同一个文件里
+        造出两个同号的批次。
+        """
+        txn = record.txn
+        if txn is None:
+            if self._txn is None:
+                self._txn = self._next_txn
+                self._next_txn += 1
+            txn = self._txn
+        return replace(record, txn=txn, pid=self.origin.pid, identity=self.origin.identity)
 
     def _emit(self, records: Sequence[Record]) -> None:
         """两路输出**互不牵连**：审计文件失败要抛，但不能让终端那一份跟着丢。

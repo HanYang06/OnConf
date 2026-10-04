@@ -293,6 +293,8 @@ class Engine:
         #: 最近一条「已经记过账」的异常。远端失败要补记时认一下它，免得就地执行
         #: （写者自己 / 退到底）那条路把同一件事记两遍。
         self._logged_failure: BaseException | None = None
+        #: ``[Start]`` 只记一次（第一次真正用到这个引擎时）。
+        self._started = False
 
     # ------------------------------------------------------------------ 两个面
 
@@ -327,6 +329,7 @@ class Engine:
 
     def read(self, key: str) -> Any:
         """读一个配置项。**先把待写交出去**，否则可能读不到自己刚声明的事实。"""
+        self._ensure_started()
         self._load_audited(item=key)
         self._commit_local(clean=False)
         if self._is_writer():
@@ -362,6 +365,7 @@ class Engine:
         **不参与读取期转换**——引擎对值是透明的（值原样进出）。
         """
         at = call_site()
+        self._ensure_started()
         if value is not MISSING and type is not None and not _type_matches(value, type):
             conflict = TypeConflictError(
                 f"{key!r} 的默认值 {value!r} 不符合声明的类型 {type.__name__}"
@@ -474,8 +478,51 @@ class Engine:
         **另一个引擎**的声明集上了。
         """
         if self._chan is None:
-            self._chan = _owner_module().Channel(self, self._execute_local)
+            owner = _owner_module()
+            self._chan = owner.Channel(
+                self,
+                self._execute_local,
+                on_link=self._linked,
+                on_send=self._sent,
+            )
         return self._chan
+
+    # ------------------------------------------------- 进程结构的三行日志
+
+    def _ensure_started(self) -> None:
+        """第一次真正用到这个引擎时记一行 ``[Start]``。
+
+        放在「第一次读 / 写」而不是 ``__init__``：构造一个从不使用的引擎不该产生日志，
+        而且 ``Engine(...)`` 本身不该因为审计文件写不出去而失败。这一行是**信息性**的，
+        所以连它自己的写出失败也吞掉 —— 真正落盘时的审计失败照旧抛（§20.1）。
+        """
+        if self._started:
+            return
+        self._started = True
+        self._audit.started(file=self.values_path.name)
+        with contextlib.suppress(ConfError):
+            self._audit.close_txn()
+
+    def _linked(self, op: str) -> None:
+        """通道和写者的关系定下来了：``bind`` / ``connect`` / ``fallback``。"""
+        self._audit.linked(op=op, file=self.values_path.name)
+        with contextlib.suppress(ConfError):
+            self._audit.close_txn()
+
+    def _sent(self, request: Any) -> None:
+        """一次请求**真的过了 IPC** —— 只有 :meth:`onconf._owner.Channel._try_remote` 会调它。
+
+        退到就地执行时不会走到这里：那条路没有「发送」这回事。
+        """
+        owner = _owner_module()
+        self._audit.sent(
+            op=request.op,
+            item=request.key,
+            file=self.values_path.name,
+            data=len(request.decls) if request.op == owner.OP_COMMIT else MISSING,
+        )
+        with contextlib.suppress(ConfError):
+            self._audit.close_txn()
 
     # ------------------------------------------ 就地执行（只有写者会走这条路）
 

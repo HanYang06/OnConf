@@ -98,6 +98,8 @@ from .errors import (
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ._core import Decl
     from ._engine import Engine
 
@@ -107,6 +109,10 @@ if TYPE_CHECKING:
     #: ``send`` / ``recv`` / ``poll`` / ``close``，两边签名一模一样，收成 ``Any``
     #: 比把同一串联合抄六遍干净得多。
     Conn = Any
+
+    #: 通道给引擎的两个回调（``[Link]`` / ``[Send]``，见 ``Engine._linked`` / ``_sent``）
+    _OnLink = Callable[[str], None]
+    _OnSend = Callable[["Request"], None]
 
 #: Windows 命名管道的**全局**命名空间前缀
 _PIPE_PREFIX = r"\\.\pipe\onconf-"
@@ -459,9 +465,20 @@ class Channel:
     它的声明就落到了**另一个引擎**的声明集上。
     """
 
-    def __init__(self, engine: Engine, execute: _Exec) -> None:
+    def __init__(
+        self,
+        engine: Engine,
+        execute: _Exec,
+        *,
+        on_link: _OnLink | None = None,
+        on_send: _OnSend | None = None,
+    ) -> None:
         self.engine = engine
         self._execute = execute
+        #: 两个可选回调，让 ``Engine`` 能记 ``[Link]`` / ``[Send]``（§20 的进程结构）。
+        #: 通道不直接碰引擎的审计器 —— 那是引擎的私事，而且 ``_owner`` 也在就地导入它。
+        self._on_link = on_link
+        self._on_send = on_send
         #: 一条连接不能被两个线程同时收发，所以整轮往返都在这把锁里
         self._lock = threading.Lock()
         self._client: Conn | None = None
@@ -479,20 +496,34 @@ class Channel:
         try:
             self._client = connect(self.engine.home)
             if self._client is not None:
+                self._notify_link("connect")
                 return
             writer = Owner.claim(self.engine, self._execute)
             if writer is None:
                 # 抢绑失败 ⇒ 有人在我们探测之后绑上了。这是正常竞态，再连一次。
                 self._client = connect(self.engine.home)
+                self._notify_link("connect" if self._client is not None else "fallback")
                 return
         except OSError, ConfError:
             self._client = None
             self._writer = None
+            self._notify_link("fallback")
             return
         self._writer = writer
         writer.start()
+        self._notify_link("bind")
 
     # -------------------------------------------------------------------- 出口
+
+    def _notify_link(self, op: str) -> None:
+        """告诉引擎「关系定下来了」。回调是尽力而为的，不许影响选主。"""
+        if self._on_link is not None:
+            self._on_link(op)
+
+    def _notify_send(self, request: Request) -> None:
+        """告诉引擎「这一次请求真的发出去了」。"""
+        if self._on_send is not None:
+            self._on_send(request)
 
     def is_mine(self) -> bool:
         """本通道的写者是不是本引擎自己。
@@ -551,9 +582,14 @@ class Channel:
             self._client = None
         return outcome
 
-    @staticmethod
-    def _try_remote(client: Conn, request: Request) -> Any:
-        """发一轮往返。断了返回 :data:`_RETRY`，业务异常照原样抛回去。"""
+    def _try_remote(self, client: Conn, request: Request) -> Any:
+        """发一轮往返。断了返回 :data:`_RETRY`，业务异常照原样抛回去。
+
+        这里也是唯一「真的过了 IPC」的地方，所以 ``[Send]`` 由它触发 ——
+        退到就地执行那条路没有「发送」这回事。重发（写者换了人）会再记一行：
+        那是真的又发了一次。
+        """
+        self._notify_send(request)
         try:
             client.send(request)
             status, payload = client.recv()

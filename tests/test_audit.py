@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from onconf import Engine, _audit, _reset
+from onconf import Engine, _audit, _owner, _reset
 from onconf._audit import AuditLog, Origin, Record, cell_len, error_kind, strip_ansi
 from onconf._core import MISSING, NO_VALUE
 from onconf._lock import LockTimeoutError
@@ -53,7 +53,7 @@ def _isolate() -> Iterator[None]:
 
 
 def _lines(text: str) -> list[str]:
-    """只留记录行（``[R]`` / ``[W]`` / ``[C]`` / ``[E]`` 开头）。"""
+    """只留记录行（``[Read]`` / ``[Write]`` / ``[Change]`` / ``[Error]`` 开头）。"""
     return [line for line in text.splitlines() if line.startswith("[")]
 
 
@@ -70,18 +70,18 @@ class TestWriteRecords:
     def test_a_declaration_logs_a_write_and_a_change(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """``fill`` 写一条 ``[W]``，值真的变了再写一条 ``[C] old → new``（§20.6）。"""
+        """``fill`` 写一条 ``[Write]``，值真的变了再写一条 ``[Change] old → new``（§20.6）。"""
         engine = Engine(tmp_path)
         engine("app.server.port", 512, type=int)
 
         err = capsys.readouterr().err
-        write = _first(err, "W")
+        write = _first(err, "Write")
         assert "item=app.server.port" in write
         assert "file=settings.json" in write
         assert "op=fill" in write
         assert "data=512" in write
 
-        change = _first(err, "C")
+        change = _first(err, "Change")
         assert "old=-" in change, "新建的键要从「没有」变成有"
         assert "new=512" in change
         assert _HERE.search(change), "变更行必须带调用点"
@@ -109,7 +109,7 @@ class TestWriteRecords:
         engine("k", 2)
 
         err = capsys.readouterr().err
-        skip = _first(err, "W")
+        skip = _first(err, "Write")
         assert "op=skip" in skip
         assert "old=1" in skip
         assert "new=2" in skip
@@ -126,14 +126,14 @@ class TestWriteRecords:
 
         err = capsys.readouterr().err
         assert "op=overwrite" in err
-        change = _first(err, "C")
+        change = _first(err, "Change")
         assert "old=1" in change
         assert "new=2" in change
 
     def test_rule_one_is_logged_as_clean(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """完整提交点清掉未知键时，``[C]`` 的 new 写 ``-``（值没了）。"""
+        """完整提交点清掉未知键时，``[Change]`` 的 new 写 ``-``（值没了）。"""
         engine = Engine(tmp_path)
         engine("k", 1)
         data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
@@ -148,7 +148,7 @@ class TestWriteRecords:
         err = capsys.readouterr().err
         assert "op=clean" in err
         change = next(
-            line for line in _lines(err) if line.startswith("[C]") and "item=ghost" in line
+            line for line in _lines(err) if line.startswith("[Change]") and "item=ghost" in line
         )
         assert "old=7" in change
         assert "new=-" in change
@@ -165,7 +165,7 @@ class TestReadRecords:
         engine("k")
         engine.flush()
 
-        read = _first(capsys.readouterr().err, "R")
+        read = _first(capsys.readouterr().err, "Read")
         assert "item=k" in read
         assert "origin=file" in read
         assert "data=512" in read
@@ -201,7 +201,7 @@ class TestReadRecords:
             engine("k")
         engine.flush()
 
-        reads = [line for line in _lines(capsys.readouterr().err) if line.startswith("[R]")]
+        reads = [line for line in _lines(capsys.readouterr().err) if line.startswith("[Read]")]
         assert len(reads) == 1, "读没有去重聚合"
         assert "n=10000" in reads[0]
 
@@ -288,7 +288,7 @@ class TestRendering:
         engine("b", 2)
         engine.flush()
 
-        writes = [line for line in _lines(capsys.readouterr().err) if line.startswith("[W]")]
+        writes = [line for line in _lines(capsys.readouterr().err) if line.startswith("[Write]")]
         assert len(writes) == 4, "两个键各两条：fill / update_meta"
         columns = {cell_len(line[: line.index("file=")]) for line in writes}
         assert len(columns) == 1, f"列没有对齐：{writes}"
@@ -360,7 +360,9 @@ class TestSinks:
         engine = Engine(tmp_path)
         engine("k", 1)
 
-        assert capsys.readouterr().err
+        err = capsys.readouterr().err
+        assert "[Write]" in err, "没开审计也得有写日志 —— 关掉它不是「少看几行」"
+        assert "[Start]" in err, "启动那一行也该在"
         assert not (tmp_path / "audit.log").exists(), "没开审计就不该有审计文件"
 
     def test_the_log_can_go_to_a_file(
@@ -373,7 +375,7 @@ class TestSinks:
 
         assert capsys.readouterr().err == "", "日志改了去向就不该再写终端"
         text = log.read_text(encoding="utf-8")
-        assert "[W]" in text
+        assert "[Write]" in text
         assert _FULL_DATE.search(text), "文件形态带完整日期"
 
     def test_the_log_can_go_to_stdout(
@@ -382,7 +384,7 @@ class TestSinks:
         engine = Engine(tmp_path, log="stdout")
         engine("k", 1)
 
-        assert "[W]" in capsys.readouterr().out
+        assert "[Write]" in capsys.readouterr().out
 
     def test_identity_lands_on_every_line(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -484,8 +486,8 @@ class TestAccounting:
 
         log.render_remote([record])
 
-        assert audit_path.read_text(encoding="utf-8").count("[W]") == 1
-        assert log_path.read_text(encoding="utf-8").count("[W]") == 2
+        assert audit_path.read_text(encoding="utf-8").count("[Write]") == 1
+        assert log_path.read_text(encoding="utf-8").count("[Write]") == 2
 
     def test_a_client_sees_its_own_work_and_feeds_the_writer(self, tmp_path: Path) -> None:
         """客户端交一批声明：写者记账（含审计文件），客户端在自己日志里补一份。"""
@@ -533,14 +535,14 @@ class TestAccounting:
             writer("k", 1)
             client("k")
             client("k")
-            client("k2", 2)  # 客户端自己下一次提交：写者顺手把攒着的 [R] n=2 收口
+            client("k2", 2)  # 客户端自己下一次提交：写者顺手把攒着的 [Read] n=2 收口
 
             client_text = client_log.read_text(encoding="utf-8")
-            assert client_text.count("[R]") == 1, "读被补了两次"
+            assert client_text.count("[Read]") == 1, "读被补了两次"
             assert "n=2" in client_text
 
             audit_text = (home / "audit.log").read_text(encoding="utf-8")
-            assert audit_text.count("[R]") == 1
+            assert audit_text.count("[Read]") == 1
             assert "n=2" in audit_text
         finally:
             client.close()
@@ -556,7 +558,7 @@ class TestAccounting:
             with pytest.raises(KeyNotRegisteredError):
                 client("nope")
 
-            assert (home / "audit.log").read_text(encoding="utf-8").count("[E]") == 1
+            assert (home / "audit.log").read_text(encoding="utf-8").count("[Error]") == 1
         finally:
             client.close()
             writer.close()
@@ -638,13 +640,14 @@ class TestOriginIntegrity:
     ) -> None:
         """键名里的换行不许伪造出额外的审计行。"""
         engine = Engine(tmp_path)
-        forged = "k\n[W]-[1970-01-01T00:00:00.000]-[txn=1 pid=1] item=FAKE"
+        forged = "k\n[Write]-[1970-01-01T00:00:00.000]-[txn=1 pid=1] item=FAKE"
         engine(forged, 1)
 
         lines = _lines(capsys.readouterr().err)
-        assert len(lines) == 3, f"记录行数不对：{lines}"
-        assert all("item=FAKE" not in line or "\\n" in line for line in lines)
-        assert "\\n" in lines[0], "换行应当被折成可见转义"
+        assert len(lines) == 5, f"记录行数不对（[Start] + [Link] + 三条）：{lines}"
+        writes = [line for line in lines if line.startswith("[Write]")]
+        assert len(writes) == 2
+        assert all("\\n" in line for line in writes), "换行应当被折成可见转义"
 
     def test_a_nameless_client_does_not_inherit_the_writers_identity(self, tmp_path: Path) -> None:
         """客户端没设 ``identity`` 时，不能被记成写者的服务名。"""
@@ -662,3 +665,62 @@ class TestOriginIntegrity:
         finally:
             client.close()
             writer.close()
+
+
+# --------------------------------------------------------------------------- #
+# 进程结构三行：[Start] 起来了 / [Link] 连上了 / [Send] 发出去了
+# --------------------------------------------------------------------------- #
+
+
+class TestProcessStructure:
+    def test_start_and_bind_are_logged_once(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """单进程：先说自己起来了，再说自己成了写者，然后才是配置事实。"""
+        engine = Engine(tmp_path)
+        engine("k", 1)
+
+        lines = _lines(capsys.readouterr().err)
+        assert lines[0].startswith("[Start]"), lines
+        assert lines[1].startswith("[Link]")
+        assert "op=bind" in lines[1], "第一个动手的进程就是写者"
+        assert len([line for line in lines if line.startswith("[Start]")]) == 1, "记了两次"
+        assert "txn=0" in lines[0], "进程结构记录不属于任何配置事务"
+
+    def test_a_client_logs_connect_and_send(self, tmp_path: Path) -> None:
+        """客户端：链上写者 → 每次请求各记一条 [Send]（read 带键、commit 带批大小）。"""
+        home = tmp_path / "conf"
+        writer = Engine(home, log=tmp_path / "writer.log")
+        client = Engine(home, log=tmp_path / "client.log")
+        try:
+            writer("bootstrap", 1)
+            client("bootstrap")
+            client("client.key", 2)
+            client.flush()
+
+            lines = _lines((tmp_path / "client.log").read_text(encoding="utf-8"))
+            assert lines[0].startswith("[Start]")
+            assert lines[1].startswith("[Link]")
+            assert "op=connect" in lines[1], "客户端不是写者"
+            sends = [line for line in lines if line.startswith("[Send]")]
+            assert len(sends) == 2, sends
+            assert "op=read" in sends[0]
+            assert "item=bootstrap" in sends[0]
+            assert "op=commit" in sends[1]
+            assert "data=1" in sends[1], "commit 记本批声明数"
+            assert all("txn=0" in line for line in sends), "发送记录不属于配置事务"
+        finally:
+            client.close()
+            writer.close()
+
+    def test_a_fallback_is_logged_as_such(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """端点整条路不通时，日志要说明「没连上、就地干」，而不是假装连上了。"""
+        monkeypatch.setattr(_owner, "connect", lambda _home, **_kw: None)
+        monkeypatch.setattr(_owner, "claim", lambda _home: None)
+
+        engine = Engine(tmp_path)
+        engine("k", 1)
+
+        assert "op=fallback" in _first(capsys.readouterr().err, "Link"), "退到就地执行要留痕"

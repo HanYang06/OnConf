@@ -49,7 +49,8 @@
 - **锁内按需重读**：指纹（`mtime` + 大小）同时看值文件与词表，别人刚登记的键不会被挤掉。
 - **原子写**：同目录临时文件 → `fsync` → `os.replace`（POSIX 再加父目录 `fsync`），行尾与权限位原样保留。
 - **可选攒批窗口**：`flush_window`（默认 `0`，即当场落盘）。
-- **日志与审计**：强制 `[R]` / `[W]` / `[C]` / `[E]` 事件流（去向可改、**不可关闭**），
+- **日志与审计**：强制 `[Read]` / `[Write]` / `[Change]` / `[Error]` 事件流，外加进程结构
+  三行 `[Start]` / `[Link]` / `[Send]`（去向可改、**不可关闭**），
   写全量、读按事务去重（`n=`），写记录带调用点与 pid；`audit=True` 再落一份
   append-only 的 `<home>/audit.log`（`0600`、按大小轮转）。终端用**显示宽度**对齐。
 - **异常族**：`ConfError` 连同 `KeyNotRegisteredError` / `KeyHasNoValueError` /

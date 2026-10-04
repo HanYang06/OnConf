@@ -29,7 +29,7 @@
 | 锁内按需重读 | 指纹（`mtime` + 大小）**同时**看值文件与词表，避免把别人刚登记的键挤掉 | `Engine._reload_if_changed` |
 | 专职写者 | 谁先抢绑到配置目录的端点，谁就是唯一的读写者；其余进程经 `multiprocessing.connection` 发请求。**抢绑即选举**，不涉及锁文件；认证在应用层，等待有界 | `src/onconf/_owner.py` |
 | 原子写 | 同目录临时文件 → `fsync` → `os.replace`，POSIX 再加父目录 `fsync`；沿用文件原本的**行尾**与权限位 | `Engine._atomic_write_text` |
-| 日志与审计 | 强制 `[R]` / `[W]` / `[C]` / `[E]` 事件流：去向可改（`log="stderr"` 默认 / `"stdout"` / 文件）、**不可关闭**；写全量（含 `op=skip` / `op=noop`）、读按事务去重（`n=`）；写记录带调用点、pid 与可选 `identity=`；终端按**显示宽度**弹性对齐、文件形态紧凑且不截断；`audit=True` 追加写 append-only 的 `<home>/audit.log`（`0600`、按大小轮转） | `src/onconf/_audit.py`（设计稿 §20 / §21） |
+| 日志与审计 | 强制 `[Read]` / `[Write]` / `[Change]` / `[Error]` 事件流，外加进程结构三行 `[Start]`（引擎起来）/ `[Link]`（bind / connect / fallback）/ `[Send]`（一次请求真的过了 IPC）：去向可改（`log="stderr"` 默认 / `"stdout"` / 文件）、**不可关闭**；写全量（含 `op=skip` / `op=noop`）、读按事务去重（`n=`）；写记录带调用点、pid 与可选 `identity=`；终端按**显示宽度**弹性对齐、文件形态紧凑且不截断；`audit=True` 追加写 append-only 的 `<home>/audit.log`（`0600`、按大小轮转） | `src/onconf/_audit.py`（设计稿 §20 / §21） |
 
 ## 进行中（已开始，尚未交付）
 

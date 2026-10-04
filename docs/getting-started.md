@@ -97,18 +97,31 @@ print(conf("app.server.port")) # 读
 
 ```console
 $ uv run python -c "from onconf import conf; conf('app.server.port', 8080)"
-[W]-[05:12:34.568]-[txn=1 pid=4821]  item=app.server.port  file=settings.json  op=fill         data=8080  reason=事实里没有
-[C]-[05:12:34.568]-[txn=1 pid=4821]  item=app.server.port  file=settings.json  old=-           new=8080   at=<string>:1
-[W]-[05:12:34.568]-[txn=1 pid=4821]  item=app.server.port  file=settings.json  op=update_meta  data=8080  reason=登记元数据
+[Start]-[05:12:34.500]-[txn=0 pid=4821]   item=-  file=settings.json
+[Link]-[05:12:34.501]-[txn=0 pid=4821]    item=-  file=settings.json  op=bind
+[Write]-[05:12:34.502]-[txn=1 pid=4821]   item=app.server.port  file=settings.json  op=fill         data=8080  reason=事实里没有
+[Change]-[05:12:34.502]-[txn=1 pid=4821]  item=app.server.port  file=settings.json  old=-           new=8080   at=<string>:1
+[Write]-[05:12:34.502]-[txn=1 pid=4821]   item=app.server.port  file=settings.json  op=update_meta  data=8080  reason=登记元数据
 ```
 
-（这是实测输出的形态，时间戳与 pid 因运行而异。第三行是词表登记：值与默认值一致时，
-文件不动，但词表要补上「有这么一个键」。）
+（这是实测输出的形态，时间戳与 pid 因运行而异。第三、五行都有：`fill` 是值落进文件，
+`update_meta` 是词表登记 —— 值与默认值一致时文件不动，但词表要补上「有这么一个键」。）
 
-四个级别：`[R]` 读 / `[W]` 一次对账动作（`op=` 是 fill、overwrite、clean、register、
-update_meta、**skip**「想改没改」或 **noop**「本批声明已满足」）/ `[C]` 值真的变了
-（`old → new`）/ `[E]` 失败。同一事务里重复读同一个键会合并成一行 `n=<次数>`，
-所以循环里读一万次不会刷一万行。
+**七个级别**，名字就是它干的事：
+
+| 级别 | 意思 | 出现时机 |
+|---|---|---|
+| `[Start]` | 引擎起来了 | 第一次真正用到这个引擎 |
+| `[Link]` | 和写者的关系定下来了 | `op=bind` 我成了写者 / `op=connect` 连上写者 / `op=fallback` 端点不通、就地执行 |
+| `[Send]` | 一次请求真的交给了写者 | `op=read` / `op=commit`（commit 的 `data=` 是本批声明数） |
+| `[Read]` | 读到一个值 | 带 `origin=`（file 或 vocab）与 `n=<次数>` |
+| `[Write]` | 一次对账动作 | `op=` 取 fill / overwrite / clean / register / update_meta / **skip**「想改没改」/ **noop**「本批声明已满足」 |
+| `[Change]` | 值真的变了 | `old → new` |
+| `[Error]` | 失败 | 带 `err=` 与原因 |
+
+`[Start]` / `[Link]` / `[Send]` 是**进程结构**那三行，一出现一条、带 `txn=0`（不属于任何
+配置事务）；它们让一个多进程跑起来的日志自己就把「启动 → 连接 → 发送 → 配置事实」讲清楚。
+同一事务里重复读同一个键会合并成一行 `n=<次数>`，所以循环里读一万次不会刷一万行。
 
 去向与开关在**第一次调用之前**一次性配好（引擎是单例，起来之后不能再改）：
 
@@ -120,8 +133,8 @@ AutoConf(identity="order-svc@host-3")   # 每行多一个 id=，回答「哪个�
 ```
 
 写记录里的 `at=` 是**调用点**（`app/config.py:12`），它回答的是「哪段代码改的」——
-配置语境下这比 pid 有用得多。审计文件**只由执行点写**（有专职写者时就是写者），
-所以多进程下它不会交错。
+配置语境下这比 pid 有用得多。审计文件由**执行点**写（有专职写者时就是写者），
+所以常规路径上多进程不会交错。
 
 ## 常见问题：几个异常怎么区分
 
