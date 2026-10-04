@@ -90,7 +90,7 @@ jobs:
       # globs 仍显式写明：让"扫了哪些文件"在 CI 里一目了然。
       - name: Markdownlint
         continue-on-error: true
-        uses: DavidAnson/markdownlint-cli2-action@07035fd053f7be764496c0f8d8f9f41f98305101 # v22
+        uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff # v24.2.0
         with:
           globs: "**/*.md"
 
