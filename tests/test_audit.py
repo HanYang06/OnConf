@@ -644,10 +644,14 @@ class TestOriginIntegrity:
         engine(forged, 1)
 
         lines = _lines(capsys.readouterr().err)
-        assert len(lines) == 5, f"记录行数不对（[Start] + [Link] + 三条）：{lines}"
+        # 生命周期那几行（``[Start]`` / ``[Link]``）随环境而变 —— 抢到端点、连上写者、
+        # 还是退到就地执行，各自记的不一样。所以这里只钉**伪造**这一件事。
         writes = [line for line in lines if line.startswith("[Write]")]
-        assert len(writes) == 2
+        assert len(writes) == 2, f"[Write] 行数不对：{lines}"
         assert all("\\n" in line for line in writes), "换行应当被折成可见转义"
+        assert not any(line.startswith("[Write]-[1970-01-01T00:00:00.000]") for line in lines), (
+            "键名里的换行伪造出了一条独立的审计行"
+        )
 
     def test_a_nameless_client_does_not_inherit_the_writers_identity(self, tmp_path: Path) -> None:
         """客户端没设 ``identity`` 时，不能被记成写者的服务名。"""
