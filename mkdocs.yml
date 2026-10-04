@@ -10,9 +10,9 @@
 
 site_name: OnConf
 site_description: "配置不再有动词：同一个名字读它、写它，两个方向都不丢——不丢一个字节，也不丢一次更新。"
-site_url: https://hanyang06.github.io/onconf/
-repo_url: https://github.com/HanYang06/onconf
-repo_name: HanYang06/onconf
+site_url: https://hanyang06.github.io/OnConf/
+repo_url: https://github.com/HanYang06/OnConf
+repo_name: HanYang06/OnConf
 edit_uri: edit/main/docs/
 copyright: Copyright 2026 HanYang06 — Apache-2.0
 
@@ -119,5 +119,5 @@ nav:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/HanYang06/onconf
+      link: https://github.com/HanYang06/OnConf
       name: GitHub 仓库

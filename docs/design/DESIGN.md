@@ -1,4 +1,4 @@
-# auto-conf 设计草案 v0.1
+# OnConf 设计草案 v0.1
 
 > 状态：待评审。标 ❓ 的是需要拍板的点。
 > 本文是把你口述的需求整理成可执行的规格，不是最终形态。
@@ -1635,7 +1635,7 @@ AutoConf(endpoint="tcp://...")   # 跨语言：HTTP + 惰性 httpx
   app.yaml
   app.yaml.wal
   app.yaml.lock
-  auto-conf.endpoint       # endpoint 名 + 随机 authkey，0600
+  onconf.endpoint          # endpoint 名 + 随机 authkey，0600
 ```
 
 1. **默认**：文件锁 + WAL —— 零 IPC、零命名空间；
@@ -2095,5 +2095,26 @@ _recv_bytes → answer_challenge → Client → connect() → Channel.__init__()
   文件一致性由 OS 锁兜着（同进程两个 fd 的 `msvcrt.locking` 也会互相冲突，所以其中一边
   可能等满 `lock_timeout` 后抛 `LockTimeoutError`），但引擎内存态在那个窗口里是可竞争的。
   这一条**没有回归测试守护**，见威胁模型 T4 的残余风险。
+
+### 32.9 POSIX 长路径：端点搬到短名字的临时目录
+
+`AF_UNIX` 的 `sun_path` 只有 **104 字节**（含结尾 NUL）。端点名原本就是
+`<home>/schema/settings.sock`，路径一深（macOS 的 pytest `tmp_path` 正是
+`/private/var/folders/…`）`ipc.Listener` 直接抛错；而 `_attach` 是**尽力而为**的，
+于是专职写者**静默失效** —— 所有请求退到就地执行，界面上只多几条 `[Link] op=fallback`。
+照出来的症状在 macOS CI：8 条 owner 测试失败，覆盖率掉到 89%（`_owner.py` 只到 50%）。
+
+处理：自然路径超过上限（留余量后取 **100 字节**，见 `SOCKET_PATH_LIMIT`）时，端点改成
+`<tmpdir>/onconf-<uid>/onconf-<sha256(home)[:24]>.sock`。**仍然只由配置目录决定**
+（哈希的是解析后的绝对路径），所以同一个目录在每个进程里算出的端点完全一样；`0o700`
+的子目录是**补回来的隔离** —— 端点在共享的临时目录里，别人能连上就等于能冒充写者。
+Windows 不受影响：命名管道不进文件系统。
+
+探活（清残留的前置判断）同时改了判据。写者被 `SIGKILL` 会在磁盘上留下 socket 文件，
+不删就**没人能再当写者**；但「有人在听」只能用**纯 `connect`** 判断，不能拿 `_hello`
+打招呼 —— 打招呼是**有状态**的，写者一忙（正在做一轮读改写），那句问候就排到超时才
+被读成「没人」，于是**活写者的端点被当残骸删掉**，下一个进程绑上来就是两个写者写同一
+个目录。3.14 的 `Client(authkey=None)` 不再被补成进程默认钥匙，构造函数里只剩一次即时
+的 `connect(2)`：有人在听就成功，是残骸就当场拒绝。
 
 状态见[路线图](../roadmap.md)。

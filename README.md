@@ -1,8 +1,8 @@
 # OnConf
 
-[![CI](https://github.com/HanYang06/onconf/actions/workflows/ci.yml/badge.svg)](https://github.com/HanYang06/onconf/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/HanYang06/onconf/actions/workflows/codeql.yml/badge.svg)](https://github.com/HanYang06/onconf/actions/workflows/codeql.yml)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/HanYang06/onconf/badge)](https://securityscorecards.dev/viewer/?uri=github.com/HanYang06/onconf)
+[![CI](https://github.com/HanYang06/OnConf/actions/workflows/ci.yml/badge.svg)](https://github.com/HanYang06/OnConf/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/HanYang06/OnConf/actions/workflows/codeql.yml/badge.svg)](https://github.com/HanYang06/OnConf/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/HanYang06/OnConf/badge)](https://securityscorecards.dev/viewer/?uri=github.com/HanYang06/OnConf)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
 [![mypy: strict](https://img.shields.io/badge/mypy-strict-blue.svg)](pyproject.toml)
@@ -32,7 +32,7 @@ changing one requires changing the other — plus `README.zh-CN.md`, `pyproject.
 > [threat model](docs/security/threat-model.md) before you rely on this.
 
 Chinese documentation (design draft and threat model included) lives at
-<https://hanyang06.github.io/onconf/>.
+<https://hanyang06.github.io/OnConf/>.
 
 ---
 
@@ -67,7 +67,7 @@ A configuration engine for programs that keep their settings in **plain files th
 Install from source:
 
 ```bash
-git clone https://github.com/HanYang06/onconf.git
+git clone https://github.com/HanYang06/OnConf.git
 cd onconf
 uv sync --all-groups
 ```

@@ -17,7 +17,7 @@
 
 优先走 GitHub 私密渠道（只有维护者可见）：
 
-> <https://github.com/HanYang06/onconf/security/advisories/new>
+> <https://github.com/HanYang06/OnConf/security/advisories/new>
 
 不方便用时，发邮件到 **jihanyang123@163.com**，标题以 `[SECURITY]` 开头。
 

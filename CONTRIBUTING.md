@@ -27,8 +27,8 @@ onconf 是一个**基于本地文件的、进程内使用的配置引擎**，对
 | 构建后端 | `uv_build` |
 | 包与虚拟环境管理 | `uv`（`uv.lock` 已提交） |
 | 开源协议 | Apache-2.0（见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)） |
-| 文档站 | <https://hanyang06.github.io/onconf/> |
-| 仓库 | <https://github.com/HanYang06/onconf> |
+| 文档站 | <https://hanyang06.github.io/OnConf/> |
+| 仓库 | <https://github.com/HanYang06/OnConf> |
 
 > 展示名写作 **OnConf**（概念与项目身份）；仓库名、PyPI 发布名、import 名与 CLI 入口
 > 统一为 `onconf`。历史提交里出现的 `auto-conf` / `auto_conf` 是改名前的旧名，不再使用。
@@ -62,7 +62,7 @@ uv --version
 ### 2.2 克隆与安装
 
 ```bash
-git clone https://github.com/HanYang06/onconf.git
+git clone https://github.com/HanYang06/OnConf.git
 cd onconf
 uv sync --all-groups
 ```
@@ -306,8 +306,8 @@ $schema 这类以 $ 开头的指令键不参与「清理未知数据」，
 
 ### 5.3 Pull Request 流程
 
-1. 先搜一遍 [Issue 列表](https://github.com/HanYang06/onconf/issues) 与
-   [Discussions](https://github.com/HanYang06/onconf/discussions)，确认不是重复工作；
+1. 先搜一遍 [Issue 列表](https://github.com/HanYang06/OnConf/issues) 与
+   [Discussions](https://github.com/HanYang06/OnConf/discussions)，确认不是重复工作；
    较大的改动（新后端、公开 API 变更、磁盘格式变更）**请先开 Issue 对齐方案**再动手。
 2. 从 `main` 切分支，按 §5.1 命名。
 3. 写代码、补测试、补文档，按 §5.2 提交。
@@ -456,8 +456,8 @@ gitleaks 会在 CI 里再拦一道，但**已经被推到公开仓库的密钥�
 **安全漏洞不要开公开 Issue**，也不要在 Discussions 里贴细节、PoC 或受影响版本的具体利用方式。
 
 请走 [SECURITY.md](SECURITY.md) 描述的私密渠道报告。维护者会先私下确认与修复，
-再协调公开披露。普通缺陷请走 [Bug 模板](https://github.com/HanYang06/onconf/issues/new/choose)，
-用法问题请走 [Discussions](https://github.com/HanYang06/onconf/discussions) ——
+再协调公开披露。普通缺陷请走 [Bug 模板](https://github.com/HanYang06/OnConf/issues/new/choose)，
+用法问题请走 [Discussions](https://github.com/HanYang06/OnConf/discussions) ——
 具体分工见 [SUPPORT.md](SUPPORT.md)。
 
 ---

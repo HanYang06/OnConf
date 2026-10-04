@@ -48,6 +48,11 @@
   发版 runbook 见 `CONTRIBUTING.md` §4.4。
 - **项目改名**：`auto-conf` → **OnConf**；仓库、PyPI 发布名、import 名与 CLI 入口统一为
   `onconf`。历史提交信息里的旧名保留不动 —— 改它只能重写历史，收益不抵风险。
+- 仓库与文档站地址统一成**真实大小写**：`github.com/HanYang06/OnConf`、
+  `hanyang06.github.io/OnConf/`。OpenSSF Scorecard 的接口**大小写敏感**（实测
+  `/OnConf` 返回 200、`/onconf` 返回 404），README 上那枚徽章原本是坏的；Pages 的
+  `site_url` 写错大小写则会让站点产出的规范链接与 sitemap 指到 404（Pages 已确认是
+  `build_type: workflow`、`html_url: https://hanyang06.github.io/OnConf/`）。
 - **破坏性变更**：词表字段 `x-auto-conf-hash` → `x-onconf-hash`（**磁盘格式变更**，
   旧字段名不再被识别，会在下次落盘时按新名重写）。
 - **破坏性变更**：环境变量 `AUTO_CONF_HOME` → `ONCONF_HOME`（旧变量不再生效）。
@@ -78,6 +83,19 @@
   `OSError`（盘满、没权限）也会留痕；审计输出与日志输出**互不牵连**（日志去向坏掉
   不再毁掉审计那一批）；`identity` 不再被写者的服务名顶替；键名 / 身份里的换行
   不再能伪造审计行；`os.write` 的短写不再静默截断记录。
+- macOS（以及任何路径偏深的 POSIX 环境）上专职写者**静默失效**：端点名是
+  `<home>/schema/settings.sock`，一超过 `AF_UNIX` 的 `sun_path` 上限（104 字节）
+  `ipc.Listener` 就抛错，而 `_attach` 是尽力而为的 —— 表现只是所有请求退到就地执行。
+  现在超限就换短名字的临时端点（`<tmpdir>/onconf-<uid>/`，`0o700`），名字仍只由配置
+  目录决定（DESIGN §32.9）。
+- 清残留的探活原本是**打一次招呼**：写者一忙（正在做一轮读改写），那句问候就等到超时
+  被读成「没人」，于是**活写者的端点被当成残骸删掉**，下一个进程绑上来就是两个写者写
+  同一个目录。改成纯 `connect`（3.14 的 `Client(authkey=None)` 不做挑战应答）。
+- `release.yml` 的产物校验用了 `ls dist/ | grep -c`：shellcheck `SC2010`（文件名里有
+  空格/换行时还会数错），改成逐个文件的 glob 计数。
+- `Security` 作业没给 gitleaks-action v3 传 `GITHUB_TOKEN`，也没给作业级
+  `pull-requests: read` —— PR 上一律以
+  "GITHUB_TOKEN is now required to scan pull requests" 失败。
 
 ### Known issue
 
@@ -119,7 +137,7 @@
 
 - 指令键（`$` 开头）豁免对账，`$schema` 不会被规则 1 清掉（`787360e`）。
 
-[Unreleased]: https://github.com/HanYang06/onconf/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/HanYang06/onconf/compare/3ef3f4f...v0.1.0
+[Unreleased]: https://github.com/HanYang06/OnConf/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/HanYang06/OnConf/compare/3ef3f4f...v0.1.0
 
 未发布能力见 [docs/roadmap.md](docs/roadmap.md)。

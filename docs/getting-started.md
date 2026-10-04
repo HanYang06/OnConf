@@ -28,7 +28,7 @@ uv add onconf
 ### 从源码安装（当前唯一可用的方式）
 
 ```bash
-git clone https://github.com/HanYang06/onconf.git
+git clone https://github.com/HanYang06/OnConf.git
 cd onconf
 uv sync --all-groups
 uv run pytest
@@ -57,7 +57,7 @@ print(conf("app.server.port"))  # 读
 ## 配置目录约定
 
 配置目录 `<home>` 的确定顺序（实现见
-[`src/onconf/_engine.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_engine.py)）：
+[`src/onconf/_engine.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/_engine.py)）：
 
 1. `AutoConf(home=...)` 的显式参数；
 2. 环境变量 `ONCONF_HOME`；
@@ -139,7 +139,7 @@ AutoConf(identity="order-svc@host-3")  # 每行多一个 id=，回答「哪个�
 ## 常见问题：几个异常怎么区分
 
 异常族的共同基类是 `ConfError`，定义在
-[`src/onconf/errors.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/errors.py)；
+[`src/onconf/errors.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/errors.py)；
 `LockTimeoutError` 在 `_lock.py`，也是它的子类。但**读期**还有三个后端错误是 `ValueError`
 的子类，`except ConfError` 接不住它们，「分开处理」按下表区分：
 
