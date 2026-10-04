@@ -31,11 +31,10 @@ keywords = [
     "environment-variables",
     "multiprocess",
     "concurrency",
-    "wal",
     "declarative",
 ]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Natural Language :: Chinese (Simplified)",
     "Operating System :: OS Independent",
