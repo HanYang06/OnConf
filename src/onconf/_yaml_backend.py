@@ -199,7 +199,7 @@ def set_value(text: str, key: str, value: Any) -> str:
     member = find(text, key)
     if member is None:
         raise KeyError(key)
-    return text[: member.value_start] + render(value) + text[member.value_end:]
+    return text[: member.value_start] + render(value) + text[member.value_end :]
 
 
 def append_key(text: str, key: str, value: Any) -> str:
@@ -224,4 +224,4 @@ def delete_key(text: str, key: str) -> str:
     member = find(text, key)
     if member is None:
         raise KeyError(key)
-    return text[: member.line_start] + text[member.line_end:]
+    return text[: member.line_start] + text[member.line_end :]

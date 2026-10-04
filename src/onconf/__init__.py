@@ -83,8 +83,7 @@ def _check_engine_params(params: dict[str, Any]) -> None:
     unknown = set(params) - set(EngineParams.__annotations__)
     if unknown:
         raise UnknownEngineParamError(
-            f"未知的引擎参数 {sorted(unknown)}；"
-            f"合法参数：{sorted(EngineParams.__annotations__)}"
+            f"未知的引擎参数 {sorted(unknown)}；合法参数：{sorted(EngineParams.__annotations__)}"
         )
 
 
@@ -101,8 +100,7 @@ def AutoConf(**engine: Unpack[EngineParams]) -> Engine:  # noqa: N802 - 公开 A
         _engine = Engine(**engine)
     elif engine:
         raise ConfError(
-            "引擎已经启动，v1 还不支持运行中改引擎配置；"
-            "要换配置目录请在第一次调用之前设置。"
+            "引擎已经启动，v1 还不支持运行中改引擎配置；要换配置目录请在第一次调用之前设置。"
         )
     return _engine
 

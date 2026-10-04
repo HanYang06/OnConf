@@ -20,17 +20,17 @@
 
 | 模块 | 职责 |
 |---|---|
-| [`_core.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_core.py) | 纯内存核心：对账四条规则、读取五步、声明集哈希 |
-| [`_vocab.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_vocab.py) | 词表：三态持久化、JSON Schema 往返、哈希短路 |
-| [`_json_backend.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_json_backend.py) | JSON 值后端：外科手术式回写 |
-| [`_yaml_backend.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_yaml_backend.py) | YAML 值后端：注释、缩进、键序逐字保留 |
-| [`_env_backend.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_env_backend.py) | `.env` 值后端：纯字符串，不做键名映射；`EnvSyntaxError` 也定义在这里 |
-| [`_toml_backend.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_toml_backend.py) | TOML 值后端：表头归一成点分键，注释与键序逐字保留；`TomlFlatRequiredError` 也定义在这里 |
-| [`_textscan.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_textscan.py) | 各后端共用的字节级扫描 |
-| [`_lock.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_lock.py) | 跨进程排他锁：操作系统级锁（`msvcrt` / `fcntl`），进程崩溃由 OS 释放。**兜底路径**才用得上 |
-| [`_owner.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_owner.py) | 专职写者：端点选举（抢绑即选举）、应用层认证、IPC、写者循环与会话线程 |
-| [`_engine.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_engine.py) | 引擎装配：路由（「我是不是写者」）、后端选择、提交点、原子落盘、`$schema` 指针 |
-| [`errors.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/errors.py) | 异常族：`ConfError` 与各子类；`LockTimeoutError` 在 `_lock.py`，读期的 `ValueError` 子类定义在各后端 |
+| [`_core.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/_core.py) | 纯内存核心：对账四条规则、读取五步、声明集哈希 |
+| [`_vocab.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/_vocab.py) | 词表：三态持久化、JSON Schema 往返、哈希短路 |
+| [`_json_backend.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/_json_backend.py) | JSON 值后端：外科手术式回写 |
+| [`_yaml_backend.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/_yaml_backend.py) | YAML 值后端：注释、缩进、键序逐字保留 |
+| [`_env_backend.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/_env_backend.py) | `.env` 值后端：纯字符串，不做键名映射；`EnvSyntaxError` 也定义在这里 |
+| [`_toml_backend.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/_toml_backend.py) | TOML 值后端：表头归一成点分键，注释与键序逐字保留；`TomlFlatRequiredError` 也定义在这里 |
+| [`_textscan.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/_textscan.py) | 各后端共用的字节级扫描 |
+| [`_lock.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/_lock.py) | 跨进程排他锁：操作系统级锁（`msvcrt` / `fcntl`），进程崩溃由 OS 释放。**兜底路径**才用得上 |
+| [`_owner.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/_owner.py) | 专职写者：端点选举（抢绑即选举）、应用层认证、IPC、写者循环与会话线程 |
+| [`_engine.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/_engine.py) | 引擎装配：路由（「我是不是写者」）、后端选择、提交点、原子落盘、`$schema` 指针 |
+| [`errors.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/errors.py) | 异常族：`ConfError` 与各子类；`LockTimeoutError` 在 `_lock.py`，读期的 `ValueError` 子类定义在各后端 |
 
 ## 尚未定稿的部分
 

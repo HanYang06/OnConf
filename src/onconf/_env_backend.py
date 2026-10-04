@@ -149,9 +149,7 @@ def iter_members(text: str) -> Iterator[Member]:
         value_start = line_start + match.start("value")
         tail = body[match.start("value") :]
         value_end = value_start + len(tail.rstrip(_WS))
-        yield Member(
-            match["key"], line_start, line_end, value_start, value_end
-        )
+        yield Member(match["key"], line_start, line_end, value_start, value_end)
 
 
 def find(text: str, key: str) -> Member | None:
@@ -184,7 +182,7 @@ def set_value(text: str, key: str, value: Any) -> str:
     member = find(text, key)
     if member is None:
         raise KeyError(key)
-    return text[: member.value_start] + render(value) + text[member.value_end:]
+    return text[: member.value_start] + render(value) + text[member.value_end :]
 
 
 def append_key(text: str, key: str, value: Any) -> str:
@@ -204,4 +202,4 @@ def delete_key(text: str, key: str) -> str:
     member = find(text, key)
     if member is None:
         raise KeyError(key)
-    return text[: member.line_start] + text[member.line_end:]
+    return text[: member.line_start] + text[member.line_end :]

@@ -133,9 +133,7 @@ class TestArtifacts:
         """YAML 值文件：改一个键，用户手写的注释逐字保留（§27.3）。"""
         values = tmp_path / "settings.yaml"
         values.write_text(
-            "# 我手写的注释\n"
-            "a.b: 1   # 行尾注释\n"
-            "c.d: 2\n",
+            "# 我手写的注释\na.b: 1   # 行尾注释\nc.d: 2\n",
             encoding="utf-8",
         )
         engine = Engine(tmp_path)
@@ -578,7 +576,6 @@ class TestRealProcesses:
         data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
         for key in keys:
             assert key in data, f"{key} 被别的进程盖掉了"
-
 
     _SYNCER = (
         "import sys\n"

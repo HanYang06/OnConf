@@ -28,7 +28,7 @@ uv add onconf
 ### 从源码安装（当前唯一可用的方式）
 
 ```bash
-git clone https://github.com/HanYang06/onconf.git
+git clone https://github.com/HanYang06/OnConf.git
 cd onconf
 uv sync --all-groups
 uv run pytest
@@ -42,9 +42,9 @@ uv run pytest
 ```python
 from onconf import AutoConf, conf
 
-AutoConf(home="./conf")      # 可省略，走约定
+AutoConf(home="./conf")  # 可省略，走约定
 conf("app.server.port", 8080)  # 声明 + 写，返回当前生效值
-print(conf("app.server.port")) # 读
+print(conf("app.server.port"))  # 读
 ```
 
 三条语义值得单独记住：
@@ -57,7 +57,7 @@ print(conf("app.server.port")) # 读
 ## 配置目录约定
 
 配置目录 `<home>` 的确定顺序（实现见
-[`src/onconf/_engine.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_engine.py)）：
+[`src/onconf/_engine.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/_engine.py)）：
 
 1. `AutoConf(home=...)` 的显式参数；
 2. 环境变量 `ONCONF_HOME`；
@@ -126,10 +126,10 @@ $ uv run python -c "from onconf import conf; conf('app.server.port', 8080)"
 去向与开关在**第一次调用之前**一次性配好（引擎是单例，起来之后不能再改）：
 
 ```python
-AutoConf(log="./onconf.log")            # 改去文件（文件形态带完整日期、不截断）
-AutoConf(log="stdout")                  # 或者 stdout
-AutoConf(audit=True)                    # 再加一份 append-only 的 <home>/audit.log（0600、按大小轮转）
-AutoConf(identity="order-svc@host-3")   # 每行多一个 id=，回答「哪个部署改的」
+AutoConf(log="./onconf.log")  # 改去文件（文件形态带完整日期、不截断）
+AutoConf(log="stdout")  # 或者 stdout
+AutoConf(audit=True)  # 再加一份 append-only 的 <home>/audit.log（0600、按大小轮转）
+AutoConf(identity="order-svc@host-3")  # 每行多一个 id=，回答「哪个部署改的」
 ```
 
 写记录里的 `at=` 是**调用点**（`app/config.py:12`），它回答的是「哪段代码改的」——
@@ -139,7 +139,7 @@ AutoConf(identity="order-svc@host-3")   # 每行多一个 id=，回答「哪个�
 ## 常见问题：几个异常怎么区分
 
 异常族的共同基类是 `ConfError`，定义在
-[`src/onconf/errors.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/errors.py)；
+[`src/onconf/errors.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/errors.py)；
 `LockTimeoutError` 在 `_lock.py`，也是它的子类。但**读期**还有三个后端错误是 `ValueError`
 的子类，`except ConfError` 接不住它们，「分开处理」按下表区分：
 

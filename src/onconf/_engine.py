@@ -15,7 +15,7 @@
 
 .. code-block:: python
 
-    AutoConf(home="…", flush_window=0.2)   # 攒一批再写
+    AutoConf(home="…", flush_window=0.2)  # 攒一批再写
 
 窗口一旦开启，落盘发生在这些提交点：**窗口到期 / 一次读 / ``sync()`` / 进程退出**。
 前三个**不做规则 1**（期望集可能还不完整，§29.1），只有 ``sync()`` 与进程退出做。

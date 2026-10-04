@@ -188,6 +188,13 @@ jobs:
     name: Security
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # 作业级 permissions 会**整体覆盖**工作流那一层（没列的全变 none），所以要显式写全：
+    # contents 给 checkout、gitleaks 扫历史；pull-requests 给 gitleaks-action v3 ——
+    # 它在 PR 上要先通过 API 读这次 PR 的提交清单，缺了就报
+    # "GITHUB_TOKEN is now required to scan pull requests"。
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       # gitleaks 需要扫全量提交历史，fetch-depth: 0 关掉浅克隆。
       - name: Checkout
@@ -229,5 +236,9 @@ jobs:
       # 密钥扫描走官方 gitleaks action（无需 --redact 参数）。
       # GITLEAKS_LICENSE 只在**组织**拥有的仓库上必需（gitleaks-action v2 起商业化）；
       # 个人仓库免费，因此这里不传该 secret，组织仓库请自行加上 env.GITLEAKS_LICENSE。
+      # v3 起 GITHUB_TOKEN 是**必需**的 env：没有它，PR 扫描直接报
+      # "GITHUB_TOKEN is now required to scan pull requests" 并失败。
       - name: Gitleaks
         uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -67,9 +67,9 @@
 ```python
 from onconf import AutoConf, conf
 
-AutoConf(home="./conf")      # 可省略，走约定
+AutoConf(home="./conf")  # 可省略，走约定
 conf("app.server.port", 8080)  # 声明 + 写，返回当前生效值
-print(conf("app.server.port")) # 读
+print(conf("app.server.port"))  # 读
 ```
 
 `conf(key, value)` 的返回值是**当前生效值**，不是刚传进去的默认值：值文件里已有的值优先。

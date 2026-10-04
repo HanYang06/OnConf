@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import threading
 import time
 from pathlib import Path
@@ -20,6 +21,7 @@ from onconf import (
     _owner,
 )
 from onconf._core import MISSING, Decl
+from onconf._engine import SCHEMA_DIR, VALUES_STEM
 
 
 def _open(home: Path) -> Engine:
@@ -64,8 +66,68 @@ def test_endpoint_is_a_function_of_the_config_dir(tmp_path: Path) -> None:
         # 写同一个目录，而这正是本模块要防的事。
         assert _owner.endpoint_for(here) == _owner.endpoint_for(tmp_path / "Here")
     else:  # pragma: no cover - 本机是 Windows
-        assert Path(_owner.endpoint_for(here)).parent == here / "schema"
+        endpoint = Path(_owner.endpoint_for(here))
+        # 端点要么住在配置目录里，要么（超过 ``sun_path`` 上限时）换到短名字的临时
+        # 目录里；两种都得过得了 ``bind``，也都得**只由配置目录决定**。
+        assert len(str(endpoint).encode("utf-8")) <= _owner.SOCKET_PATH_LIMIT
+        if endpoint.parent == here / "schema":
+            assert endpoint.name == f"{VALUES_STEM}.sock"
+        else:
+            assert endpoint.parent.name.startswith("onconf-")
+            assert endpoint.name.startswith("onconf-")
         assert _owner.endpoint_for(here) != _owner.endpoint_for(tmp_path / "Here")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="短端点只在 POSIX 分支里")
+def test_a_path_too_long_for_sun_path_falls_back_to_a_short_endpoint(tmp_path: Path) -> None:
+    """路径超过 ``sun_path`` 上限时端点得**换短名字**，而不是静默失去专职写者。
+
+    ``ipc.Listener`` 在 :meth:`Channel._attach` 里是尽力而为的：不换名字的后果不是
+    报错，而是**所有请求退到就地执行** —— macOS 的 pytest ``tmp_path`` 就这么长。
+    这里叠几层目录把自然路径顶过上限，不依赖跑在哪个平台上。
+    """
+    here = tmp_path / ("deep" * 10)
+    natural = str(here / SCHEMA_DIR / f"{VALUES_STEM}.sock")
+    assert len(natural.encode("utf-8")) > _owner.SOCKET_PATH_LIMIT
+
+    endpoint = _owner.endpoint_for(here)
+
+    assert endpoint != natural, "超过上限还留在原路径：bind 会直接失败"
+    assert len(endpoint.encode("utf-8")) <= _owner.SOCKET_PATH_LIMIT
+    assert endpoint == _owner.endpoint_for(here), "换个名字也得只由配置目录决定"
+    assert endpoint != _owner.endpoint_for(tmp_path / "other"), "两个目录不许撞端点"
+    assert Path(endpoint).name.startswith("onconf-")
+    mode = stat.S_IMODE(Path(endpoint).parent.stat().st_mode)
+    assert mode & 0o077 == 0, "端点搬进了共享的临时目录，那个目录必须只有本人可进"
+
+
+def test_the_endpoint_directory_is_created_explicitly(tmp_path: Path) -> None:
+    """``AF_UNIX`` 的 socket 文件所在目录必须**先建出来** —— ``bind`` 不会替你建。
+
+    这条依赖以前是隐式的（``claim`` 顺手调 ``authkey_for``，那一步的 ``mkdir`` 把
+    ``<home>/schema`` 建了出来）。隐式的东西一挪走就露头：Linux CI 上第一个 ``claim``
+    就返回 ``None``（``ENOENT`` 被翻译成「抢不到」），16 条测试跟着倒；macOS 看不见，
+    那边走了短端点，目录由 ``_short_socket`` 建。
+    """
+    home = tmp_path / "conf"
+    _owner._ensure_endpoint_dir(str(home / "schema" / "settings.sock"))
+
+    assert (home / "schema").is_dir()
+    assert home.is_dir()
+
+
+def test_claiming_prepares_the_directory_the_socket_lives_in(tmp_path: Path) -> None:
+    """全新目录上的第一次抢绑必须成功 —— 目录得由 ``claim`` 自己准备好。"""
+    home = tmp_path / "conf"
+    assert not home.exists()
+
+    listener = _owner.claim(home)
+    assert listener is not None, "第一个写者应该抢得到"
+    try:
+        if os.name != "nt":  # pragma: no cover - 本机是 Windows
+            assert Path(_owner.endpoint_for(home)).parent.is_dir()
+    finally:
+        listener.close()
 
 
 def test_authkey_is_created_once_and_atomically(tmp_path: Path) -> None:
@@ -116,6 +178,66 @@ def test_binding_the_endpoint_is_the_election(tmp_path: Path) -> None:
     again.close()
 
 
+def test_liveness_asks_only_whether_anyone_is_listening(tmp_path: Path) -> None:
+    """探活是**纯 connect**：对面只在听、从不答话，也必须立刻判「活着」。
+
+    这里故意绑一个**没有应答线程**的端点：要是拿打招呼当探活，那句问候会一直等到
+    超时，于是**活写者的端点被判成残骸删掉**，下一个进程在同一个名字上再绑一个 ——
+    同一份配置两个写者。所以用**有界等待**断言：挂住 = 失败，不是卡住。
+    """
+    home = tmp_path / "conf"
+    address = _owner.endpoint_for(home)
+    assert _owner._endpoint_is_alive(address) is False, "没人听的端点不该算活的"
+
+    listener = _owner.claim(home)
+    assert listener is not None
+    try:
+        outcome: list[bool] = []
+        probe = threading.Thread(
+            target=lambda: outcome.append(_owner._endpoint_is_alive(address)),
+            daemon=True,
+        )
+        probe.start()
+        probe.join(timeout=5)
+        assert outcome == [True], "探活挂住了：它八成在打招呼，而不是只 connect"
+    finally:
+        listener.close()
+
+    assert _owner._endpoint_is_alive(address) is False, "端点关掉了就该判死"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="命名管道随进程消失，只有 POSIX 会留残骸")
+def test_reaping_clears_a_corpse_but_leaves_a_live_writer_alone(tmp_path: Path) -> None:
+    """清残留只在**没人听**的时候动手；活写者的端点碰都不能碰。
+
+    删掉活写者的端点不会让它下班，只会让它变成幽灵：它还在写文件，而新的进程在
+    同一个名字上又绑了一个写者。
+    """
+    home = tmp_path / "conf"
+    address = Path(_owner.endpoint_for(home))
+    address.parent.mkdir(parents=True, exist_ok=True)
+
+    # 有人在听 ⇒ 原样留着
+    listener = _owner.claim(home)
+    assert listener is not None
+    try:
+        assert address.exists()
+        _owner._reap_stale(str(address))
+        assert address.exists(), "活着的写者被当成残骸清掉了"
+    finally:
+        listener.close()
+
+    # 崩溃现场：名字还在，没人听。``bind`` 到已存在的路径本来就会失败，所以不先清
+    # 就**再也没人能当上写者**（写者真空）。
+    address.write_bytes(b"")
+    _owner._reap_stale(str(address))
+    assert not address.exists(), "残骸没清掉，下一个写者永远绑不上"
+
+    third = _owner.claim(home)
+    assert third is not None
+    third.close()
+
+
 # --------------------------------------------------------------------------- #
 # 两个踩过的坑，各钉一条回归
 # --------------------------------------------------------------------------- #
@@ -129,6 +251,7 @@ def test_connect_is_bounded_when_nobody_answers(tmp_path: Path) -> None:
     应用层自己打招呼，等待因此有界。
     """
     home = tmp_path / "conf"
+    _owner.authkey_for(home)  # 钥匙得先在，否则 connect 在「没写者」那一步就返回了
     listener = _owner.claim(home)  # 绑上，但**故意不开应答线程**
     assert listener is not None
 

@@ -1,8 +1,8 @@
 # OnConf
 
-[![CI](https://github.com/HanYang06/onconf/actions/workflows/ci.yml/badge.svg)](https://github.com/HanYang06/onconf/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/HanYang06/onconf/actions/workflows/codeql.yml/badge.svg)](https://github.com/HanYang06/onconf/actions/workflows/codeql.yml)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/HanYang06/onconf/badge)](https://securityscorecards.dev/viewer/?uri=github.com/HanYang06/onconf)
+[![CI](https://github.com/HanYang06/OnConf/actions/workflows/ci.yml/badge.svg)](https://github.com/HanYang06/OnConf/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/HanYang06/OnConf/actions/workflows/codeql.yml/badge.svg)](https://github.com/HanYang06/OnConf/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/HanYang06/OnConf/badge)](https://securityscorecards.dev/viewer/?uri=github.com/HanYang06/OnConf)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
 [![mypy: strict](https://img.shields.io/badge/mypy-strict-blue.svg)](pyproject.toml)
@@ -29,7 +29,7 @@
 > 并且沿用文件原本的行尾与权限位。
 > 依赖它之前，请先读下面的「已知限制」与[威胁模型](docs/security/threat-model.md)。
 
-文档站（含完整设计稿与威胁模型）：<https://hanyang06.github.io/onconf/>
+文档站（含完整设计稿与威胁模型）：<https://hanyang06.github.io/OnConf/>
 
 ---
 
@@ -62,7 +62,7 @@
 `onconf` **还没有发布到 PyPI**（发布名仍在定案中）。从源码安装：
 
 ```bash
-git clone https://github.com/HanYang06/onconf.git
+git clone https://github.com/HanYang06/OnConf.git
 cd onconf
 uv sync --all-groups
 ```
@@ -72,9 +72,9 @@ uv sync --all-groups
 ```python
 from onconf import AutoConf, conf
 
-AutoConf(home="./conf")        # 可省略——省略时引擎按自己的约定找配置目录
+AutoConf(home="./conf")  # 可省略——省略时引擎按自己的约定找配置目录
 conf("app.server.port", 8080)  # 声明 + 写；返回当前生效值
-print(conf("app.server.port")) # 读
+print(conf("app.server.port"))  # 读
 ```
 
 上面这段是**实测**输出：
@@ -119,9 +119,9 @@ $ uv run python -c "from onconf import conf; print(conf('app.server.port', 8080)
 `conf` 从**调用形态**推断这次要做什么，而不是靠一个 `op` 参数：
 
 ```python
-conf("app.port")                    # 读；键没有值就报错
-conf("app.port", 9090)              # 声明 + 写；返回当前生效值
-conf("app.port", doc="服务端口")     # 只登记一个键、不给值（必填键）
+conf("app.port")  # 读；键没有值就报错
+conf("app.port", 9090)  # 声明 + 写；返回当前生效值
+conf("app.port", doc="服务端口")  # 只登记一个键、不给值（必填键）
 conf("app.port", 9090, force=True)  # 覆盖文件里已有的值
 ```
 

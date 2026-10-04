@@ -12,7 +12,7 @@ body:
         这会显著提高被采纳的概率，也能避免双方在实现细节上反复拉扯。
 
         如果你想要的只是「怎么用现有能力做到这件事」，那属于用法问题，
-        请走 [Discussions](https://github.com/HanYang06/onconf/discussions)。
+        请走 [Discussions](https://github.com/HanYang06/OnConf/discussions)。
 
   - type: textarea
     id: scenario

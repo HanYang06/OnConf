@@ -11,13 +11,13 @@ body:
         提问之前请先确认：
 
         - 你用的是**最新版本**，且 Python 版本 **>= 3.14**；
-        - 你已在 [Issues](https://github.com/HanYang06/onconf/issues)
-          与 [Discussions](https://github.com/HanYang06/onconf/discussions) 里搜过同样的报错；
+        - 你已在 [Issues](https://github.com/HanYang06/OnConf/issues)
+          与 [Discussions](https://github.com/HanYang06/OnConf/discussions) 里搜过同样的报错；
         - 这**不是安全漏洞**。安全漏洞请走
-          [SECURITY.md](https://github.com/HanYang06/onconf/blob/main/SECURITY.md) 的私密渠道，
+          [SECURITY.md](https://github.com/HanYang06/OnConf/blob/main/SECURITY.md) 的私密渠道，
           不要在这里贴细节；
         - 这不是「怎么用」的问题。用法问题请走 Discussions，
-          渠道分工见 [SUPPORT.md](https://github.com/HanYang06/onconf/blob/main/SUPPORT.md)。
+          渠道分工见 [SUPPORT.md](https://github.com/HanYang06/OnConf/blob/main/SUPPORT.md)。
 
   - type: input
     id: version

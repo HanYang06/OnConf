@@ -81,6 +81,7 @@ import contextlib
 import hashlib
 import multiprocessing.connection as ipc
 import os
+import tempfile
 import threading
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -151,6 +152,40 @@ OP_COMMIT = "commit"
 # --------------------------------------------------------------------------- #
 
 
+#: POSIX 上 ``AF_UNIX`` 的 ``sun_path`` 只有 **104 字节**（含结尾 NUL）。超了
+#: ``ipc.Listener(address)`` 直接抛错，而 :meth:`Channel._attach` 是**尽力而为**的
+#: —— 于是专职写者**静默失效**，所有请求退到就地执行。macOS 的 pytest ``tmp_path``
+#: （``/private/var/folders/…``）一测就超，所以这里再留点余量。
+SOCKET_PATH_LIMIT = 100
+
+#: 短端点的兜底目录。``S108``/``B108`` 防的是「把文件写进共享的 ``/tmp``」——
+#: 这里正是要用它，而且端点落在那下面**只有本人可进**的子目录里；只在 ``TMPDIR``
+#: 自己被设得离谱长、第一个候选装不下时才轮到它。
+_FALLBACK_TMP = Path("/tmp")  # noqa: S108  # nosec B108
+
+
+def _short_socket(home: Path) -> Path:
+    """路径太长时的**短端点**：临时目录下一个只有本人可进的子目录。
+
+    名字仍然只由**解析后的**配置目录决定（哈希），所以同一个目录在每个进程里算出的
+    端点完全一样 —— 只是它不再住在配置目录里。``0o700`` 那个子目录是补回来的隔离：
+    端点在共享的临时目录里，别人能连上就等于能冒充写者。
+    """
+    digest = hashlib.sha256(str(home).encode("utf-8")).hexdigest()[:_HASH_CHARS]
+    uid = getattr(os, "getuid", lambda: 0)()  # Windows 没有 getuid；这条分支也不在 Windows 上走
+    for base in (Path(tempfile.gettempdir()), _FALLBACK_TMP):
+        directory = base / f"onconf-{uid}"
+        candidate = directory / f"onconf-{digest}.sock"
+        with contextlib.suppress(OSError):
+            directory.mkdir(mode=0o700, exist_ok=True)
+            # ``exist_ok`` **不修**一个已经存在的松权限目录，所以每个进程都顺手
+            # ``chmod`` 一遍 —— 「隔离在临时目录里补回来」这句话得有凭据。
+            directory.chmod(0o700)
+        if len(str(candidate).encode("utf-8")) <= SOCKET_PATH_LIMIT:
+            return candidate
+    return _FALLBACK_TMP / f"onconf-{digest}.sock"  # pragma: no cover - TMPDIR 长到离谱时
+
+
 def endpoint_for(home: Path) -> str:
     r"""端点名：**只由配置目录决定**，别的什么都不看。
 
@@ -159,12 +194,19 @@ def endpoint_for(home: Path) -> str:
 
     Windows 上先 ``normcase``：``D:\a`` 与 ``d:\a`` 是同一个目录，但字符串不同
     —— 不折叠大小写就会出现**两个写者写着同一个目录**，那正是这个模块要防的事。
+
+    POSIX 上路径太长时改用 :func:`_short_socket` 的短名字（仍然只由配置目录决定）。
+    不这么做的话，macOS 上稍微深一点的路径就会让专职写者失效 —— 那是**静默**的，
+    只有从「所有请求都退到就地执行」才能看出来。
     """
     if os.name == "nt":
         seed = os.path.normcase(str(home))
         digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:_HASH_CHARS]
         return f"{_PIPE_PREFIX}{digest}"
-    return str(home / SCHEMA_DIR / f"{VALUES_STEM}.sock")
+    natural = str(home / SCHEMA_DIR / f"{VALUES_STEM}.sock")
+    if len(natural.encode("utf-8")) <= SOCKET_PATH_LIMIT:
+        return natural
+    return str(_short_socket(home))
 
 
 def authkey_for(home: Path) -> str:
@@ -195,12 +237,27 @@ def claim(home: Path) -> ipc.Listener | None:
     **这个返回值就是选举结果**，没有第二次确认 —— 抢绑是原子的。
     """
     address = endpoint_for(home)
-    if os.name != "nt":  # pragma: no cover - 本机是 Windows；POSIX 见 _reap_stale
-        _reap_stale(address, authkey_for(home))
+    if os.name != "nt":  # pragma: no cover - 本机是 Windows；POSIX 见下面两个函数
+        _ensure_endpoint_dir(address)
+        _reap_stale(address)
     try:
         return ipc.Listener(address)
     except OSError:
         return None
+
+
+def _ensure_endpoint_dir(address: str) -> None:
+    """POSIX：socket 文件得落在一个**已经存在**的目录里 —— ``bind`` 不会替你建。
+
+    ``<home>/schema`` 不存在时 ``bind`` 就是 ``ENOENT``，而 :func:`claim` 把它翻译成
+    「抢不到」，于是**第一个写者都当不上**、所有请求退到就地执行（Linux CI 上 16 条
+    测试一起倒）。这一步以前没有：目录是靠 :func:`claim` 顺手调 :func:`authkey_for`
+    的 ``mkdir`` 建出来的 —— 一个副作用。写者本来就会自己读钥匙，所以那个调用一挪走，
+    这个隐式依赖就露出来了。macOS 上看不见：那边走了短端点，目录由 :func:`_short_socket`
+    建。Windows 不用这一段：命名管道不进文件系统。
+    """
+    with contextlib.suppress(OSError):
+        Path(address).parent.mkdir(parents=True, exist_ok=True)
 
 
 def connect(home: Path, *, timeout: float = HELLO_TIMEOUT) -> Conn | None:
@@ -232,18 +289,37 @@ def _hello(address: str, key: str, timeout: float) -> Conn | None:
     return conn
 
 
-def _reap_stale(address: str, key: str) -> None:  # pragma: no cover - POSIX 专用
+def _endpoint_is_alive(address: str) -> bool:  # pragma: no cover - POSIX 专用
+    """端点上**有没有人在听** —— 只 ``connect``，不打招呼、不认证。
+
+    这里**不能**拿 :func:`_hello` 当探活：打招呼是有状态的，写者得先 ``accept()``
+    再读那句 ``hello``。写者一忙（正在做一轮读改写），问候就排在那儿等到超时 ——
+    于是**活写者的端点被判成残骸删掉**，下一个进程绑上来，同一个目录就有了两个
+    写者。那正是这个模块存在的理由。
+
+    ``ipc.Client(address)`` 不带 ``authkey`` 就**不做**挑战应答（3.14 起
+    ``authkey=None`` 不再被补成进程默认钥匙），构造函数里只剩一次即时的
+    ``connect(2)``：有人在听就成功，文件只是崩溃留下的残骸就当场拒绝。
+    """
+    try:
+        conn = ipc.Client(address)
+    except OSError:
+        return False
+    conn.close()
+    return True
+
+
+def _reap_stale(address: str) -> None:  # pragma: no cover - POSIX 专用
     """POSIX：写者**崩了**会在磁盘上留下 socket 文件，得先探活再决定清不清。
 
-    探活就是正经打一次招呼：有写者就拿到 ``welcome``，没有就解绑重来。
+    只在**没人听**的时候才清。活着、只是一时没空理的写者必须原样留着：删掉它的
+    端点不会让它下班，只会让它变成一个还在写文件的幽灵。
     （Windows 不需要这段：命名管道随进程消失，不会有残留。）
     """
     path = Path(address)
     if not path.exists():
         return
-    conn = _hello(address, key, HELLO_TIMEOUT)
-    if conn is not None:
-        conn.close()
+    if _endpoint_is_alive(address):
         return
     with contextlib.suppress(OSError):
         path.unlink()
