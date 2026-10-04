@@ -31,11 +31,10 @@ keywords = [
     "environment-variables",
     "multiprocess",
     "concurrency",
-    "wal",
     "declarative",
 ]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Natural Language :: Chinese (Simplified)",
     "Operating System :: OS Independent",
@@ -47,8 +46,10 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "httpx>=0.28.1",
     "pyyaml>=6.0.3",
+    # rich 目前**没有任何代码 import** —— 它是给 1.1.0 的报告（DESIGN §21.4）预留的，
+    # 别当无用依赖顺手删。真用上时必须**惰性导入**：`import rich` 实测 +180~222 ms，
+    # 日志与对齐已经用 20 行 stdlib 自己做了，不走 rich。
     "rich>=15.0.0",
 ]
 

@@ -1342,6 +1342,14 @@ def cell_len(s: str) -> int:
 
 ## 22. IPC 选型：TCP loopback + HTTP
 
+> **本节已推翻（2026-10-04）**：HTTP + `httpx` 这条跨语言路线**判定不做** —— `httpx`
+> 已从运行时依赖里移除（`uv remove httpx`），运行时依赖闭包只剩 `pyyaml` + `rich`。
+> 下面的实测数字保留作记录，但**不再指向任何计划**；受影响的还有 §25.4 的「跨语言」一行
+> 与 §25.7 的 `tcp://` seam。现行架构见 §32（专职写者 + `multiprocessing.connection`）。
+>
+> 保留的唯一结论：**endpoint 必须显式，不依赖任何环境推断**（§22.2 的 `trust_env` 教训
+> 与代理风险是真实存在过的，只是不再有 HTTP 这一支需要它）。
+
 ### 22.1 实测（本机 Windows / httpx 0.28.1 / 300~500 次）
 
 | 方式 | 延迟 |
@@ -1570,7 +1578,7 @@ multiprocessing.connection    34.68 us/次   (Windows 走命名管道)
 | 单进程（绝大多数） | 进程内直连 | **0** |
 | 多进程 | 文件锁 + WAL | **0** |
 | Python 进程间升级 | **`multiprocessing.connection`** | +19 ms / 35 µs |
-| 跨语言 | HTTP + httpx（惰性） | +105 ms / 543 µs |
+| 跨语言 | HTTP + httpx（惰性）—— **判定不做**，见 §22 顶部的推翻说明 | — |
 
 **跨语言是使用 HTTP 的唯二理由**（另一个是 `curl` 调试），而它不是默认需求。
 
@@ -1601,7 +1609,7 @@ Windows 上走命名管道，POSIX 上自动换成 AF_UNIX，**同一份代码�
 ```python
 AutoConf(endpoint="auto")        # 默认：进程内直连 + WAL，无 IPC
 AutoConf(endpoint="pipe://...")  # 升级：multiprocessing.connection
-AutoConf(endpoint="tcp://...")   # 跨语言：HTTP + 惰性 httpx
+AutoConf(endpoint="tcp://...")   # 跨语言：曾计划 HTTP + 惰性 httpx，**现已判定不做**
 ```
 
 等 M4 实测**证明**跨进程批处理真的是瓶颈，再按 §25.4 选。**大概率永远不需要。**

@@ -8,8 +8,9 @@
 > `README.md`、`README.zh-CN.md`、`pyproject.toml` 的 `description`
 > 与本文件的 `site_description`。
 
-**尚未发布到 PyPI。** 当前版本 `0.1.0`，开发状态 Pre-Alpha：公开 API 仍在收敛，
-可能发生破坏性变更；真正的命令行尚未实现（以[路线图](roadmap.md)为准）。
+**已发布到 PyPI**，发布名 [`OnConf`](https://pypi.org/project/OnConf/)。当前版本 `1.0.0`，
+首个稳定版：公开 API 与磁盘格式从 1.0 起遵循语义化版本，只在**主版本号**变更时才做
+破坏性变更；真正的命令行尚未实现（以[路线图](roadmap.md)为准）。
 
 定位句的两个半句现在**都有机制支撑**：「不丢一个字节」由外科手术式回写保证；
 「不丢一次更新」由**专职写者**保证 —— 谁先抢绑到配置目录的端点，谁就是唯一的读写者，
@@ -24,8 +25,8 @@
 
 | 项 | 现状 |
 |---|---|
-| 版本 | `0.1.0` |
-| 开发状态 | Pre-Alpha（`Development Status :: 2 - Pre-Alpha`，PyPI 未发布） |
+| 版本 | `1.0.0`（2026-10-04 发布，PyPI 上是 [`OnConf`](https://pypi.org/project/OnConf/)） |
+| 开发状态 | 稳定（classifier `Development Status :: 5 - Production/Stable`） |
 | 公开 API | `AutoConf` / `conf` 两个面，`__all__` 共 9 个符号 |
 | 值后端 | JSON、YAML、TOML、`.env`（字符串后端） |
 | 提交点 | 每次 `conf(key, value)` 当场对账并落盘；进程退出时 `atexit` 触发 `Engine.sync()` |

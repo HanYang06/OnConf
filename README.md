@@ -18,17 +18,18 @@ The two lines above are the **official positioning statement**; English and Chin
 changing one requires changing the other — plus `README.zh-CN.md`, `pyproject.toml`'s `description`,
 `mkdocs.yml`'s `site_description` and `docs/index.md`.
 
-> [!WARNING]
-> **Pre-Alpha (`0.1.0`) — evaluate only, do not deploy.**
-> The API and the on-disk format can change without a deprecation period.
-> **Both halves of the line above now have mechanism behind them**: *without losing a byte* by
+> [!IMPORTANT]
+> **`1.0.0` — the first stable release** (2026-10-04). The public API and the on-disk format now
+> follow [semantic versioning](https://semver.org/): from here on they change only in a **major**
+> release, and every change is recorded in the [changelog](CHANGELOG.md).
+> **Both halves of the line above have mechanism behind them**: *without losing a byte* by
 > surgical write-back, and *without losing an update* by a **dedicated writer** — whichever process
 > first claims a config directory serves every other process over a local named pipe (Windows) or
 > Unix socket (POSIX), with a cross-process **OS** lock plus a re-read under that lock as the
 > fallback.
 > Writes are atomic too: same-directory temp file → `fsync` → `os.replace` (plus a parent-directory
 > `fsync` on POSIX), preserving the file's original line endings and permissions.
-> See [Known limitations](#known-limitations) and the
+> Read [Known limitations](#known-limitations) and the
 > [threat model](docs/security/threat-model.md) before you rely on this.
 
 Chinese documentation (design draft and threat model included) lives at
@@ -63,8 +64,13 @@ A configuration engine for programs that keep their settings in **plain files th
 
 ## Quick start
 
-`onconf` is **not on PyPI yet** (the distribution name is still being decided).
-Install from source:
+`onconf` is on PyPI as [`OnConf`](https://pypi.org/project/OnConf/):
+
+```bash
+uv add onconf
+```
+
+Or install from source:
 
 ```bash
 git clone https://github.com/HanYang06/OnConf.git
@@ -175,7 +181,7 @@ Do not plan around these; they are **not implemented**:
 | Prefix-sharded locks — the current lock is a single lock per config directory | — |
 | System environment variables as a configuration **source** (`ONCONF_HOME` only locates the config dir) | — |
 | Per-format vocabulary export | — |
-| A real CLI (`onconf` currently prints the config directory and exits) | — |
+| A real CLI (`onconf` currently prints the config directory and exits) | M5 |
 
 See [`docs/roadmap.md`](docs/roadmap.md) for the full breakdown and
 [`docs/design/DESIGN.md`](docs/design/DESIGN.md) for the design draft (Chinese, still under review).

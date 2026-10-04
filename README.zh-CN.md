@@ -18,9 +18,10 @@
 `README.md`、`pyproject.toml` 的 `description`、`mkdocs.yml` 的 `site_description`
 与 `docs/index.md`。
 
-> [!WARNING]
-> **Pre-Alpha（`0.1.0`）—— 只可用于评估，不要上生产。**
-> 公开 API 与磁盘格式都可能在没有弃用期的情况下变更。
+> [!IMPORTANT]
+> **`1.0.0` —— 首个稳定版**（2026-10-04）。公开 API 与磁盘格式从 1.0 起遵循
+> [语义化版本](https://semver.org/lang/zh-CN/)：只有**主版本号**变更时才做破坏性变更，
+> 每一次变更都记进[变更日志](CHANGELOG.md)。
 > **定位句的两个半句现在都有机制支撑**：「不丢一个字节」由外科手术式回写保证；
 > 「不丢一次更新」由**专职写者**保证 —— 谁先抢绑到配置目录的端点，谁就是唯一的读写者，
 > 其余进程通过本地命名管道（Windows）/ Unix socket（POSIX）发请求；跨进程 **OS** 锁 +
@@ -59,7 +60,13 @@
 
 ## 快速开始
 
-`onconf` **还没有发布到 PyPI**（发布名仍在定案中）。从源码安装：
+`onconf` 已发布到 PyPI，发布名是 [`OnConf`](https://pypi.org/project/OnConf/)：
+
+```bash
+uv add onconf
+```
+
+或者从源码安装：
 
 ```bash
 git clone https://github.com/HanYang06/OnConf.git
@@ -167,7 +174,7 @@ conf("app.port", 9090, force=True)  # 覆盖文件里已有的值
 | 前缀分片锁 —— 当前是每个配置目录一把锁 | — |
 | 把系统环境变量当作配置**来源**（`ONCONF_HOME` 只用来定位配置目录） | — |
 | 按格式导出词表 | — |
-| 真正的命令行（`onconf` 目前只打印配置目录就退出） | — |
+| 真正的命令行（`onconf` 目前只打印配置目录就退出） | M5 |
 
 完整清单见 [`docs/roadmap.md`](docs/roadmap.md)；设计稿见
 [`docs/design/DESIGN.md`](docs/design/DESIGN.md)（中文，未定稿）。
