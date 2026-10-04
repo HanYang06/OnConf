@@ -37,10 +37,65 @@ concurrency:
 
 jobs:
   # --------------------------------------------------------------------------
+  # 版本闸门：**版本号只有一个来源 —— `pyproject.toml` 的 `[project] version`**，
+  # 改动一律走 `uv version`（它会把 pyproject.toml 与 uv.lock 一起改好）。
+  #
+  # 这里做两件事：
+  #   1. 打 tag 触发时，要求 tag 就是 `v<pyproject 里的版本>`。否则「tag 写 v0.2.0、
+  #      包里还是 0.1.0」这种发布会被放出门，而 PyPI 上的版本号不可撤回；
+  #   2. 把版本号交给下游 job —— 构建与发布都用它，而不是各自去猜。
+  # --------------------------------------------------------------------------
+  version:
+    name: Resolve version from pyproject.toml
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.22"
+          enable-cache: false
+
+      # --frozen：只读版本号，不重写 uv.lock、不动虚拟环境。
+      # 这一步也顺带证明「pyproject 与 uv.lock 是一致的」：版本对不上时它会直接失败。
+      - name: Read the project version
+        id: version
+        run: echo "version=$(uv version --short --frozen)" >> "$GITHUB_OUTPUT"
+
+      # 只有 tag 触发才有「tag 与版本」可比；workflow_dispatch（dry-run）跳过。
+      # 注意走 env 而不是把 ${{ }} 直接塞进 run：这是 zizmor 的模板注入审计点。
+      - name: Tag must match the project version
+        if: github.event_name == 'push'
+        env:
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "::error::tag 是 $TAG，但 pyproject.toml 里的版本是 $VERSION（期望 tag v$VERSION）"
+            echo "::error::版本号请用 \`uv version --bump …\` 改，并让 tag 与它一致。"
+            exit 1
+          fi
+
+      - name: Summary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: echo "本次发布的版本（来自 pyproject.toml）：$VERSION" >> "$GITHUB_STEP_SUMMARY"
+
+  # --------------------------------------------------------------------------
   # 构建 sdist/wheel，并为其生成可验证的构建来源证明
   # --------------------------------------------------------------------------
   build:
     name: Build distribution
+    needs: [version]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -76,6 +131,19 @@ jobs:
       - name: Build
         run: uv build
 
+      # 「发布依赖配置文件里的版本」的最后一环：产物文件名必须带着它。
+      # 名字对不上就说明构建时读到的不是同一个版本号 —— 直接失败，别发出去。
+      - name: Artifacts must carry the project version
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          ls -l dist/
+          matching=$(ls dist/ | grep -c -F "$VERSION" || true)
+          if [ "$matching" -lt 2 ]; then
+            echo "::error::dist/ 里没有同时带着版本 $VERSION 的 sdist 与 wheel"
+            exit 1
+          fi
+
       - name: Upload distribution artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -98,7 +166,7 @@ jobs:
   # --------------------------------------------------------------------------
   publish:
     name: Publish to PyPI
-    needs: [build]
+    needs: [version, build]
     # dry-run 语义：workflow_dispatch 勾选 dry-run（默认 true）时只构建不发版；
     # 打 tag 推送时不带该输入（inputs 上下文为空），因此会真正发布。
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry-run == false }}
@@ -115,6 +183,14 @@ jobs:
         with:
           name: dist
           path: dist/
+
+      # 发布前把版本号写进运行摘要：出问题时一眼能看出「这次发的是哪个版本」。
+      - name: Summary
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          echo "发布版本（来自 pyproject.toml）：$VERSION" >> "$GITHUB_STEP_SUMMARY"
+          ls -l dist/ >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

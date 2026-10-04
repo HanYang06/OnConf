@@ -43,6 +43,9 @@
   `[C]`→`[Change]`、`[E]`→`[Error]`），并新增 `[Start]` / `[Link]` / `[Send]`。
   解析日志的脚本要跟着改；`[Start]` / `[Link]` / `[Send]` 的 `txn=0` 表示
   「不属于任何配置事务」（客户端与写者各数各的 txn，混在一起会撞号）。
+- 版本号的唯一来源定为 `pyproject.toml`，改动一律走 `uv version`（它同时改 `uv.lock`）；
+  `release.yml` 新增版本闸门：tag 必须等于 `v<pyproject 版本>`，构建产物也必须带着它。
+  发版 runbook 见 `CONTRIBUTING.md` §4.4。
 - **项目改名**：`auto-conf` → **OnConf**；仓库、PyPI 发布名、import 名与 CLI 入口统一为
   `onconf`。历史提交信息里的旧名保留不动 —— 改它只能重写历史，收益不抵风险。
 - **破坏性变更**：词表字段 `x-auto-conf-hash` → `x-onconf-hash`（**磁盘格式变更**，

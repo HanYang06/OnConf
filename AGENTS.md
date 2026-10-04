@@ -33,10 +33,17 @@ uv run mypy                                   # 严格类型检查（files = src
 uv run ruff format .                          # 格式化（manual，见 §5 坑 1）
 uv run pre-commit run --all-files             # 本地全量检查
 uv run mkdocs serve                           # 文档站预览
+uv version --short --frozen                   # 读版本号（只读，不动 lock/venv）
+uv version --bump patch                       # 自增版本（同时改 pyproject + uv.lock）
 ```
 
 发版前：`uv run bandit -c pyproject.toml -r src`、`uv run pip-audit`、
 `uv run zizmor .github/workflows`、`uv build`。
+
+**版本号只有一个来源**：`pyproject.toml` 的 `[project] version`，改动一律走 `uv version`
+（`--bump patch|minor|major`、预发布写全 `0.2.0rc1`、`--bump rc`、`--bump stable`）。
+它**不打 git tag** —— tag 手工打，且 CI 会强制 `tag == v<pyproject 版本>`。
+完整 runbook 见 `CONTRIBUTING.md` §4.4。
 
 本机已装 `uv`（`C:\Users\Hy06\.local\bin\uv.exe`）。**不要**用 `pip install`、不要绕过
 `uv run` 去调 `.venv/Scripts/*.exe`——工具版本唯一来源是 `uv.lock`。

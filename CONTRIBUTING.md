@@ -197,6 +197,43 @@ uv run zizmor .github/workflows               # GitHub Actions 安全审计
 uv build                                      # 构建 sdist/wheel
 ```
 
+### 4.4 版本号：唯一来源是 `pyproject.toml`，改动一律走 `uv version`
+
+**版本号只有一个来源**：`pyproject.toml` 里 `[project] version`（因此它必须保持**静态**，
+不能改成 `dynamic`）。改动走 `uv version` —— 它按语义化版本自增，并且会**同时**改好
+`pyproject.toml` 与 `uv.lock` 里本项目的版本，两处必须进同一个提交（否则 CI 的
+`--frozen` 会直接失败）。
+
+```bash
+uv version --short --frozen        # 现在是哪个版本（只读，不动 lock、不建虚拟环境）
+uv version --bump patch --dry-run  # 先看会变成什么
+uv version --bump patch            # 0.1.0 → 0.1.1（minor / major 同理）
+uv version 0.2.0rc1                # 进预发布：显式写全（RC/beta/alpha 都这么写）
+uv version --bump rc               # 预发布内部自增：0.2.0rc1 → 0.2.0rc2
+uv version --bump stable           # 转正：0.2.0rc2 → 0.2.0
+uv version --output-format json    # 给脚本读：{package_name, version, commit_info}
+```
+
+!!! warning "`uv version` 不会打 git tag"
+
+    它只管版本号。tag 是紧接着的手工动作，而且 CI 会**强制两者一致**：
+
+```bash
+uv version --bump minor                          # 1) 改版本（pyproject + uv.lock）
+git add pyproject.toml uv.lock CHANGELOG.md      # 2) CHANGELOG 的 [Unreleased] 收成新版本
+git commit -m "chore(release): 0.2.0"
+git tag -a v0.2.0 -m "0.2.0"                     # 3) tag 必须等于 uv version --short
+git push origin main --follow-tags               # 4) 推 tag 触发 release.yml
+```
+
+`release.yml` 的第一个 job 会读 `uv version --short`，要求触发的 tag 正是 `v<那个版本>`，
+不一致就**直接失败**；构建之后还会核对 `dist/` 里同时存在带着该版本号的 sdist 与 wheel
+（见 `.github/workflows/release.yml` 的 `version` job）。这样「tag 是 v0.2.0、包里其实
+还是 0.1.0」这种发布出不了门 —— PyPI 上的版本号是不可撤回的。
+
+发版时还要把 `CHANGELOG.md` 的 `[Unreleased]` 收成 `## [x.y.z] - YYYY-MM-DD`，
+并在文件末尾补上对应的对比链接。
+
 ---
 
 ## 5. 分支、提交与 PR

@@ -9,6 +9,10 @@
 #     subject 允许中文，例如「fix(core): 指令键豁免对账」；
 #   - 破坏性变更在类型后加 `!`，例如「feat(core)!: 移除旧的对账开关」。
 
+# ⚠️ 版本号的**权威来源是 `pyproject.toml`**（发版走 `uv version`，见 CONTRIBUTING §4.4）。
+# 下面的 $NEXT_PATCH_VERSION 只是发布说明草稿的**建议值**：它按标签猜，而
+# .github/workflows/release.yml 只认 pyproject 里的版本 —— 两者不一致时 tag 会被 CI
+# 拒掉。所以最终以 `uv version --short` 为准，这里不要当成版本决策。
 name-template: 'v$NEXT_PATCH_VERSION'
 tag-template: 'v$NEXT_PATCH_VERSION'
 
