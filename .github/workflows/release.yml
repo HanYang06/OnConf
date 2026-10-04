@@ -1,17 +1,16 @@
 # ============================================================================
 # Release —— 构建 + 来源证明 + 发布到 PyPI
 #
-# ⚠️ PyPI 项目名尚未定案，因此本工作流里**不出现任何 PyPI 项目名**：
+# ⚠️ 项目名（PyPI 发布名）是 `onconf`，但本工作流里**刻意不出现**它：
 #    pypa/gh-action-pypi-publish 走 trusted publishing（OIDC），
 #    项目身份由 PyPI 侧的 Trusted Publisher 配置决定，而不是写在这里。
 #
-#    发布前需要在 PyPI 配置 Trusted Publisher，三项必须与此处完全一致：
+#    发布前需要在 PyPI 配置 Trusted Publisher，**四项**必须与此处完全一致：
 #      Owner:            HanYang06
-#      Repository:       onconf
+#      Repository:       onconf      ← 仓库改名会动这一项，改完必须同步 PyPI
 #      Workflow name:    release.yml
 #      Environment name: pypi
-#    项目名定案后，先在 PyPI 创建对应项目（或提交 pending publisher），
-#    再打 v* tag 触发本工作流。
+#    先在 PyPI 创建 `onconf` 项目（或提交 pending publisher），再打 v* tag 触发本工作流。
 #
 #    权限说明：id-token: write 是 OIDC 换取短期凭据的前提；
 #    attestations: write 用于写来源证明。二者都不需要长期 secret。
