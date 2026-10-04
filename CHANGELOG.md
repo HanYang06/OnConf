@@ -11,6 +11,17 @@
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-04
+
+首个稳定版，也是首个发布到 PyPI 的版本（发布名 `OnConf`）。相对 0.1.0 的工作区状态，这一版
+把定位句的两个半句都落成了机制：「不丢一个字节」依旧是外科手术式回写；「不丢一次更新」交给
+**专职写者**。落盘变成原子的，日志与审计成为强制面，值后端补齐了 TOML 与 `.env`。
+
+**注意：这一版的包元数据与 README 正文是发布前打包进去的快照** —— PyPI 上 1.0.0 的
+classifier 仍是 `Development Status :: 2 - Pre-Alpha`，页面正文也还写着「Pre-Alpha（`0.1.0`）
+—— 只可用于评估，不要上生产」与「尚未发布到 PyPI」。PyPI 不允许修改已发布版本的元数据，
+这些修正会随下一个版本生效。
+
 ### Added
 
 - `.env` 字符串后端：值只能是字符串，不做键名映射，不认行内注释（`#` 出现在值里时就是值的
@@ -145,7 +156,11 @@
 
 - 指令键（`$` 开头）豁免对账，`$schema` 不会被规则 1 清掉（`787360e`）。
 
-[Unreleased]: https://github.com/HanYang06/OnConf/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/HanYang06/OnConf/compare/3ef3f4f...v0.1.0
+[Unreleased]: https://github.com/HanYang06/OnConf/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/HanYang06/OnConf/compare/3ef3f4f...v1.0.0
+[0.1.0]: https://github.com/HanYang06/OnConf/compare/3ef3f4f...d166050
+
+`v0.1.0` **从未打过 tag、也从未发布**，所以它只能按提交区间比对（`3ef3f4f...d166050`）；
+`v1.0.0` 的对比基准因此也退回同一个起点。详见 `CONTRIBUTING.md` §4.4 的版本闸门。
 
 未发布能力见 [docs/roadmap.md](docs/roadmap.md)。

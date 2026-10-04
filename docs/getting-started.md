@@ -14,18 +14,15 @@
 
 ## 安装
 
-!!! warning "尚未发布到 PyPI"
+两种方式都可用：第一种装 PyPI 上已发布的 `1.0.0`，第二种拿的是 `main` 的最新状态。
 
-    0.1.0 还没有发布到 PyPI，所以下面第一种方式**当前会失败**。
-    它写在这里，是为了发布之后可以直接照抄。现在请用第二种。
-
-### 从 PyPI 安装（发布后可用）
+### 从 PyPI 安装
 
 ```bash
 uv add onconf
 ```
 
-### 从源码安装（当前唯一可用的方式）
+### 从源码安装
 
 ```bash
 git clone https://github.com/HanYang06/OnConf.git
