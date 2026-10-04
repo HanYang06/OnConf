@@ -86,6 +86,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ._audit import Reply
 from ._engine import SCHEMA_DIR, VALUES_STEM
 from ._lock import LockTimeoutError
 from .errors import (
@@ -258,8 +259,10 @@ class Request:
     clean: bool = False
     #: **发起方**的 pid 与身份。审计记的是「谁发起的」而不是「谁执行的」（§20.3），
     #: 所以这两个字段跟着请求过线；声明自己的调用点则在 :attr:`Decl.at` 上。
-    pid: int = 0
-    identity: str = ""
+    #: 两者都是 ``None`` 表示**本进程自己发起的**请求（只有这时才用执行点的身份）；
+    #: 远端来的请求即便没设身份也只是「没有身份」，不该被冠上写者的服务名。
+    pid: int | None = None
+    identity: str | None = None
 
 
 #: 写者的执行入口。``Engine`` 把自己的**就地执行**方法以绑定方法的形式传进来，
@@ -559,6 +562,8 @@ class Channel:
         if status == "ok":
             # 这一轮是**别的进程**执行的：客户端据此把自己终端那一份补上
             # （审计文件不重复写，那份归执行点，见 ``Engine._collect_remote``）。
-            return replace(payload, remote=True)
+            # 认识 ``Reply`` 才补标记：版本错配时拿到别的形状，宁可当普通值返回，
+            # 也不要在这里炸出一个 reachable 不到的 ``TypeError``。
+            return replace(payload, remote=True) if isinstance(payload, Reply) else payload
         name, message = payload
         raise _ERROR_KINDS.get(name, ConfError)(message)

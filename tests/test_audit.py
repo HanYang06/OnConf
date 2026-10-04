@@ -11,13 +11,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 from importlib import import_module
 from typing import TYPE_CHECKING
 
 import pytest
 
 from onconf import Engine, _audit, _reset
-from onconf._audit import AuditLog, cell_len, error_kind, strip_ansi
+from onconf._audit import AuditLog, Origin, Record, cell_len, error_kind, strip_ansi
 from onconf._core import MISSING, NO_VALUE
 from onconf._lock import LockTimeoutError
 from onconf.errors import (
@@ -458,15 +459,20 @@ class TestSinks:
 
 
 class TestAccounting:
-    def test_an_operation_scope_collects_only_its_own_records(self, tmp_path: Path) -> None:
+    def test_an_operation_scope_collects_what_was_emitted(self, tmp_path: Path) -> None:
+        """只有**真正输出出去**的记录才算这次操作的产出。
+
+        读的记录会攒在事务里等下一个提交点；把它当成「这次读」的产出回传，发起方就会
+        先看到 ``n=1`` 再看到 ``n=2``，而审计文件里只有一行 —— 两个去向说的不是一回事。
+        """
         log = AuditLog(audit_path=None, log=tmp_path / "log.txt")
         log.begin_op()
         record = log.wrote(item="a", file="settings.json", op="fill", data=1)
 
-        assert log.end_op() == (record,)
+        assert log.end_op() == (), "还没输出的记录不算产出"
         log.begin_op()
-        assert log.end_op() == ()
-        assert log.close_txn() == (record,), "记录仍然留在事务里等收口"
+        assert log.close_txn() == (record,)
+        assert log.end_op() == (record,), "输出出去的那一批才算"
 
     def test_render_remote_only_touches_the_log_sink(self, tmp_path: Path) -> None:
         """别的进程执行出来的记录只补终端：审计文件只有一个写者，不会交错。"""
@@ -502,14 +508,157 @@ class TestAccounting:
     def test_remote_failures_still_keep_their_type_and_get_logged(self, tmp_path: Path) -> None:
         home = tmp_path / "conf"
         writer_log = tmp_path / "writer.log"
+        client_log = tmp_path / "client.log"
         writer = Engine(home, log=writer_log)
+        client = Engine(home, log=client_log)
+        try:
+            writer("bootstrap", 0)
+            with pytest.raises(KeyNotRegisteredError):
+                client("nope")
+
+            # 两边都要留痕：执行点（写者）与发起方（客户端）各记各的。
+            assert "err=key-not-registered" in writer_log.read_text(encoding="utf-8")
+            assert "err=key-not-registered" in client_log.read_text(encoding="utf-8")
+        finally:
+            client.close()
+            writer.close()
+
+    def test_remote_reads_are_not_mirrored_twice(self, tmp_path: Path) -> None:
+        """两次远端读只在写者收口时补一次，而且两边数字一致（§20.1）。"""
+        home = tmp_path / "conf"
+        client_log = tmp_path / "client.log"
+        writer = Engine(home, log=tmp_path / "writer.log", audit=True)
+        client = Engine(home, log=client_log)
+        try:
+            writer("k", 1)
+            client("k")
+            client("k")
+            client("k2", 2)  # 客户端自己下一次提交：写者顺手把攒着的 [R] n=2 收口
+
+            client_text = client_log.read_text(encoding="utf-8")
+            assert client_text.count("[R]") == 1, "读被补了两次"
+            assert "n=2" in client_text
+
+            audit_text = (home / "audit.log").read_text(encoding="utf-8")
+            assert audit_text.count("[R]") == 1
+            assert "n=2" in audit_text
+        finally:
+            client.close()
+            writer.close()
+
+    def test_a_remote_failure_does_not_reach_the_audit_file_twice(self, tmp_path: Path) -> None:
+        """失败也只在执行点那一侧进审计文件：客户端补的是自己的日志。"""
+        home = tmp_path / "conf"
+        writer = Engine(home, log=tmp_path / "writer.log", audit=True)
         client = Engine(home, log=tmp_path / "client.log")
         try:
             writer("bootstrap", 0)
             with pytest.raises(KeyNotRegisteredError):
                 client("nope")
 
-            assert "err=key-not-registered" in writer_log.read_text(encoding="utf-8")
+            assert (home / "audit.log").read_text(encoding="utf-8").count("[E]") == 1
+        finally:
+            client.close()
+            writer.close()
+
+
+# --------------------------------------------------------------------------- #
+# 审计自己坏掉时：不盖住真正的异常，也不毁掉另一半
+# --------------------------------------------------------------------------- #
+
+
+class TestBrokenSinks:
+    def test_a_broken_audit_sink_does_not_mask_the_real_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """审计写不出去时，抛出来的必须是**原来那个异常**（类型都不能变）。"""
+
+        def boom(_path: Path, _text: str, *, rotate: bool) -> None:  # noqa: ARG001 - 签名对齐
+            raise OSError("磁盘满了")
+
+        engine = Engine(tmp_path, audit=True)
+        monkeypatch.setattr(_audit, "_append_file", boom)
+
+        with pytest.raises(TypeConflictError):
+            engine("port", "8080", type=int)
+        with pytest.raises(KeyNotRegisteredError):
+            engine("nope")
+
+    def test_a_bad_log_path_does_not_destroy_the_audit_batch(self, tmp_path: Path) -> None:
+        """日志去向坏掉（路径里有 NUL）不该顺手把审计那一批也带走。"""
+        home = tmp_path / "conf"
+        engine = Engine(home, audit=True, log="bad\x00path")
+        engine("k", 1)
+        engine.close()
+
+        assert "item=k" in (home / "audit.log").read_text(encoding="utf-8")
+
+    def test_a_disk_error_is_logged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """盘满 / 没权限是 ``OSError``，不是 ConfError —— 一样要留痕（§20.2 第 4 项）。"""
+
+        def boom(*_args: object, **_kwargs: object) -> None:
+            raise OSError("磁盘满了")
+
+        engine = Engine(tmp_path)
+        monkeypatch.setattr(_engine, "_atomic_write_text", boom)
+        with pytest.raises(OSError):
+            engine("k", 1)
+
+        assert "err=os-error" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- #
+# 身份与行完整性
+# --------------------------------------------------------------------------- #
+
+
+class TestOriginIntegrity:
+    def test_the_origin_is_per_thread(self) -> None:
+        """一个线程替远端记账，不该把另一个线程自己的操作也标成远端的（实测抓到过）。"""
+        log = AuditLog(audit_path=None, log=os.devnull)
+        log.origin = Origin(pid=999_999, identity="remote-client")
+        main_pid = os.getpid()
+        seen: list[Record] = []
+
+        def other_thread() -> None:
+            seen.append(log.wrote(item="local.key", file="settings.json", op="fill", data=1))
+
+        worker = threading.Thread(target=other_thread)
+        worker.start()
+        worker.join(timeout=5)
+
+        log.close_txn()
+        assert seen[0].pid == main_pid, "别的线程继承了远端身份"
+        assert seen[0].identity == ""
+
+    def test_a_newline_in_a_key_cannot_forge_a_line(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """键名里的换行不许伪造出额外的审计行。"""
+        engine = Engine(tmp_path)
+        forged = "k\n[W]-[1970-01-01T00:00:00.000]-[txn=1 pid=1] item=FAKE"
+        engine(forged, 1)
+
+        lines = _lines(capsys.readouterr().err)
+        assert len(lines) == 3, f"记录行数不对：{lines}"
+        assert all("item=FAKE" not in line or "\\n" in line for line in lines)
+        assert "\\n" in lines[0], "换行应当被折成可见转义"
+
+    def test_a_nameless_client_does_not_inherit_the_writers_identity(self, tmp_path: Path) -> None:
+        """客户端没设 ``identity`` 时，不能被记成写者的服务名。"""
+        home = tmp_path / "conf"
+        writer = Engine(home, log=tmp_path / "writer.log", identity="writer-svc", audit=True)
+        client = Engine(home, log=tmp_path / "client.log")
+        try:
+            writer("bootstrap", 0)
+            client("nameless", 1)
+
+            text = (home / "audit.log").read_text(encoding="utf-8")
+            client_line = next(line for line in _lines(text) if "item=nameless" in line)
+            assert "id=writer-svc" not in client_line, f"客户端被冠上了写者的身份：{client_line}"
+            assert " id=" not in client_line, f"客户端本就没有身份：{client_line}"
         finally:
             client.close()
             writer.close()

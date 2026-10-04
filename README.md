@@ -225,7 +225,9 @@ Invariants this project commits to (each one has a regression test in
 | **A symlinked value file is replaced** | Writes go through `os.replace`: the symlink is replaced by a regular file and the link's target is left untouched (the link itself is destroyed) |
 | **`ONCONF_HOME` is trusted input** | It decides the config directory and is not containment-checked |
 | **Audit lines contain values verbatim** | `data=` / `old=` / `new=` carry the real value. `audit=True` writes them to `<home>/audit.log` (append-only, `0600`) — turning it on for a config file full of secrets is a deliberate exposure (threat-model T12) |
-| **The audit trail lives with the executor** | A client ships its request to the dedicated writer, which writes the audit file and logs to *its* destination; the client only mirrors the same lines to its own log. With no writer, the direct-write path does the accounting |
+| **The audit trail lives with the executor** | A client ships its request to the dedicated writer, which writes the audit file and logs to *its* destination; the client mirrors only the records that executor actually emitted. A failed remote call is logged as `[E]` by the originator too, but a remote **read** waits for the writer's next commit point — so it may not appear in the client's own log at all. The audit file is the authoritative stream |
+| **The audit file assumes one writer** | A second engine on the same config directory with `audit=True` appends its own local records to the same `<home>/audit.log`, and `txn` numbers are per-process — so the file can hold two batches numbered alike and rotation stops being single-writer. Leave `audit` off in client processes (off by default) |
+| **Writer-local calls share no lock with its session threads** | `conf()` on the writer's own thread runs next to a client request: the OS lock keeps the file consistent (one side may wait out `lock_timeout`), but engine memory is raceable in that window. No regression test covers it (threat-model T4) |
 
 Full analysis, per threat with code evidence: [`docs/security/threat-model.md`](docs/security/threat-model.md).
 

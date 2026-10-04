@@ -71,9 +71,13 @@ Windows 上不会把用户的 LF 文件偷偷改成 CRLF；已存在文件的权
 ``[R]/[W]/[C]/[E]`` 与对齐规则见 :mod:`onconf._audit`。
 
 **记账在执行点**：谁真正动了配置目录，谁写日志。经 IPC 的请求由写者执行、由写者记，
-但记录里的 ``pid`` / ``id=`` / ``at=`` 仍是**发起方**的（调用点在客户端抓，随声明过线）。
-客户端再把自己那一份补到**终端**上，所以两个进程都看得见自己发起的操作，
-而审计文件只有执行点一个写者，不会交错。
+但记录里的 ``pid`` / ``id=`` / ``at=`` 仍是**发起方**的（调用点在客户端抓，随声明过线；
+这两个身份字段都按线程存，免得应答线程把远端身份漏到主线程自己身上）。
+
+客户端补的是**执行点这一次真正输出出去的**记录（写 / 变更 / 被这次提交收口的读），
+审计文件不重复写。两条推论要记住：远端失败时客户端那一侧本来是空的，所以
+:meth:`Engine._log_remote_failure` 会在**发起方**也记一条 ``[E]``；而纯远端的读会攒在
+写者的事务里等它的下一个提交点，因此不一定出现在客户端的日志里 —— 权威流是审计文件。
 """
 
 from __future__ import annotations
@@ -286,6 +290,9 @@ class Engine:
         #: 本引擎的通道，懒建。``_owner`` 只能用绑定方法传进来当写者的执行入口，
         #: 所以这里存的是不透明句柄（见 :meth:`_channel`）。
         self._chan: Any = None
+        #: 最近一条「已经记过账」的异常。远端失败要补记时认一下它，免得就地执行
+        #: （写者自己 / 退到底）那条路把同一件事记两遍。
+        self._logged_failure: BaseException | None = None
 
     # ------------------------------------------------------------------ 两个面
 
@@ -325,9 +332,18 @@ class Engine:
         if self._is_writer():
             return self._read_local(key)
         owner = _owner_module()
-        reply: Reply = self._channel().submit(
-            owner.Request(op=owner.OP_READ, key=key, pid=os.getpid(), identity=self.identity)
-        )
+        try:
+            reply: Reply = self._channel().submit(
+                owner.Request(
+                    op=owner.OP_READ,
+                    key=key,
+                    pid=os.getpid(),
+                    identity=self.identity or None,
+                )
+            )
+        except Exception as exc:
+            self._log_remote_failure(exc, item=key)
+            raise
         self._collect_remote(reply)
         return reply.value
 
@@ -347,18 +363,18 @@ class Engine:
         """
         at = call_site()
         if value is not MISSING and type is not None and not _type_matches(value, type):
-            self._audit.failed(
-                item=key,
-                file=self.values_path.name,
-                err="type-conflict",
-                message=f"want={type.__name__} got={value.__class__.__name__}",
-                at=at,
-            )
-            # 失败当场落账：这个异常一抛，后面没有任何提交点会替它收口。
-            self._audit.close_txn()
-            raise TypeConflictError(
+            conflict = TypeConflictError(
                 f"{key!r} 的默认值 {value!r} 不符合声明的类型 {type.__name__}"
             )
+            # 走 _log_failure：它写记录时会顺手收口，而且审计自己写不出去时**不会**盖住
+            # 这个 TypeConflictError —— 调用方要诊断的是类型冲突，不是审计文件。
+            self._log_failure(
+                conflict,
+                item=key,
+                at=at,
+                message=f"want={type.__name__} got={value.__class__.__name__}",
+            )
+            raise conflict
 
         self._load_audited(item=key)
         decl = Decl(key=key, value=value, type=type, doc=doc, at=at)
@@ -390,6 +406,10 @@ class Engine:
         """放下写者身份（或断开连接）。下一个进程会接上。
 
         顺手把审计收口：纯读的程序也要在退出前把攒着的 ``[R]`` 行交出去。
+
+        **它不是提交点**：攒着的声明要在 ``flush()`` / ``sync()`` 里才交出去。
+        ``atexit`` 那条路会先 ``sync()`` 再 ``close()``，但直接调 ``close()``
+        （``flush_window > 0`` 时）会把还没交的声明丢掉 —— 要收口请显式 ``sync()``。
         """
         try:
             self._audit.close_txn()
@@ -425,16 +445,21 @@ class Engine:
         if not decls and not clean:
             return
         owner = _owner_module()
-        reply: Reply = self._channel().submit(
-            owner.Request(
-                op=owner.OP_COMMIT,
-                decls=decls,
-                forced=forced,
-                clean=clean,
-                pid=os.getpid(),
-                identity=self.identity,
+        try:
+            reply: Reply = self._channel().submit(
+                owner.Request(
+                    op=owner.OP_COMMIT,
+                    decls=decls,
+                    forced=forced,
+                    clean=clean,
+                    pid=os.getpid(),
+                    identity=self.identity or None,
+                )
             )
-        )
+        except Exception as exc:
+            # 归属不到具体某个键：整批都可能失败。键名只用于记录，不改变异常。
+            self._log_remote_failure(exc, item=decls[0].key if len(decls) == 1 else "")
+            raise
         self._collect_remote(reply)
 
     def _is_writer(self) -> bool:
@@ -466,9 +491,12 @@ class Engine:
         """
         owner = _owner_module()
         previous = self._audit.origin
-        self._audit.origin = Origin(
-            pid=request.pid or os.getpid(),
-            identity=request.identity or self.identity,
+        # ``pid`` 为 None ⇒ 这条请求是本进程自己发起的，用执行点自己的身份；
+        # 否则身份就是**发起方**的——它没设就是没设，不拿写者的服务名去顶。
+        self._audit.origin = (
+            Origin(pid=os.getpid(), identity=self.identity)
+            if request.pid is None
+            else Origin(pid=request.pid, identity=request.identity or "")
         )
         self._audit.begin_op()
         value: Any = None
@@ -500,13 +528,7 @@ class Engine:
         try:
             result = read_value(key, self._facts, self._vocab.as_dict())
         except ConfError as exc:
-            self._audit.failed(
-                item=key,
-                file=self.values_path.name,
-                err=error_kind(exc),
-                message=str(exc),
-            )
-            self._audit.close_txn()
+            self._log_failure(exc, item=key)
             raise
         self._audit.read(
             item=key,
@@ -517,27 +539,52 @@ class Engine:
         return result.value
 
     def _collect_remote(self, reply: Reply) -> None:
-        """别的进程替我执行时，把它记的账补到**自己的终端**上。
+        """别的进程替我执行时，把它**这一次真正输出出去的**记录补到自己终端上。
 
         审计文件不重复写：那份归执行点（写者），只有一个写者就不会交错。
         """
         if reply.remote:
             self._audit.render_remote(reply.records)
 
-    def _log_failure(self, exc: BaseException, *, item: str = "") -> None:
+    def _log_failure(
+        self,
+        exc: BaseException,
+        *,
+        item: str = "",
+        at: str = "",
+        message: str | None = None,
+    ) -> None:
         """失败留痕（§20.2 第 4 项）：记一条 ``[E]`` 并当场收口。**调用方负责继续抛。**
 
         当场收口是因为异常一抛，后面就没有提交点会替这条记录收尾了。
         审计**自己**写不出去时不在这里抛：那会盖住真正的异常，而调用方要诊断的是配置那件事。
+
+        ``message`` 可以覆盖：类型冲突那种「一句话太长」的异常，日志里写紧凑的
+        ``want=int got=str`` 比抄一遍中文异常消息有用。
         """
         self._audit.failed(
             item=item,
             file=self.values_path.name,
             err=error_kind(exc),
-            message=str(exc),
+            message=str(exc) if message is None else message,
+            at=at,
         )
+        self._logged_failure = exc
         with contextlib.suppress(ConfError):
             self._audit.close_txn()
+
+    def _log_remote_failure(self, exc: BaseException, *, item: str = "") -> None:
+        """远端执行失败时，在**发起方自己这一侧**也留一条痕。
+
+        执行点已经记过账（写者的日志/审计文件里有），但发起方的日志去向本来是空的：
+        ``except KeyNotRegisteredError`` 抓得到，可它自己的日志里什么都没有。
+
+        就地执行（写者自己 / 退到底）那两条路已经记过，用 ``_logged_failure`` 认一下，
+        避免同一件事在同一个进程里记两遍。
+        """
+        if self._logged_failure is exc:
+            return
+        self._log_failure(exc, item=item)
 
     def _load_audited(self, *, item: str) -> None:
         """加载值文件 / 词表；**失败也要留痕**。
@@ -547,7 +594,7 @@ class Engine:
         """
         try:
             self._ensure_loaded()
-        except (ConfError, TypeError, ValueError, KeyError) as exc:
+        except (ConfError, OSError, TypeError, ValueError, KeyError) as exc:
             self._log_failure(exc, item=item)
             raise
 
@@ -608,8 +655,9 @@ class Engine:
                     self._commit(actions)
                 records = self._action_records(actions, batch)
         # 后端拒绝一个值抛的是 TypeError / ValueError（TOML 没有 null、YAML 落不成单行……），
-        # 文件坏了抛的是后端的 ValueError 子类 —— 它们都要留痕，不能只记 ConfError。
-        except (ConfError, TypeError, ValueError, KeyError) as exc:
+        # 文件坏了抛的是后端的 ValueError 子类，盘满 / 没权限是 OSError —— 它们都要留痕，
+        # 不能只记 ConfError。
+        except (ConfError, OSError, TypeError, ValueError, KeyError) as exc:
             self._log_failure(exc)
             raise
         # 正常路径才在这里收口：审计写不出去就抛（审计缺席不是「少看几行」）。

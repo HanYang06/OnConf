@@ -259,19 +259,28 @@ def _fmt(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=repr)
 
 
+def _one_line(text: str) -> str:
+    """把 CR / LF 折成可见转义。
+
+    键名与身份是调用方给的：里面塞一个换行就能**伪造出额外的审计行**（一行变三行，
+    而且看起来跟真的一模一样）。所以这几个字段必须压成一行。
+    """
+    return text.replace("\r\n", "\\n").replace("\n", "\\n").replace("\r", "\\r")
+
+
 def _head_cells(record: Record, *, full_date: bool) -> list[str]:
     """标识这一行的前缀：级别、时间、事务、键、文件，以及可选的 id / origin / op。"""
     cells = [
         f"[{record.level}]-[{_stamp(full_date=full_date)}]-[txn={record.txn} pid={record.pid}]",
-        f"item={record.item or '-'}",
-        f"file={record.file or '-'}",
+        f"item={_one_line(record.item) or '-'}",
+        f"file={_one_line(record.file) or '-'}",
     ]
     if record.identity:
-        cells.append(f"id={record.identity}")
+        cells.append(f"id={_one_line(record.identity)}")
     if record.origin:
-        cells.append(f"origin={record.origin}")
+        cells.append(f"origin={_one_line(record.origin)}")
     if record.op:
-        cells.append(f"op={record.op}")
+        cells.append(f"op={_one_line(record.op)}")
     return cells
 
 
@@ -296,9 +305,9 @@ def _tail_cells(record: Record) -> list[str]:
     if record.level == LEVEL_READ:
         cells.append(f"n={record.count}")
     if record.at:
-        cells.append(f"at={record.at}")
+        cells.append(f"at={_one_line(record.at)}")
     if record.err:
-        cells.append(f"err={record.err}")
+        cells.append(f"err={_one_line(record.err)}")
     if record.message:
         cells.append(f"msg={_fmt(record.message)}")
     if record.reason:
@@ -373,13 +382,22 @@ def _rotate_if_needed(path: Path) -> None:
 
 
 def _append_file(path: Path, text: str, *, rotate: bool) -> None:
-    """追加写入（``O_APPEND`` + 0600）。一次 ``os.write``，不重写、不截断。"""
+    """追加写入（``O_APPEND`` + 0600）。不重写、不截断。
+
+    ``os.write`` **允许短写**（磁盘满、``RLIMIT_FSIZE``）：不看返回值就会把一批记录
+    截在一个记录中间，而且一声不吭。所以这里写到写完为止。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     if rotate:
         _rotate_if_needed(path)
     handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     try:
-        os.write(handle, text.encode("utf-8"))
+        data = memoryview(text.encode("utf-8"))
+        while data:
+            written = os.write(handle, data)
+            if written <= 0:  # pragma: no cover - 正常文件系统不会返回 0；防死循环
+                raise OSError(f"写入没有进展：{path}")
+            data = data[written:]
     finally:
         os.close(handle)
 
@@ -399,9 +417,9 @@ class AuditLog:
     ) -> None:
         self.audit_path = audit_path
         self.identity = identity
-        #: 当前记录的发起方。执行远端请求前由 :class:`~onconf._engine.Engine` 临时改写，
-        #: 所以审计里的 ``pid`` / ``id=`` 是**发起方**的，不是执行点的。
-        self.origin = Origin(pid=os.getpid(), identity=identity)
+        #: 默认发起方（本进程自己）。执行远端请求前，**发起方改写的是自己线程那一份**。
+        self._default_origin = Origin(pid=os.getpid(), identity=identity)
+        self._threads = threading.local()
         self._log = os.fspath(log)
         self._lock = threading.Lock()
         self._pending: list[Record] = []
@@ -410,6 +428,21 @@ class AuditLog:
         self._next_txn = 1
         self._widths: list[int] = []
         self._op: list[Record] | None = None
+
+    @property
+    def origin(self) -> Origin:
+        """当前记录的发起方，**按线程存**。
+
+        写者的应答线程各自服务不同客户端；把这些客户端的信息写进一个共享字段，就会出现
+        「主线程自己的声明被记成远端调用方」——那条实测抓到过。按线程存之后，每个线程
+        只看得见自己那份，主线程永远是本进程自己。
+        """
+        per_thread: Origin | None = getattr(self._threads, "origin", None)
+        return self._default_origin if per_thread is None else per_thread
+
+    @origin.setter
+    def origin(self, value: Origin) -> None:
+        self._threads.origin = value
 
     # ------------------------------------------------------------------ 记录
 
@@ -486,15 +519,23 @@ class AuditLog:
             return records
 
     def close_txn(self) -> tuple[Record, ...]:
-        """收口一个事务：输出并清空攒着的记录，下一个事务拿新的事务号。"""
+        """收口一个事务：输出攒着的记录，下一个事务拿新的事务号。
+
+        **只有真正输出出去的记录才算进操作作用域**。读的记录会攒在事务里等下一个提交点，
+        所以「这一次读」不该把它当成自己的产出回传给发起方 —— 否则发起方的日志会先看到
+        ``n=1`` 再看到 ``n=2``，跟审计文件里那一行对不上（§20.1）。
+
+        审计文件写失败**没有重试**：缓冲已经清空，这一批只留在终端那一份里。
+        """
         with self._lock:
             records = tuple(self._pending)
             self._pending.clear()
             self._reads.clear()
             self._txn = None
             if records:
-                self._emit_log(records)
-                self._emit_audit_file(records)
+                if self._op is not None:
+                    self._op.extend(records)
+                self._emit(records)
             return records
 
     def render_remote(self, records: Iterable[Record]) -> None:
@@ -519,16 +560,10 @@ class AuditLog:
                 if index is not None:
                     merged = replace(self._pending[index], count=self._pending[index].count + 1)
                     self._pending[index] = merged
-                    self._remember(merged)
                     return merged
                 self._reads[key] = len(self._pending)
             self._pending.append(stamped)
-            self._remember(stamped)
             return stamped
-
-    def _remember(self, record: Record) -> None:
-        if self._op is not None:
-            self._op.append(record)
 
     def _stamp(self, record: Record) -> Record:
         if self._txn is None:
@@ -536,14 +571,34 @@ class AuditLog:
             self._next_txn += 1
         return replace(record, txn=self._txn, pid=self.origin.pid, identity=self.origin.identity)
 
+    def _emit(self, records: Sequence[Record]) -> None:
+        """两路输出**互不牵连**：审计文件失败要抛，但不能让终端那一份跟着丢。
+
+        所以：先写审计文件（失败先记下），再写日志（自己吞掉 IO 错），最后才把审计的
+        失败抛出去。反过来的话，一个坏掉的日志去向会顺手毁掉审计那一批。
+        """
+        failure: ConfError | None = None
+        try:
+            self._emit_audit_file(records)
+        except ConfError as exc:
+            failure = exc
+        self._emit_log(records)
+        if failure is not None:
+            raise failure
+
     def _emit_log(self, records: Sequence[Record]) -> None:
-        """人读的那一路：终端对齐（或日志文件紧凑）。它失败不阻断配置读写。"""
-        if self._log == TERMINAL_STDERR:
-            self._write_stream(sys.stderr, _render_terminal(records, self._widths))
-        elif self._log == TERMINAL_STDOUT:
-            self._write_stream(sys.stdout, _render_terminal(records, self._widths))
-        else:
-            with contextlib.suppress(OSError):
+        """人读的那一路：终端对齐（或日志文件紧凑）。**它失败不阻断配置读写。**
+
+        整段都吞：不只是 IO —— 值里有什么东西让**渲染**炸了（``__repr__`` 抛、
+        循环引用……）也不该让一次 ``conf()`` 失败。日志是配套设施，不是事务的一部分；
+        审计那一路（另一份）才是「写不出去要出声」的那个。
+        """
+        with contextlib.suppress(Exception):
+            if self._log == TERMINAL_STDERR:
+                self._write_stream(sys.stderr, _render_terminal(records, self._widths))
+            elif self._log == TERMINAL_STDOUT:
+                self._write_stream(sys.stdout, _render_terminal(records, self._widths))
+            else:
                 _append_file(
                     Path(self._log), _render_compact(records, full_date=True), rotate=False
                 )
