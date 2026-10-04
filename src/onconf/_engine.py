@@ -60,8 +60,20 @@ Windows 上不会把用户的 LF 文件偷偷改成 CRLF；已存在文件的权
     <home>/schema/settings.json   词表（**库自己的资产**，随便重写）
     <home>/schema/settings.lock   锁的握手点（空文件；库里自己的簿记）
     <home>/schema/settings.key    写者端点的认证码（0600；库里自己的簿记）
+    <home>/audit.log              审计文件（append-only；``audit=True`` 才有）
 
 ``<home>`` 由 ``home=`` 参数 / ``ONCONF_HOME`` 环境变量 / 当前目录依次决定。
+
+## 日志与审计（§20 / §21）
+
+日志**不可关闭**，只能改去向（``log="stderr"`` 默认 / ``"stdout"`` / 一个文件路径）；
+``audit=True`` 再加一份 append-only 的 ``<home>/audit.log``。四个级别
+``[R]/[W]/[C]/[E]`` 与对齐规则见 :mod:`onconf._audit`。
+
+**记账在执行点**：谁真正动了配置目录，谁写日志。经 IPC 的请求由写者执行、由写者记，
+但记录里的 ``pid`` / ``id=`` / ``at=`` 仍是**发起方**的（调用点在客户端抓，随声明过线）。
+客户端再把自己那一份补到**终端**上，所以两个进程都看得见自己发起的操作，
+而审计文件只有执行点一个写者，不会交错。
 """
 
 from __future__ import annotations
@@ -76,6 +88,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import _env_backend, _json_backend, _toml_backend, _yaml_backend
+from ._audit import (
+    AUDIT_NAME,
+    TERMINAL_STDERR,
+    AuditLog,
+    Origin,
+    Record,
+    Reply,
+    call_site,
+    error_kind,
+)
 from ._core import MISSING, Action, Decl, read_value, reconcile
 from ._lock import exclusive
 from ._vocab import Vocabulary
@@ -225,6 +247,8 @@ class Engine:
         audit: bool = False,
         flush_window: float = DEFAULT_FLUSH_WINDOW,
         lock_timeout: float = 10.0,
+        log: str | os.PathLike[str] = TERMINAL_STDERR,
+        identity: str = "",
     ) -> None:
         self.home = Path(home).resolve() if home is not None else default_home()
         self.values_path = _pick_values_file(self.home)
@@ -233,6 +257,14 @@ class Engine:
         self.audit = audit
         self.flush_window = flush_window
         self.lock_timeout = lock_timeout
+        #: 应用 / 主机身份（§20.3 的 ``identity="order-svc@host-3"``），记进 ``id=``。
+        self.identity = identity
+        #: 日志与审计的收口点。``audit=True`` 时它同时写 ``<home>/audit.log``。
+        self._audit = AuditLog(
+            audit_path=(self.home / AUDIT_NAME) if audit else None,
+            log=log,
+            identity=identity,
+        )
 
         suffix = self.values_path.suffix.lower()
         if suffix not in _BACKENDS:
@@ -288,11 +320,16 @@ class Engine:
 
     def read(self, key: str) -> Any:
         """读一个配置项。**先把待写交出去**，否则可能读不到自己刚声明的事实。"""
+        self._load_audited(item=key)
         self._commit_local(clean=False)
         if self._is_writer():
             return self._read_local(key)
         owner = _owner_module()
-        return self._channel().submit(owner.Request(op=owner.OP_READ, key=key))
+        reply: Reply = self._channel().submit(
+            owner.Request(op=owner.OP_READ, key=key, pid=os.getpid(), identity=self.identity)
+        )
+        self._collect_remote(reply)
+        return reply.value
 
     def declare(
         self,
@@ -308,13 +345,23 @@ class Engine:
         ``type=`` 只做**声明期一致性校验**：它回答「你给的默认值和声明的类型对不对」，
         **不参与读取期转换**——引擎对值是透明的（值原样进出）。
         """
+        at = call_site()
         if value is not MISSING and type is not None and not _type_matches(value, type):
+            self._audit.failed(
+                item=key,
+                file=self.values_path.name,
+                err="type-conflict",
+                message=f"want={type.__name__} got={value.__class__.__name__}",
+                at=at,
+            )
+            # 失败当场落账：这个异常一抛，后面没有任何提交点会替它收口。
+            self._audit.close_txn()
             raise TypeConflictError(
                 f"{key!r} 的默认值 {value!r} 不符合声明的类型 {type.__name__}"
             )
 
-        self._ensure_loaded()
-        decl = Decl(key=key, value=value, type=type, doc=doc)
+        self._load_audited(item=key)
+        decl = Decl(key=key, value=value, type=type, doc=doc, at=at)
         self._pending[key] = decl
         self._decls[key] = decl
         if force:
@@ -332,16 +379,24 @@ class Engine:
     def flush(self) -> None:
         """把待提交的声明交出去。**不做规则 1**（期望集可能还不完整，见 §29.1）。"""
         self._commit_local(clean=False)
+        self._audit.close_txn()
 
     def sync(self) -> None:
         """完整提交点：此刻**期望集完整**，规则 1（清理未知数据）才允许执行。"""
         self._commit_local(clean=True)
+        self._audit.close_txn()
 
     def close(self) -> None:
-        """放下写者身份（或断开连接）。下一个进程会接上。"""
-        if self._chan is not None:
-            self._chan.close()
-            self._chan = None
+        """放下写者身份（或断开连接）。下一个进程会接上。
+
+        顺手把审计收口：纯读的程序也要在退出前把攒着的 ``[R]`` 行交出去。
+        """
+        try:
+            self._audit.close_txn()
+        finally:
+            if self._chan is not None:
+                self._chan.close()
+                self._chan = None
 
     # ------------------------------------------------------ 攒批窗口（本引擎的）
 
@@ -370,9 +425,17 @@ class Engine:
         if not decls and not clean:
             return
         owner = _owner_module()
-        self._channel().submit(
-            owner.Request(op=owner.OP_COMMIT, decls=decls, forced=forced, clean=clean)
+        reply: Reply = self._channel().submit(
+            owner.Request(
+                op=owner.OP_COMMIT,
+                decls=decls,
+                forced=forced,
+                clean=clean,
+                pid=os.getpid(),
+                identity=self.identity,
+            )
         )
+        self._collect_remote(reply)
 
     def _is_writer(self) -> bool:
         """本引擎是不是就是那个专职写者（「端点整条路不通」的退化也算）。"""
@@ -391,25 +454,102 @@ class Engine:
 
     # ------------------------------------------ 就地执行（只有写者会走这条路）
 
-    def _execute_local(self, request: Any) -> Any:
+    def _execute_local(self, request: Any) -> Reply:
         """**就地执行一条请求**。这是终点：调它一定动文件，不再问「我是不是写者」。
 
         它以绑定方法的形式交给 :class:`onconf._owner.Channel` 当写者的执行入口，
         所以不需要为它开一个公开面 —— 公开面仍然只有 ``AutoConf`` 和 ``conf``。
+
+        记账的口径也定在这里（§20.3）：**执行点写日志**，但记录里的 ``pid`` / ``id=``
+        用请求里带来的**发起方**信息；``at=`` 早已随声明一起过线。回传的
+        :class:`~onconf._audit.Reply` 带着这一批记录，客户端据此在自己的终端上补一份。
         """
         owner = _owner_module()
-        if request.op == owner.OP_READ:
-            return self._read_local(request.key)
-        if request.op == owner.OP_COMMIT:
-            self._merge(request.decls, request.forced, clean=request.clean)
-            return None
-        raise ConfError(f"不认识的请求：{request.op!r}")
+        previous = self._audit.origin
+        self._audit.origin = Origin(
+            pid=request.pid or os.getpid(),
+            identity=request.identity or self.identity,
+        )
+        self._audit.begin_op()
+        value: Any = None
+        try:
+            if request.op == owner.OP_READ:
+                value = self._read_local(request.key)
+            elif request.op == owner.OP_COMMIT:
+                self._merge(request.decls, request.forced, clean=request.clean)
+            else:
+                raise ConfError(f"不认识的请求：{request.op!r}")
+        finally:
+            records = self._audit.end_op()
+            self._audit.origin = previous
+        return Reply(value=value, records=records)
 
     def _read_local(self, key: str) -> Any:
         """读一个配置项（**就地**）。先把待写落盘，否则读不到自己刚声明的事实。"""
         self._ensure_loaded()
         self._commit_pending(clean=False)
-        return read_value(key, self._facts, self._vocab.as_dict()).value
+        return self._read_audited(key)
+
+    def _read_audited(self, key: str) -> Any:
+        """``read_value`` + 一条 ``[R]``（或失败时的 ``[E]``）。
+
+        读的记录**不在这里收口**：同一事务里重复读同一个键要合并成 ``n=<次数>``
+        （§20.1），所以它留在缓冲里等下一个提交点（写提交 / ``flush`` / ``sync`` /
+        退出）。失败的记录则当场落账 —— 异常一抛就没有下一个提交点了。
+        """
+        try:
+            result = read_value(key, self._facts, self._vocab.as_dict())
+        except ConfError as exc:
+            self._audit.failed(
+                item=key,
+                file=self.values_path.name,
+                err=error_kind(exc),
+                message=str(exc),
+            )
+            self._audit.close_txn()
+            raise
+        self._audit.read(
+            item=key,
+            file=self.values_path.name,
+            source=result.origin,
+            data=result.value,
+        )
+        return result.value
+
+    def _collect_remote(self, reply: Reply) -> None:
+        """别的进程替我执行时，把它记的账补到**自己的终端**上。
+
+        审计文件不重复写：那份归执行点（写者），只有一个写者就不会交错。
+        """
+        if reply.remote:
+            self._audit.render_remote(reply.records)
+
+    def _log_failure(self, exc: BaseException, *, item: str = "") -> None:
+        """失败留痕（§20.2 第 4 项）：记一条 ``[E]`` 并当场收口。**调用方负责继续抛。**
+
+        当场收口是因为异常一抛，后面就没有提交点会替这条记录收尾了。
+        审计**自己**写不出去时不在这里抛：那会盖住真正的异常，而调用方要诊断的是配置那件事。
+        """
+        self._audit.failed(
+            item=item,
+            file=self.values_path.name,
+            err=error_kind(exc),
+            message=str(exc),
+        )
+        with contextlib.suppress(ConfError):
+            self._audit.close_txn()
+
+    def _load_audited(self, *, item: str) -> None:
+        """加载值文件 / 词表；**失败也要留痕**。
+
+        文件坏了（后端抛 ``ValueError`` 子类）、后端不认这种构造 —— 这些都不是
+        「代码写错键名」，但一样必须出现在审计里，否则审计只记录成功的历史。
+        """
+        try:
+            self._ensure_loaded()
+        except (ConfError, TypeError, ValueError, KeyError) as exc:
+            self._log_failure(exc, item=item)
+            raise
 
     def _merge(self, decls: Iterable[Decl], forced: Iterable[str], *, clean: bool) -> None:
         """把别人交来的声明并进自己的声明集，然后提交。
@@ -431,29 +571,105 @@ class Engine:
             return False
         return (time.monotonic() - self._window_started) >= self.flush_window
 
-    def _commit_pending(self, *, clean: bool) -> None:
+    def _commit_pending(self, *, clean: bool) -> tuple[Record, ...]:
+        """提交一批声明。**对账动作同时也是审计记录**（§20.2 / §21.2）。
+
+        返回这一批产生的记录；真正的输出在 :meth:`onconf._audit.AuditLog.close_txn`
+        里完成 —— 它顺手把攒在同一个事务里的读一起收口，所以批次内能对齐。
+
+        失败必须留痕（§20.2 第 4 项）：锁拿不到、后端拒绝一个值……都先记一条 ``[E]``
+        再原样抛出，不静默吞掉。
+        """
         self._ensure_loaded()
         self._window_started = None
         if not self._pending and not clean:
-            return
+            return ()
 
+        batch = tuple(self._pending.values())
         self._pending.clear()
         if not self._decls:
-            return
+            return ()
 
-        # 锁内重读：别的进程可能刚写过。少了这一步就是「各写各的，后写的盖掉先写的」。
-        with exclusive(self.lock_path, timeout=self.lock_timeout):
-            self._reload_if_changed()
-            actions = reconcile(
-                list(self._decls.values()),
-                self._facts,
-                self._vocab.as_dict(),
-                force_keys=frozenset(self._forced),
-                clean_unknown=clean,
-            )
-            self._forced.clear()
-            if actions:
-                self._commit(actions)
+        records: list[Record] = []
+        try:
+            self._ensure_loaded()
+            # 锁内重读：别的进程可能刚写过。少了这一步就是「各写各的，后写的盖掉先写的」。
+            with exclusive(self.lock_path, timeout=self.lock_timeout):
+                self._reload_if_changed()
+                actions = reconcile(
+                    list(self._decls.values()),
+                    self._facts,
+                    self._vocab.as_dict(),
+                    force_keys=frozenset(self._forced),
+                    clean_unknown=clean,
+                )
+                self._forced.clear()
+                if actions:
+                    self._commit(actions)
+                records = self._action_records(actions, batch)
+        # 后端拒绝一个值抛的是 TypeError / ValueError（TOML 没有 null、YAML 落不成单行……），
+        # 文件坏了抛的是后端的 ValueError 子类 —— 它们都要留痕，不能只记 ConfError。
+        except (ConfError, TypeError, ValueError, KeyError) as exc:
+            self._log_failure(exc)
+            raise
+        # 正常路径才在这里收口：审计写不出去就抛（审计缺席不是「少看几行」）。
+        # 不放进 finally，是因为 finally 里抛出的异常会盖掉上面那条真正的失败。
+        self._audit.close_txn()
+        return tuple(records)
+
+    def _action_records(self, actions: Iterable[Action], batch: tuple[Decl, ...]) -> list[Record]:
+        """对账动作 → 审计记录。**写全量**；本批里无事可做的声明留一行 ``op=noop``。
+
+        ``noop`` 是给 §13.8 那条要求用的：用户必须看得见**本次运行声明了哪些键**，
+        否则「我的声明到底生效没有」只能靠猜。只给**本批**的声明补 noop，所以不会
+        退化成「每次提交都把全部已声明键刷一遍」。
+        """
+        file = self.values_path.name
+        records: list[Record] = []
+        covered: set[str] = set()
+        for action in actions:
+            covered.add(action.key)
+            decl = self._decls.get(action.key)
+            at = decl.at if decl is not None else ""
+            if action.kind == "skip":
+                # 「值不一致但尊重文件、想改没改」—— old / new 都要留（§20.2）。
+                records.append(
+                    self._audit.wrote(
+                        item=action.key,
+                        file=file,
+                        op=action.kind,
+                        old=action.old,
+                        new=action.value,
+                        reason=action.reason,
+                    )
+                )
+            else:
+                records.append(
+                    self._audit.wrote(
+                        item=action.key,
+                        file=file,
+                        op=action.kind,
+                        data=action.value,
+                        old=action.old,
+                        reason=action.reason,
+                    )
+                )
+            if action.kind in ("fill", "overwrite", "clean"):
+                records.append(
+                    self._audit.changed(
+                        item=action.key,
+                        file=file,
+                        old=action.old,
+                        new=action.value,
+                        at=at,
+                    )
+                )
+        records.extend(
+            self._audit.wrote(item=decl.key, file=file, op="noop", at=decl.at)
+            for decl in batch
+            if decl.key not in covered
+        )
+        return records
 
     def _effective(self, key: str, decl: Decl, *, force: bool) -> Any:
         """``declare`` 该返回什么：**当前生效值**（值文件优先）。
@@ -469,7 +685,7 @@ class Engine:
             # 这份还是旧的 —— 不重读就会把「登记了但没值」误报成「没登记」。
             self._commit_local(clean=False)
             self._reload()
-            return read_value(key, self._facts, self._vocab.as_dict()).value
+            return self._read_audited(key)
         return decl.value
 
     # ------------------------------------------------------------- 加载 / 落盘

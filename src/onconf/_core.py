@@ -75,6 +75,9 @@ class Decl:
     value: Any = MISSING  # MISSING ⇒ 只登记不给值（词表里记 NO_VALUE）
     type: type | None = None
     doc: str | None = None
+    #: **审计用**的调用点（``app/config.py:12``）。它不参与对账，也不进声明集哈希 ——
+    #: 换个调用位置不该让声明看起来「变了」，否则每次重构都会全量重写一遍。
+    at: str = ""
 
 
 @dataclass(frozen=True)

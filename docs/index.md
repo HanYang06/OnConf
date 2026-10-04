@@ -9,7 +9,7 @@
 > 与本文件的 `site_description`。
 
 **尚未发布到 PyPI。** 当前版本 `0.1.0`，开发状态 Pre-Alpha：公开 API 仍在收敛，
-可能发生破坏性变更；审计事件流与真正的命令行尚未实现（以[路线图](roadmap.md)为准）。
+可能发生破坏性变更；真正的命令行尚未实现（以[路线图](roadmap.md)为准）。
 
 定位句的两个半句现在**都有机制支撑**：「不丢一个字节」由外科手术式回写保证；
 「不丢一次更新」由**专职写者**保证 —— 谁先抢绑到配置目录的端点，谁就是唯一的读写者，
@@ -29,6 +29,7 @@
 | 公开 API | `AutoConf` / `conf` 两个面，`__all__` 共 9 个符号 |
 | 值后端 | JSON、YAML、TOML、`.env`（字符串后端） |
 | 提交点 | 每次 `conf(key, value)` 当场对账并落盘；进程退出时 `atexit` 触发 `Engine.sync()` |
+| 日志与审计 | 强制日志（`log=` 选去向，**不可关闭**）+ 可选 append-only 审计文件（`audit=True` → `<home>/audit.log`）；见[设计稿 §20 / §21](design/DESIGN.md) |
 | 测试 | 见[路线图](roadmap.md)的状态小节 |
 
 ## 已实现的能力
@@ -48,13 +49,16 @@
 - **锁内按需重读**：指纹（`mtime` + 大小）同时看值文件与词表，别人刚登记的键不会被挤掉。
 - **原子写**：同目录临时文件 → `fsync` → `os.replace`（POSIX 再加父目录 `fsync`），行尾与权限位原样保留。
 - **可选攒批窗口**：`flush_window`（默认 `0`，即当场落盘）。
+- **日志与审计**：强制 `[R]` / `[W]` / `[C]` / `[E]` 事件流（去向可改、**不可关闭**），
+  写全量、读按事务去重（`n=`），写记录带调用点与 pid；`audit=True` 再落一份
+  append-only 的 `<home>/audit.log`（`0600`、按大小轮转）。终端用**显示宽度**对齐。
 - **异常族**：`ConfError` 连同 `KeyNotRegisteredError` / `KeyHasNoValueError` /
   `TypeConflictError` / `UnknownEngineParamError`；另有 `LockTimeoutError`（在 `_lock.py`，
   也是 `ConfError` 的子类）与三个**读期**的 `ValueError` 子类
   （`EnvSyntaxError` / `YamlFlatRequiredError` / `TomlFlatRequiredError`，
   `except ConfError` 接不住它们）。见[快速开始](getting-started.md)的常见问题。
 
-尚未实现的能力（审计事件流、把系统环境变量当作配置源、真正的命令行）**当前不可用**，
+尚未实现的能力（把系统环境变量当作配置源、真正的命令行）**当前不可用**，
 一份完整清单见[路线图](roadmap.md)。
 
 ## 最小示例

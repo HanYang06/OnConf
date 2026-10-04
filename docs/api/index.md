@@ -8,7 +8,7 @@
 
 | 面 | 职责 |
 |---|---|
-| `AutoConf(**engine)` | 配置**引擎自己**：`home`（配置目录）、`audit`（审计开关，**当前不起作用**）、`flush_window`（攒批窗口，默认 `0` 即当场落盘）。`home` 也可由 `ONCONF_HOME` 或当前目录决定 |
+| `AutoConf(**engine)` | 配置**引擎自己**：`home`（配置目录）、`log`（强制日志的去向：`"stderr"` 默认 / `"stdout"` / 文件路径）、`audit`（是否再追加一份 `<home>/audit.log`）、`identity`（写进每行的 `服务@主机` 标记）、`flush_window`（攒批窗口，默认 `0` 即当场落盘）。`home` 也可由 `ONCONF_HOME` 或当前目录决定 |
 | `conf(key, value=MISSING, *, doc=None, type=None, force=False, **engine)` | 干所有的活：读 / 写 / 登记 |
 
 ## 三条语义

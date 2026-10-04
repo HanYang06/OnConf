@@ -118,7 +118,7 @@ Everything goes through two callables. That is the whole public surface.
 
 | Face | Purpose |
 |---|---|
-| `AutoConf(**engine)` | Configure **the engine itself**: `home` (config directory), `audit`, and `flush_window` (batching window; `0` = commit immediately). Optional — the conventions work without it. |
+| `AutoConf(**engine)` | Configure **the engine itself**: `home` (config directory), `log` (where the mandatory log goes — `"stderr"` (default), `"stdout"`, or a file path), `audit` (also append every line to `<home>/audit.log`), `identity` (optional `service@host` tag recorded on each line), and `flush_window` (batching window; `0` = commit immediately). Optional — the conventions work without it. |
 | `conf(key, value=..., *, doc=..., type=..., force=..., **engine)` | Do all the work: read, write, register. |
 
 `conf` infers the operation from the **shape of the call**, not from an `op` argument:
@@ -160,6 +160,7 @@ Notes on semantics that surprise people:
 | Optional batching window — `flush_window` (default `0`, i.e. commit immediately), held **client-side** so each engine's window stays its own | ✅ |
 | Value-as-key (indirect addressing) + guaranteed `$schema` pointer on every write (JSON / YAML only — `.env` and `.toml` cannot hold a member, so the pointer is skipped) | ✅ |
 | Error taxonomy — `ConfError` as the base, with `KeyNotRegisteredError`, `KeyHasNoValueError`, `TypeConflictError`, `UnknownEngineParamError` and `LockTimeoutError` (defined in `_lock.py`, not `errors.py`; raised after a 10 s lock wait). `EnvSyntaxError`, `YamlFlatRequiredError` and `TomlFlatRequiredError` are `ValueError` subclasses, so they are **not** caught by `except ConfError` | ✅ |
+| **Logging + audit** — a mandatory `[R]` / `[W]` / `[C]` / `[E]` stream whose destination can be changed but which cannot be switched off; writes are logged in full (including `op=skip` "wanted to change, respected the file" and `op=noop` "this batch's declaration was already satisfied"), reads are de-duplicated per transaction (`n=1000`); every write carries its call site (`at=app/config.py:12`), the pid and the optional `identity=`; terminal columns are elastic tabstops measured in **display width** (CJK-safe), while the file form stays compact and is never truncated; `audit=True` appends to `<home>/audit.log` (`0600`, append-only, size-based rotation). See DESIGN §20 / §21 | ✅ |
 | Test suite — one file per module plus security invariants | ✅ green locally; CI runs it on ubuntu / windows / macos |
 
 ## Roadmap — not available yet
@@ -172,7 +173,6 @@ Do not plan around these; they are **not implemented**:
 | C accelerator (future) — an **extra**, not a separate distribution: `pip install onconf[c]` | — |
 | Rule 1 (cleaning unknown keys) across **short-lived** processes — the writer's declaration set is not persisted, so a writer handover resets the baseline (DESIGN §32.4) | open design question |
 | Prefix-sharded locks — the current lock is a single lock per config directory | — |
-| Audit report and audit event stream (`audit=` is accepted but inert) | M4 — the next stage |
 | System environment variables as a configuration **source** (`ONCONF_HOME` only locates the config dir) | — |
 | Per-format vocabulary export | — |
 | A real CLI (`onconf` currently prints the config directory and exits) | — |
@@ -213,6 +213,7 @@ Invariants this project commits to (each one has a regression test in
 - YAML configuration is only ever parsed with `yaml.safe_load` / `yaml.safe_load_all` — never `yaml.load` (JSON uses `json.loads`, TOML `tomllib.loads`, `.env` a plain line scan)
 - key names never become filesystem paths
 - no `eval` / `exec` / `pickle` on configuration content
+- the audit file is append-only (`O_APPEND`) and created `0600`; the log can be redirected but never switched off
 
 ### Known limitations
 
@@ -223,6 +224,8 @@ Invariants this project commits to (each one has a regression test in
 | **The fallback path is process-local** | If the endpoint cannot be created at all, the engine degrades to direct writes under the OS lock: correctness holds, but rule 1's baseline becomes per-process |
 | **A symlinked value file is replaced** | Writes go through `os.replace`: the symlink is replaced by a regular file and the link's target is left untouched (the link itself is destroyed) |
 | **`ONCONF_HOME` is trusted input** | It decides the config directory and is not containment-checked |
+| **Audit lines contain values verbatim** | `data=` / `old=` / `new=` carry the real value. `audit=True` writes them to `<home>/audit.log` (append-only, `0600`) — turning it on for a config file full of secrets is a deliberate exposure (threat-model T12) |
+| **The audit trail lives with the executor** | A client ships its request to the dedicated writer, which writes the audit file and logs to *its* destination; the client only mirrors the same lines to its own log. With no writer, the direct-write path does the accounting |
 
 Full analysis, per threat with code evidence: [`docs/security/threat-model.md`](docs/security/threat-model.md).
 
@@ -237,6 +240,7 @@ src/onconf/
   _textscan.py       # shared byte-level scanning used by the backends
   _lock.py           # cross-process exclusive lock (OS lock; the fallback path)
   _owner.py          # dedicated writer: endpoint election, IPC, the writer loop
+  _audit.py          # mandatory log + append-only audit (DESIGN §20 / §21)
   _json_backend.py   # JSON value backend
   _yaml_backend.py   # YAML value backend
   _env_backend.py    # .env value backend

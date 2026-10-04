@@ -4,7 +4,7 @@
 
 对外只有两个面（§15.2）::
 
-    AutoConf(**engine)      配置**引擎自己**：配置目录、审计开关
+    AutoConf(**engine)      配置**引擎自己**：配置目录、日志去向、审计开关、身份
     conf(key, value=...)    干所有的活：读 / 写 / 登记
 
 ``conf`` 的 op 靠**参数结构**推断，不是参数（§17.7）：``value`` 位空着就是读，
@@ -51,6 +51,8 @@ class EngineParams(TypedDict, total=False):
     home: str
     audit: bool
     flush_window: float
+    log: str
+    identity: str
 
 
 _engine: Engine | None = None

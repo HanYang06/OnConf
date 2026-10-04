@@ -86,9 +86,42 @@ print(conf("app.server.port")) # 读
 
 !!! note "引擎起来之后不能改配置"
 
-    v1 只支持在**第一次调用之前**设置 `home` / `audit` / `flush_window`。引擎已经启动后再带上参数调用
-    `AutoConf(...)` 会抛 `ConfError`。命名空间与「零全局状态」的取舍见
-    `docs/design/DESIGN.md` §26。
+    v1 只支持在**第一次调用之前**设置 `home` / `log` / `audit` / `identity` / `flush_window`。
+    引擎已经启动后再带上参数调用 `AutoConf(...)` 会抛 `ConfError`。命名空间与「零全局状态」的
+    取舍见 `docs/design/DESIGN.md` §26。
+
+## 日志与审计去哪儿
+
+日志是**强制**的：每一次读 / 写 / 登记都会留下一行，**只能改去向，不能关掉**（关掉它不是
+「少看几行」，是缺失配置审计）。默认去 `stderr`：
+
+```console
+$ uv run python -c "from onconf import conf; conf('app.server.port', 8080)"
+[W]-[05:12:34.568]-[txn=1 pid=4821]  item=app.server.port  file=settings.json  op=fill         data=8080  reason=事实里没有
+[C]-[05:12:34.568]-[txn=1 pid=4821]  item=app.server.port  file=settings.json  old=-           new=8080   at=<string>:1
+[W]-[05:12:34.568]-[txn=1 pid=4821]  item=app.server.port  file=settings.json  op=update_meta  data=8080  reason=登记元数据
+```
+
+（这是实测输出的形态，时间戳与 pid 因运行而异。第三行是词表登记：值与默认值一致时，
+文件不动，但词表要补上「有这么一个键」。）
+
+四个级别：`[R]` 读 / `[W]` 一次对账动作（`op=` 是 fill、overwrite、clean、register、
+update_meta、**skip**「想改没改」或 **noop**「本批声明已满足」）/ `[C]` 值真的变了
+（`old → new`）/ `[E]` 失败。同一事务里重复读同一个键会合并成一行 `n=<次数>`，
+所以循环里读一万次不会刷一万行。
+
+去向与开关在**第一次调用之前**一次性配好（引擎是单例，起来之后不能再改）：
+
+```python
+AutoConf(log="./onconf.log")            # 改去文件（文件形态带完整日期、不截断）
+AutoConf(log="stdout")                  # 或者 stdout
+AutoConf(audit=True)                    # 再加一份 append-only 的 <home>/audit.log（0600、按大小轮转）
+AutoConf(identity="order-svc@host-3")   # 每行多一个 id=，回答「哪个部署改的」
+```
+
+写记录里的 `at=` 是**调用点**（`app/config.py:12`），它回答的是「哪段代码改的」——
+配置语境下这比 pid 有用得多。审计文件**只由执行点写**（有专职写者时就是写者），
+所以多进程下它不会交错。
 
 ## 常见问题：几个异常怎么区分
 

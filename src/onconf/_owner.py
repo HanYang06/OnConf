@@ -82,7 +82,7 @@ import hashlib
 import multiprocessing.connection as ipc
 import os
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -256,6 +256,10 @@ class Request:
     decls: tuple[Decl, ...] = ()
     forced: tuple[str, ...] = ()
     clean: bool = False
+    #: **发起方**的 pid 与身份。审计记的是「谁发起的」而不是「谁执行的」（§20.3），
+    #: 所以这两个字段跟着请求过线；声明自己的调用点则在 :attr:`Decl.at` 上。
+    pid: int = 0
+    identity: str = ""
 
 
 #: 写者的执行入口。``Engine`` 把自己的**就地执行**方法以绑定方法的形式传进来，
@@ -553,6 +557,8 @@ class Channel:
         except EOFError, OSError:
             return _RETRY
         if status == "ok":
-            return payload
+            # 这一轮是**别的进程**执行的：客户端据此把自己终端那一份补上
+            # （审计文件不重复写，那份归执行点，见 ``Engine._collect_remote``）。
+            return replace(payload, remote=True)
         name, message = payload
         raise _ERROR_KINDS.get(name, ConfError)(message)

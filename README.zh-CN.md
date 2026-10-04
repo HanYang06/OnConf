@@ -113,7 +113,7 @@ $ uv run python -c "from onconf import conf; print(conf('app.server.port', 8080)
 
 | 面 | 职责 |
 |---|---|
-| `AutoConf(**engine)` | 配置**引擎自己**：`home`（配置目录）、`audit`、`flush_window`（攒批窗口，`0` = 当场落盘）。可省略——不调用它也能按约定工作。 |
+| `AutoConf(**engine)` | 配置**引擎自己**：`home`（配置目录）、`log`（强制日志的去向：`"stderr"` 默认 / `"stdout"` / 一个文件路径）、`audit`（再把每行追加进 `<home>/audit.log`）、`identity`（可选的 `服务@主机` 标记，写进每一行）、`flush_window`（攒批窗口，`0` = 当场落盘）。可省略——不调用它也能按约定工作。 |
 | `conf(key, value=..., *, doc=..., type=..., force=..., **engine)` | 干所有的活：读、写、登记。 |
 
 `conf` 从**调用形态**推断这次要做什么，而不是靠一个 `op` 参数：
@@ -152,6 +152,7 @@ conf("app.port", 9090, force=True)  # 覆盖文件里已有的值
 | 可选攒批窗口 —— `flush_window`（默认 `0`，当场落盘），窗口挂在**客户端**侧，所以每个引擎的窗口归自己 | ✅ |
 | 用值当键（间接寻址）+ 每次落盘都保证 `$schema` 指针（仅 JSON / YAML —— `.env` 与 `.toml` 放不下成员，会直接跳过） | ✅ |
 | 异常族 —— `ConfError` 作基类，含 `KeyNotRegisteredError`、`KeyHasNoValueError`、`TypeConflictError`、`UnknownEngineParamError` 与 `LockTimeoutError`（定义在 `_lock.py` 而非 `errors.py`；等 10 秒拿不到锁时抛）。`EnvSyntaxError`、`YamlFlatRequiredError`、`TomlFlatRequiredError` 是 `ValueError` 子类，**不会**被 `except ConfError` 捕获 | ✅ |
+| **日志与审计** —— 强制 `[R]` / `[W]` / `[C]` / `[E]` 事件流：去向可改、**不可关闭**；写全量（含 `op=skip`「想改没改」与 `op=noop`「本批声明已满足」），读按事务去重（`n=1000`）；每条写记录带调用点（`at=app/config.py:12`）、pid 与可选 `identity=`；终端列宽是**显示宽度**的弹性制表位（中文不偏列），文件形态保持紧凑且永不截断；`audit=True` 追加写 `<home>/audit.log`（`0600`、只追加、按大小轮转）。见 DESIGN §20 / §21 | ✅ |
 | 测试 —— 每个模块一个测试文件，外加安全不变量 | ✅ 本地全绿；CI 在 ubuntu / windows / macos 上跑 |
 
 ## 路线图 —— 当前不可用
@@ -164,7 +165,6 @@ conf("app.port", 9090, force=True)  # 覆盖文件里已有的值
 | C 加速器（未来）—— 做成 **extra**，不另开包名：`pip install onconf[c]` | — |
 | **短命进程**之间的规则 1（清理未知键）—— 写者的声明集不是持久状态，写者一换人基准就重置（DESIGN §32.4） | 待定的设计问题 |
 | 前缀分片锁 —— 当前是每个配置目录一把锁 | — |
-| 审计报告与审计事件流（`audit=` 目前被接受但不起作用） | M4 —— 下一阶段 |
 | 把系统环境变量当作配置**来源**（`ONCONF_HOME` 只用来定位配置目录） | — |
 | 按格式导出词表 | — |
 | 真正的命令行（`onconf` 目前只打印配置目录就退出） | — |
@@ -205,6 +205,7 @@ CodeQL、依赖审查与 OpenSSF Scorecard。
 - YAML 配置只经 `yaml.safe_load` / `yaml.safe_load_all` 解析，绝不用 `yaml.load`（JSON 走 `json.loads`，TOML 走 `tomllib.loads`，`.env` 是纯文本逐行扫描）
 - 键名永不变成文件系统路径
 - 不对配置内容做 `eval` / `exec` / `pickle`
+- 审计文件只追加（`O_APPEND`）且按 `0600` 创建；日志可以改去向，但关不掉
 
 ### 已知限制
 
@@ -215,6 +216,8 @@ CodeQL、依赖审查与 OpenSSF Scorecard。
 | **兜底路径是进程内的** | 端点完全建不出来时，引擎退回「直接写 + OS 锁」：正确性在，但规则 1 的基准变成每进程各自一份 |
 | **符号链接会被替换** | 写入走 `os.replace`：符号链接本身被替换成普通文件，链接目标一个字节都不会被写（链接就此断开） |
 | **`ONCONF_HOME` 是可信输入** | 它决定配置目录，库不做目录包含性校验 |
+| **审计行原样记值** | `data=` / `old=` / `new=` 里就是真实值。`audit=True` 会把它写进 `<home>/audit.log`（只追加、`0600`）—— 配置里全是密钥时打开它就是主动暴露（威胁模型 T12） |
+| **审计跟着执行点走** | 客户端把请求交给专职写者，写者写审计文件、并往**它自己**的日志去向输出；客户端只是把同样几行补到自己的日志里。没有写者时，由就地执行的那条路记账 |
 
 完整分析（逐条威胁 + 代码依据）：[`docs/security/threat-model.md`](docs/security/threat-model.md)。
 
@@ -229,6 +232,7 @@ src/onconf/
   _textscan.py       # 各后端共用的字节级扫描
   _lock.py           # 跨进程排他锁（OS 锁，兜底路径）
   _owner.py          # 专职写者：端点选举、IPC、写者循环
+  _audit.py          # 强制日志 + append-only 审计（DESIGN §20 / §21）
   _json_backend.py   # JSON 值后端
   _yaml_backend.py   # YAML 值后端
   _env_backend.py    # .env 值后端
