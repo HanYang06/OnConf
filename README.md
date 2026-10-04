@@ -29,11 +29,12 @@ changing one requires changing the other — plus `README.zh-CN.md`, `pyproject.
 > **Pre-Alpha (`0.1.0`) — evaluate only, do not deploy.**
 > The API and the on-disk format can change without a deprecation period.
 > **Both halves of the line above now have mechanism behind them**: *without losing a byte* by
-> surgical write-back, and *without losing an update* by a cross-process OS lock plus a re-read
-> under that lock.
-> What is **not** in place yet is durability: writes are still in-place (`write_text`, no
-> temp+rename, no `fsync`), so a crash mid-write can truncate a config file; new files also follow
-> the system umask.
+> surgical write-back, and *without losing an update* by a **dedicated writer** — whichever process
+> first claims a config directory serves every other process over a local named pipe (Windows) or
+> Unix socket (POSIX), with a cross-process **OS** lock plus a re-read under that lock as the
+> fallback.
+> Writes are atomic too: same-directory temp file → `fsync` → `os.replace` (plus a parent-directory
+> `fsync` on POSIX), preserving the file's original line endings and permissions.
 > See [Known limitations](#known-limitations) and the
 > [threat model](docs/security/threat-model.md) before you rely on this.
 
@@ -54,7 +55,10 @@ A configuration engine for programs that keep their settings in **plain files th
   whether it lives in JSON, YAML, TOML or a `.env` file.
 - **A vocabulary next to your values.** The engine maintains a JSON Schema describing
   which keys exist, so your editor can autocomplete and validate the config file.
-- **No server, no daemon, no network.** It is a library that runs in your process.
+- **No separate process, no daemon, no network.** It is a library that runs in *your* process. The
+  one piece of machinery is a **writer thread** inside whichever process first claims the config
+  directory; it serves the others over a local pipe, authenticated with a key under `schema/`. No
+  ports are opened and no child process is spawned.
 
 ## What it is not
 
@@ -158,7 +162,9 @@ Notes on semantics that surprise people:
 | Engine assembly — `conf` / `AutoConf` end-to-end | ✅ |
 | Cross-process exclusive lock — an **OS** lock (`msvcrt.locking` on Windows, `fcntl.flock` elsewhere), released by the OS even if the process dies; `LockTimeoutError` after a 10 s wait | ✅ |
 | Re-read under that lock — fingerprint (`mtime` + `size`) over **both** the values file and the vocabulary, so a concurrent registration is never clobbered | ✅ |
-| Optional batching window — `flush_window` (default `0`, i.e. commit immediately) | ✅ |
+| **Dedicated writer** — whichever process first binds the endpoint is the only reader/writer; the rest send requests over `multiprocessing.connection`. Binding *is* the election, so no lock file is involved (DESIGN §32) | ✅ |
+| **Atomic write** — same-directory temp file → `fsync` → `os.replace`, plus a parent-directory `fsync` on POSIX; original line endings and permission bits preserved, new files land as `0600` | ✅ |
+| Optional batching window — `flush_window` (default `0`, i.e. commit immediately), held **client-side** so each engine's window stays its own | ✅ |
 | Value-as-key (indirect addressing) + guaranteed `$schema` pointer on every write | ✅ |
 | Error taxonomy — `ConfError`, `KeyNotRegisteredError`, `KeyHasNoValueError`, `TypeConflictError`, `UnknownEngineParamError`, `EnvSyntaxError` | ✅ |
 | Test suite — one file per module plus security invariants | ✅ green locally; CI runs it on ubuntu / windows / macos |
@@ -169,14 +175,12 @@ Do not plan around these; they are **not implemented**:
 
 | Capability | Milestone |
 |---|---|
-| Atomic write (temp file + rename) and `fsync` — DESIGN §31.2 lists atomic replacement as part of the commit, but the write path is still in-place `write_text` | M3 |
-| Restrictive file permissions for newly created config files | M3 |
-| WAL (write-ahead log) — the OS lock plus re-read already delivers *no lost update*, so whether WAL is still needed is an open design question (§19.5 planned "WAL first"; §31 shipped the lock instead) | open |
+| WAL (write-ahead log) — judged **unnecessary**: the batching window covers merged bursts, declarations are re-derivable from code, the writer serialises, and read-modify-write plus atomic replace gives the ordering (DESIGN §32.7) | not planned |
+| Rule 1 (cleaning unknown keys) across **short-lived** processes — the writer's declaration set is not persisted, so a writer handover resets the baseline (DESIGN §32.4) | open design question |
 | Prefix-sharded locks — the current lock is a single lock per config directory | — |
-| Audit report and audit event stream (`audit=` is accepted but inert) | M4 |
+| Audit report and audit event stream (`audit=` is accepted but inert) | M4 — the next stage |
 | System environment variables as a configuration **source** (`AUTO_CONF_HOME` only locates the config dir) | — |
 | Per-format vocabulary export | — |
-| IPC (TCP loopback + HTTP) and the subprocess writer model | — |
 | A real CLI (`auto-conf` currently prints the config directory and exits) | — |
 
 See [`docs/roadmap.md`](docs/roadmap.md) for the full breakdown and
@@ -209,7 +213,8 @@ Report vulnerabilities privately — see [`SECURITY.md`](SECURITY.md). Do not op
 Invariants this project commits to (each one has a regression test in
 [`tests/test_security_invariants.py`](tests/test_security_invariants.py)):
 
-- the default path opens **no network ports** and spawns **no subprocesses**
+- the default path opens **no network ports** and spawns **no subprocesses** (the writer's endpoint
+  is a per-user local pipe in the OS namespace, and the writer is a *thread*, not a child process)
 - configuration is only ever parsed with `yaml.safe_load` — never `yaml.load`
 - key names never become filesystem paths
 - no `eval` / `exec` / `pickle` on configuration content
@@ -218,8 +223,9 @@ Invariants this project commits to (each one has a regression test in
 
 | Limitation | Consequence |
 |---|---|
-| **Writes are not atomic** | A crash mid-write can leave a truncated config file (`write_text`, no temp+rename, no `fsync`) |
-| **File permissions are not set** | New files follow the system umask; on umask 022 a `.env` holding secrets may be readable by other users |
+| **Rule 1 needs a long-lived writer** | The writer's declaration set is not persisted, so if writer processes come and go, `sync()` cleans against only its own process's declarations (DESIGN §32.4) |
+| **The writer is a peer, not a service** | It lives inside whichever process claimed the directory first, and requests are serialised behind one lock — a client waits for its own request, and behind whatever is running. There is no queue and no background retry |
+| **The fallback path is process-local** | If the endpoint cannot be created at all, the engine degrades to direct writes under the OS lock: correctness holds, but rule 1's baseline becomes per-process |
 | **Symlinks are followed** | If a value file is a symlink, the write lands on its target |
 | **`AUTO_CONF_HOME` is trusted input** | It decides the config directory and is not containment-checked |
 
@@ -234,7 +240,8 @@ src/auto_conf/
   _core.py           # reconciliation: the three-set algorithm
   _vocab.py          # vocabulary + JSON Schema
   _textscan.py       # shared byte-level scanning used by the backends
-  _lock.py           # cross-process exclusive lock (OS lock; used by _engine)
+  _lock.py           # cross-process exclusive lock (OS lock; the fallback path)
+  _owner.py          # dedicated writer: endpoint election, IPC, the writer loop
   _json_backend.py   # JSON value backend
   _yaml_backend.py   # YAML value backend
   _env_backend.py    # .env value backend

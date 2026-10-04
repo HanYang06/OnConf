@@ -39,13 +39,16 @@
 - **引擎装配**：`conf` / `AutoConf` 两个面端到端接通，声明到读回可用。
 - **用值当键**：支持 `conf(conf("app.key_name"))` 这类间接寻址。
 - **`$schema` 指针**：每次落盘都保证值文件里有指向词表的指针。
-- **跨进程排他锁**：操作系统级锁（Windows `msvcrt.locking`、其它 `fcntl.flock`），进程崩溃由 OS 释放；拿不到锁抛 `LockTimeoutError`。
+- **专职写者**：谁先抢绑到配置目录的端点，谁就是唯一的读写者；其余进程经
+  `multiprocessing.connection` 发请求。**抢绑本身就是选举**，不涉及锁文件（[设计稿 §32](design/DESIGN.md)）。
+- **跨进程排他锁**：操作系统级锁（Windows `msvcrt.locking`、其它 `fcntl.flock`），进程崩溃由 OS 释放；拿不到锁抛 `LockTimeoutError` —— 专职写者不在时由它兜底。
 - **锁内按需重读**：指纹（`mtime` + 大小）同时看值文件与词表，别人刚登记的键不会被挤掉。
+- **原子写**：同目录临时文件 → `fsync` → `os.replace`（POSIX 再加父目录 `fsync`），行尾与权限位原样保留。
 - **可选攒批窗口**：`flush_window`（默认 `0`，即当场落盘）。
 - **异常族**：`ConfError` 及其四类子类，见 [快速开始](getting-started.md)的常见问题。
 
-尚未实现的能力（原子写与 `fsync`、新建文件权限收紧、审计事件流、把系统环境变量
-当作配置源、IPC、真正的命令行）**当前不可用**，一份完整清单见[路线图](roadmap.md)。
+尚未实现的能力（审计事件流、把系统环境变量当作配置源、真正的命令行）**当前不可用**，
+一份完整清单见[路线图](roadmap.md)。
 
 ## 最小示例
 

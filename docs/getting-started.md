@@ -81,7 +81,7 @@ print(conf("app.server.port")) # 读
 
 !!! note "引擎起来之后不能改配置"
 
-    v1 只支持在**第一次调用之前**设置 `home` / `audit`。引擎已经启动后再带上参数调用
+    v1 只支持在**第一次调用之前**设置 `home` / `audit` / `flush_window`。引擎已经启动后再带上参数调用
     `AutoConf(...)` 会抛 `ConfError`。命名空间与「零全局状态」的取舍见
     `docs/design/DESIGN.md` §26。
 

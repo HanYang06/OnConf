@@ -40,7 +40,9 @@ _FORBIDDEN_YAML_ATTRS = frozenset({"load", "load_all", "FullLoader", "UnsafeLoad
 #: 不得出现的内建调用
 _FORBIDDEN_BUILTINS = frozenset({"eval", "exec", "compile", "__import__"})
 #: 值文件名的固定白名单（来自 ``_engine._VALUES_CANDIDATES``）
-_VALUES_WHITELIST = frozenset({"settings.json", "settings.yaml", "settings.yml", "settings.env"})
+_VALUES_WHITELIST = frozenset(
+    {"settings.json", "settings.yaml", "settings.yml", "settings.toml", "settings.env"}
+)
 
 
 def _module_asts() -> list[tuple[Path, ast.Module]]:
