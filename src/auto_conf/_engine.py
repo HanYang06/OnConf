@@ -43,8 +43,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import stat
+import tempfile
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -58,6 +61,7 @@ from .errors import ConfError, TypeConflictError
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+    from types import ModuleType
 
 
 HOME_ENV = "AUTO_CONF_HOME"
@@ -69,6 +73,65 @@ LOCK_SUFFIX = ".lock"
 #: 攒批窗口的默认值（秒）。**0 = 每次声明当场落盘**。
 #: 见模块文档：默认立即是语义决定，不是保守。
 DEFAULT_FLUSH_WINDOW = 0.0
+
+
+def _detect_newline(raw: bytes) -> str:
+    r"""文件原本的行尾：出现 CRLF 就按 CRLF 写回，否则按 LF。
+
+    这是「未触及的字节逐字不动」的一部分。``Path.write_text`` 在 ``newline=None``
+    下会把 ``\\n`` 翻成 ``os.linesep`` —— 在 Windows 上等于**每次回写都把用户的
+    LF 文件改成 CRLF**，那正是在碰那些不该碰的字节。
+    """
+    return "\r\n" if b"\r\n" in raw else "\n"
+
+
+def _decode_universal(raw: bytes) -> str:
+    """等价于 ``Path.read_text`` 的通用换行归一：CRLF 与孤立 CR 都变成 LF。"""
+    return raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _fsync_directory(directory: Path) -> None:
+    """POSIX 上 rename 的持久化由**父目录**负责；Windows 不允许以 O_RDONLY 开目录。"""
+    if os.name == "nt":
+        return
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _atomic_write_text(path: Path, text: str, *, newline: str) -> None:
+    """同目录临时文件 + ``fsync`` + ``os.replace`` 的原子替换。
+
+    少任何一步这条都不成立：
+
+    * **同目录**：``os.replace`` 只在同一文件系统内原子，跨设备会退化成复制。
+    * **fsync 文件**：否则只是目录项换了，掉电后可能指向尚未落盘的内容。
+    * **fsync 父目录**（POSIX）：rename 本身是目录项的改动，由目录的 fsync 保证持久。
+    * **沿用原权限位**：临时文件是 0600，直接替换会把用户特意放宽的权限收窄；
+      已存在的文件按原样保留，新建文件才拿 mkstemp 的 0600。
+    * **``newline`` 用文件原本的行尾**：见 :func:`_detect_newline`。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    replaced = False
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline=newline) as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if path.exists():
+            tmp.chmod(stat.S_IMODE(path.stat().st_mode))
+        tmp.replace(path)
+        replaced = True
+    finally:
+        if not replaced:
+            with contextlib.suppress(OSError):
+                tmp.unlink()
+    _fsync_directory(path.parent)
+
 
 #: 后端模块必须提供同一组函数：
 #: ``loads`` / ``iter_members`` / ``find`` / ``set_value`` /
@@ -115,6 +178,20 @@ def _type_matches(value: object, declared: type) -> bool:
     return isinstance(value, declared)
 
 
+def _owner_module() -> ModuleType:
+    """``_owner`` 模块（就地导入）。
+
+    **只能就地导入**：``_owner`` 在导入期就要本模块的目录常量
+    （``SCHEMA_DIR`` / ``VALUES_STEM``），模块级导入会成环。
+
+    （:mod:`auto_conf._lock` 那边也是就地导入的 —— 同一类理由，那边还多一条
+    mypy 的 ``warn_unreachable``。）
+    """
+    from . import _owner  # noqa: PLC0415 - 见上：打断循环导入
+
+    return _owner
+
+
 class Engine:
     """一个配置目录 = 一个引擎。"""
 
@@ -148,6 +225,12 @@ class Engine:
         self._text: str | None = None
         self._stamp: tuple[Any, ...] | None = None
         self._loaded = False
+        #: 值文件原本的行尾；新建文件时用平台默认。词表跟着它走 —— 两者是一对，
+        #: 同一个目录里给人和编辑器看，行尾不该一个 LF 一个 CRLF。
+        self._values_newline: str = os.linesep
+        #: 本引擎的通道，懒建。``_owner`` 只能用绑定方法传进来当写者的执行入口，
+        #: 所以这里存的是不透明句柄（见 :meth:`_channel`）。
+        self._chan: Any = None
 
     # ------------------------------------------------------------------ 两个面
 
@@ -181,10 +264,12 @@ class Engine:
         return self.declare(key, value, doc=doc, type=type, force=force)
 
     def read(self, key: str) -> Any:
-        """读一个配置项。**先把待写落盘**，否则可能读不到自己刚声明的事实。"""
-        self._ensure_loaded()
-        self.flush()
-        return read_value(key, self._facts, self._vocab.as_dict()).value
+        """读一个配置项。**先把待写交出去**，否则可能读不到自己刚声明的事实。"""
+        self._commit_local(clean=False)
+        if self._is_writer():
+            return self._read_local(key)
+        owner = _owner_module()
+        return self._channel().submit(owner.Request(op=owner.OP_READ, key=key))
 
     def declare(
         self,
@@ -213,7 +298,7 @@ class Engine:
             self._forced.add(key)
 
         if self.flush_window <= 0 or self._window_expired():
-            self.flush()
+            self._commit_local(clean=False)
         elif self._window_started is None:
             self._window_started = time.monotonic()
 
@@ -222,12 +307,101 @@ class Engine:
     # ------------------------------------------------------------------ 提交点
 
     def flush(self) -> None:
-        """把待提交的声明落盘。**不做规则 1**（期望集可能还不完整，见 §29.1）。"""
-        self._commit_pending(clean=False)
+        """把待提交的声明交出去。**不做规则 1**（期望集可能还不完整，见 §29.1）。"""
+        self._commit_local(clean=False)
 
     def sync(self) -> None:
         """完整提交点：此刻**期望集完整**，规则 1（清理未知数据）才允许执行。"""
-        self._commit_pending(clean=True)
+        self._commit_local(clean=True)
+
+    def close(self) -> None:
+        """放下写者身份（或断开连接）。下一个进程会接上。"""
+        if self._chan is not None:
+            self._chan.close()
+            self._chan = None
+
+    # ------------------------------------------------------ 攒批窗口（本引擎的）
+
+    def _commit_local(self, *, clean: bool) -> None:
+        """把本地攒着的声明**交出去**。
+
+        谁交：写者就地做（:meth:`_commit_pending`），客户端打包发一批
+        （:meth:`_send_batch`）。所以攒批窗口是**每个引擎自己**的 —— 别人当了写者，
+        不该把这一侧显式配的 ``flush_window`` 静默丢掉。
+
+        窗口留在客户端还有第二个好处：突发期省下的是 **IPC 往返**，不只是磁盘写。
+        """
+        self._ensure_loaded()
+        self._window_started = None
+        if self._is_writer():
+            self._commit_pending(clean=clean)
+            return
+        self._send_batch(clean=clean)
+
+    def _send_batch(self, *, clean: bool) -> None:
+        """把攒着的声明交给写者。交出去清空的是**缓冲区**，不是声明本身。"""
+        decls = tuple(self._pending.values())
+        forced = tuple(self._forced)
+        self._pending.clear()
+        self._forced.clear()
+        if not decls and not clean:
+            return
+        owner = _owner_module()
+        self._channel().submit(
+            owner.Request(op=owner.OP_COMMIT, decls=decls, forced=forced, clean=clean)
+        )
+
+    def _is_writer(self) -> bool:
+        """本引擎是不是就是那个专职写者（「端点整条路不通」的退化也算）。"""
+        return bool(self._channel().is_mine())
+
+    def _channel(self) -> Any:
+        """本引擎的通道，懒建。**一个引擎一条** —— 不是「一个配置目录一条」。
+
+        同一进程里两个引擎指着同一个配置目录完全正常（测试里到处都是）。按目录
+        共用一条通道的话，第二个引擎会被塞进第一个引擎的通道，它的声明就落到
+        **另一个引擎**的声明集上了。
+        """
+        if self._chan is None:
+            self._chan = _owner_module().Channel(self, self._execute_local)
+        return self._chan
+
+    # ------------------------------------------ 就地执行（只有写者会走这条路）
+
+    def _execute_local(self, request: Any) -> Any:
+        """**就地执行一条请求**。这是终点：调它一定动文件，不再问「我是不是写者」。
+
+        它以绑定方法的形式交给 :class:`auto_conf._owner.Channel` 当写者的执行入口，
+        所以不需要为它开一个公开面 —— 公开面仍然只有 ``AutoConf`` 和 ``conf``。
+        """
+        owner = _owner_module()
+        if request.op == owner.OP_READ:
+            return self._read_local(request.key)
+        if request.op == owner.OP_COMMIT:
+            self._merge(request.decls, request.forced, clean=request.clean)
+            return None
+        raise ConfError(f"不认识的请求：{request.op!r}")
+
+    def _read_local(self, key: str) -> Any:
+        """读一个配置项（**就地**）。先把待写落盘，否则读不到自己刚声明的事实。"""
+        self._ensure_loaded()
+        self._commit_pending(clean=False)
+        return read_value(key, self._facts, self._vocab.as_dict()).value
+
+    def _merge(self, decls: Iterable[Decl], forced: Iterable[str], *, clean: bool) -> None:
+        """把别人交来的声明并进自己的声明集，然后提交。
+
+        **这就是专职写者多买到的东西**：它的 ``_decls`` 是**所有进程**声明的并集，
+        所以规则 1（清理未知数据）拿到的基准是完整的（§19.3）。硬锁做不到这一点 ——
+        每个进程只知道自己那份。
+        """
+        for decl in decls:
+            self._decls[decl.key] = decl
+            # 也要进 ``_pending``：``_commit_pending`` 在「没有待写且不清理」时直接
+            # 早退，只填 ``_decls`` 的话这批声明根本提交不出去。
+            self._pending[decl.key] = decl
+        self._forced.update(forced)
+        self._commit_pending(clean=clean)
 
     def _window_expired(self) -> bool:
         if self._window_started is None:
@@ -267,8 +441,11 @@ class Engine:
         if not force and key in self._facts:
             return self._facts[key]
         if decl.value is MISSING:
-            # 只登记不给值 ⇒ 登记得先算数（所以先落盘），再按读的规则取值
-            self.flush()
+            # 只登记不给值 ⇒ 登记得先算数（所以先交出去），再按读的规则取值。
+            # 必须重读磁盘：**登记是写者做的**，词表是它写到磁盘上的，我们内存里
+            # 这份还是旧的 —— 不重读就会把「登记了但没值」误报成「没登记」。
+            self._commit_local(clean=False)
+            self._reload()
             return read_value(key, self._facts, self._vocab.as_dict()).value
         return decl.value
 
@@ -304,15 +481,17 @@ class Engine:
     def _reload(self) -> None:
         """从磁盘重读事实与词表。锁内调用，所以看到的是别人的最新提交。"""
         if self.values_path.exists():
-            self._text = self.values_path.read_text(encoding="utf-8")
+            raw = self.values_path.read_bytes()
+            self._values_newline = _detect_newline(raw)
+            self._text = _decode_universal(raw)
             self._facts = self.backend.loads(self._text)
         else:
             self._text = None
             self._facts = {}
 
         if self.schema_path.exists():
-            raw = json.loads(self.schema_path.read_text(encoding="utf-8"))
-            self._vocab = Vocabulary.from_schema(raw)
+            raw_schema = self.schema_path.read_bytes()
+            self._vocab = Vocabulary.from_schema(json.loads(_decode_universal(raw_schema)))
 
         self._stamp = self._disk_stamp()
 
@@ -336,16 +515,15 @@ class Engine:
                 self._facts.pop(action.key, None)
 
         if creating or text != original:
-            self.values_path.parent.mkdir(parents=True, exist_ok=True)
-            self.values_path.write_text(text, encoding="utf-8")
+            _atomic_write_text(self.values_path, text, newline=self._values_newline)
             self._text = text
 
         # 词表是**库自己的资产**（§18.6），所以整篇重写是合法的，不需要外科手术
         self._vocab.apply(actions, list(self._decls.values()))
-        self.schema_path.parent.mkdir(parents=True, exist_ok=True)
-        self.schema_path.write_text(
+        _atomic_write_text(
+            self.schema_path,
             json.dumps(self._vocab.to_schema(), indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
+            newline=self._values_newline,
         )
         self._stamp = self._disk_stamp()
 

@@ -57,9 +57,13 @@ _engine: Engine | None = None
 
 
 def _sync_at_exit() -> None:
-    """进程退出是一个**提交点**：此刻期望集完整，规则 1 才允许执行。"""
+    """进程退出是一个**提交点**：此刻期望集完整，规则 1 才允许执行。
+
+    落完盘顺手还回写者身份：端点早一点释放，下一个进程就早一点接上。
+    """
     if _engine is not None:
         _engine.sync()
+        _engine.close()
 
 
 atexit.register(_sync_at_exit)
@@ -68,6 +72,8 @@ atexit.register(_sync_at_exit)
 def _reset() -> None:
     """仅供测试：丢掉单例。不是公开 API。"""
     global _engine  # noqa: PLW0603 - 丢掉单例就是这个函数的全部目的
+    if _engine is not None:
+        _engine.close()
     _engine = None
 
 

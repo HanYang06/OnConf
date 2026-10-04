@@ -17,10 +17,9 @@ from auto_conf import (
     Engine,
     KeyHasNoValueError,
     KeyNotRegisteredError,
-    TypeConflictError,
     _owner,
 )
-from auto_conf._core import MISSING
+from auto_conf._core import MISSING, Decl
 
 
 def _open(home: Path) -> Engine:
@@ -28,17 +27,22 @@ def _open(home: Path) -> Engine:
 
 
 def _writer(home: Path) -> _owner.Owner:
-    """起一个写者（测试里最常用的那一步）。"""
-    writer = _owner.Owner.claim(_open(home))
+    """起一个写者。执行入口是引擎的**就地执行**方法（以绑定方法传进去）。"""
+    engine = _open(home)
+    writer = _owner.Owner.claim(engine, engine._execute_local)
     assert writer is not None, "第一次抢绑应该抢得到"
     writer.start()
     return writer
 
 
-@pytest.fixture(autouse=True)
-def _close_registry_channels():
-    yield
-    _owner.close_channels()
+def _client(home: Path) -> tuple[Engine, _owner.Channel]:
+    """开一个**客户端**通道（写者已经被别人占着）。"""
+    engine = _open(home)
+    return engine, _owner.Channel(engine, engine._execute_local)
+
+
+def _commit(*decls: Decl, clean: bool = False) -> _owner.Request:
+    return _owner.Request(op=_owner.OP_COMMIT, decls=decls, clean=clean)
 
 
 # --------------------------------------------------------------------------- #
@@ -170,35 +174,36 @@ def test_a_doc_only_declaration_keeps_its_missing_value_across_the_wire(
 ) -> None:
     """``conf(key, doc=…)`` 的 value 位是 ``MISSING``，它必须原样过线。
 
-    判据很直接：声明「只登记不给值」之后立刻读，**必须报「登记了但没值」**。
-    要是哨兵在过线时被 pickle 重建成一个新对象，词表里就会记下一个「默认值」
-    —— 那正是那个哨兵本身 —— 于是这里会**静默返回一个对象**而不是报错。
+    判据很直接：只登记不给值之后立刻读，**必须报「登记了但没值」**。要是哨兵在
+    过线时被 pickle 重建成一个新对象，词表里就会记下一个「默认值」—— 那正是那个
+    哨兵本身 —— 于是这里会**静默返回一个对象**而不是报错。
     """
     home = tmp_path / "conf"
     writer = _writer(home)
-    channel = _owner.Channel(_open(home))
+    engine, channel = _client(home)
     try:
+        channel.submit(_commit(Decl(key="api_key", doc="必填")))
         with pytest.raises(KeyHasNoValueError):
-            channel.submit(_owner.Request(op=_owner.OP_DECLARE, key="api_key", doc="必填"))
+            engine("api_key")
     finally:
         channel.close()
         writer.close()
 
 
 def test_client_declaration_lands_in_the_owners_file(tmp_path: Path) -> None:
-    """客户端写的键，最终由**写者**落进文件；客户端自己一根手指都没碰文件。"""
+    """客户端交的声明，最终由**写者**落进文件；客户端自己一根手指都没碰文件。"""
     home = tmp_path / "conf"
     writer = _writer(home)
-
-    client = _open(home)
-    channel = _owner.Channel(client)
+    engine, channel = _client(home)
     try:
-        assert channel._writer is None, "写者已经被占了，它只能当客户端"
-        request = _owner.Request(op=_owner.OP_DECLARE, key="port", value=8080)
-        assert channel.submit(request) == 8080
+        assert channel.is_mine() is False, "写者已经被占了，它只能当客户端"
 
-        assert json.loads((home / "settings.json").read_text(encoding="utf-8"))["port"] == 8080
-        assert client._loaded is False, "客户端不该自己读过写过一个字节"
+        channel.submit(_commit(Decl(key="port", value=8080)))
+
+        written = json.loads((home / "settings.json").read_text(encoding="utf-8"))
+        assert written["port"] == 8080
+        assert engine._loaded is False, "客户端不该自己读过写过一个字节"
+        assert engine("port") == 8080, "读也要经过写者"
     finally:
         channel.close()
         writer.close()
@@ -208,12 +213,10 @@ def test_engine_errors_keep_their_type_across_the_wire(tmp_path: Path) -> None:
     """异常按名字过线：**类型不丢**，消息也不丢。"""
     home = tmp_path / "conf"
     writer = _writer(home)
-    channel = _owner.Channel(_open(home))
+    engine, channel = _client(home)
     try:
         with pytest.raises(KeyNotRegisteredError):
-            channel.submit(_owner.Request(op=_owner.OP_READ, key="nope"))
-        with pytest.raises(TypeConflictError):
-            channel.submit(_owner.Request(op=_owner.OP_DECLARE, key="port", value="x", type=int))
+            engine("nope")
         with pytest.raises(ConfError, match="不认识的请求"):
             channel.submit(_owner.Request(op="nonsense"))
     finally:
@@ -237,6 +240,20 @@ def test_a_bad_authkey_is_turned_away(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
+def test_each_engine_builds_its_own_channel(tmp_path: Path) -> None:
+    """**一个引擎一条通道** —— 不是「一个配置目录一条」。
+
+    按目录共用的话，同一进程里第二个引擎会被塞进第一个引擎的通道，它的声明就
+    落到另一个引擎的声明集上了。
+    """
+    engine = _open(tmp_path / "conf")
+    first = engine._channel()
+    assert engine._channel() is first
+
+    engine.close()
+    assert engine._chan is None
+
+
 def test_channel_falls_back_to_direct_write_when_there_is_no_writer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -245,11 +262,11 @@ def test_channel_falls_back_to_direct_write_when_there_is_no_writer(
     monkeypatch.setattr(_owner, "connect", lambda _home, **_kw: None)
     monkeypatch.setattr(_owner, "claim", lambda _home: None)
 
-    channel = _owner.Channel(_open(home))
-    assert channel._writer is None
-    assert channel._client is None
+    engine = _open(home)
+    channel = _owner.Channel(engine, engine._execute_local)
+    assert channel.is_mine() is False
 
-    assert channel.submit(_owner.Request(op=_owner.OP_DECLARE, key="port", value=9090)) == 9090
+    channel.submit(_commit(Decl(key="port", value=9090)))
     written = json.loads((home / "settings.json").read_text(encoding="utf-8"))
     assert written["port"] == 9090
     channel.close()
@@ -258,18 +275,18 @@ def test_channel_falls_back_to_direct_write_when_there_is_no_writer(
 def test_channel_falls_back_when_the_endpoint_blows_up(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """端点这条路**抛异常**（不只是连不上）时，也必须退回直写。"""
+    """端点这条路**抛异常**（不只是连不上）时，也必须退回就地执行。"""
     home = tmp_path / "conf"
 
     def boom(_home: Path, **_kw: object) -> None:
         raise OSError("配置目录只读 / 文件系统不支持硬链接 之类")
 
     monkeypatch.setattr(_owner, "connect", boom)
-    channel = _owner.Channel(_open(home))
-    assert channel._writer is None
-    assert channel._client is None
+    engine = _open(home)
+    channel = _owner.Channel(engine, engine._execute_local)
 
-    assert channel.submit(_owner.Request(op=_owner.OP_DECLARE, key="port", value=1)) == 1
+    channel.submit(_commit(Decl(key="port", value=1)))
+    assert json.loads((home / "settings.json").read_text(encoding="utf-8"))["port"] == 1
     channel.close()
 
 
@@ -277,26 +294,17 @@ def test_channel_reelects_after_the_writer_leaves(tmp_path: Path) -> None:
     """写者下班 ⇒ 连接断 ⇒ **重新选主**，请求一次都不能丢。"""
     home = tmp_path / "conf"
     writer = _writer(home)
-    channel = _owner.Channel(_open(home))
+    _engine, channel = _client(home)
     try:
-        assert channel.submit(_owner.Request(op=_owner.OP_DECLARE, key="a", value=1)) == 1
+        channel.submit(_commit(Decl(key="a", value=1)))
 
         writer.close()  # 下班：端点关了，手上那条连接也关了
 
-        assert channel.submit(_owner.Request(op=_owner.OP_DECLARE, key="b", value=2)) == 2
-        assert channel._writer is not None, "没人抢得过它，它应该接手当写者"
+        channel.submit(_commit(Decl(key="b", value=2)))
+        assert channel.is_mine() is True, "没人抢得过它，它应该接手当写者"
+
         written = json.loads((home / "settings.json").read_text(encoding="utf-8"))
         assert written["a"] == 1, "写者换人不能弄丢前一个人的东西"
         assert written["b"] == 2
     finally:
         channel.close()
-
-
-def test_channel_for_reuses_one_channel_per_config_dir(tmp_path: Path) -> None:
-    """一个配置目录一个通道 —— 进程内不重复选主。"""
-    engine = _open(tmp_path / "conf")
-    first = _owner.channel_for(engine)
-    assert _owner.channel_for(engine) is first
-
-    _owner.close_channels()
-    assert _owner.channel_for(engine) is not first

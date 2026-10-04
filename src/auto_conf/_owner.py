@@ -20,6 +20,9 @@
 1. **全局声明集**。规则 1（清理未知数据）必须拿**完整**声明集当基准，而每个
    进程只知道自己那份。写者是唯一收口点，它看得见所有人 —— 跨进程的规则 1
    因此才安全（§19.3）。
+   **前提是写者得活着**：声明集不是持久状态，写者一换人，并集就没了，接着上来
+   的新写者会拿自己那一份去清理。进程起一个退一个的用法踩在这个前提之外
+   （``tests/test_engine.py::TestRealProcesses`` 里两条测试正好各占一边）。
 2. **全局去抖**。攒批窗口挂在写者身上，收的是**所有**进程的声明；没有写者时，
    窗口只能是各进程互不相干的局部窗口。
 3. **重读次数**。N 个进程各提交 M 次 = N×M 轮「读改写」；有写者时，磁盘上的
@@ -45,7 +48,7 @@
 文件系统 ACL —— 能读 ``settings.key`` 的进程本来就能读 ``settings.json``。
 它防的是**串台**（连错了端点），不是**攻击**。
 
-## 三个坑
+## 四个坑
 
 * ``Client(...)`` 在构造函数里就完成握手 ⇒ 「先 Client 再 accept」是**死等**。
   已经改成自己打招呼，所以这条不再适用于本模块，但 ``authkey=`` 一开就会回来。
@@ -58,6 +61,10 @@
   ``close()`` 清的是队列里那个**新的**，而阻塞等待的那个由线程自己拿着。
   后果是端点名不消失 ⇒ 下一个进程永远抢绑不到（写者真空）。所以 ``close()``
   末尾要开一条空连接把线程**叫醒**（:meth:`Owner._wake`）。
+* **一条连接不能串行服务**。第一版 ``_serve`` 是 accept 完就蹲在 ``_handle``
+  里 ``recv``，于是客户端 A 的整条会话把端口堵死：客户端 B **连得上，却没人跟
+  它握手**，它只会得出「没有写者」的结论。单客户端时完全看不出来，一多客户端
+  就必炸。现在 ``accept`` 只负责接，接到就交给一个会话线程。
 * ``send`` / ``recv`` 底层是 pickle。这里 pickle 的是**调用方自己 Python 代码里
   给出的声明**（``conf("port", 8080)``），不是从文件里读来的不可信内容；文件内容
   永远只走 ``yaml.safe_load`` 那一套（§26.3）。信道是本地且只连同用户的。
@@ -79,7 +86,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ._core import MISSING
 from ._engine import SCHEMA_DIR, VALUES_STEM
 from ._lock import LockTimeoutError
 from .errors import (
@@ -91,6 +97,7 @@ from .errors import (
 
 
 if TYPE_CHECKING:
+    from ._core import Decl
     from ._engine import Engine
 
     #: ``Client()`` / ``accept()`` 给回来的是 ``Connection`` 或 ``PipeConnection``
@@ -123,10 +130,13 @@ HELLO_TIMEOUT = 0.5
 #: ``Owner.close()`` 等应答线程收摊的上限（秒）
 _JOIN_TIMEOUT = 2.0
 
-#: 三个 op —— 与 :class:`Engine` 的三个入口一一对应，没有第四个
+#: 两个 op —— 与「读」和「交一批声明」一一对应，没有第三个
+#:
+#: 注意这里**没有** ``sync``：攒批窗口是**每个引擎自己**的（§30），声明先在本地
+#: 攒着，交出去时才走 ``OP_COMMIT``，``clean`` 只是这一批带的开关。窗口要是挪到
+#: 写者身上，客户端显式配的 ``flush_window`` 就被静默忽略了。
 OP_READ = "read"
-OP_DECLARE = "declare"
-OP_SYNC = "sync"
+OP_COMMIT = "commit"
 
 
 # --------------------------------------------------------------------------- #
@@ -239,14 +249,18 @@ def _reap_stale(address: str, key: str) -> None:  # pragma: no cover - POSIX 专
 
 @dataclass(frozen=True)
 class Request:
-    """一次请求。三个 op 对应 :class:`Engine` 的三个入口，没有别的。"""
+    """一次请求：要么读一个键，要么交一批声明（客户端攒够了的那些）。"""
 
     op: str
     key: str = ""
-    value: Any = MISSING
-    type: type | None = None
-    doc: str | None = None
-    force: bool = False
+    decls: tuple[Decl, ...] = ()
+    forced: tuple[str, ...] = ()
+    clean: bool = False
+
+
+#: 写者的执行入口。``Engine`` 把自己的**就地执行**方法以绑定方法的形式传进来，
+#: 所以引擎不必为了这个开一个公开面（那会变成第三个 API 面）。
+_Exec = Any
 
 
 #: 异常**按名字过线**，不让异常对象过线：那等于让写者隔空给客户端构造对象，
@@ -263,26 +277,8 @@ _ERROR_KINDS: dict[str, type[ConfError]] = {
     )
 }
 
-#: 远端失败的内部标记。**不能用 ``None``**：``sync()`` 成功时返回的就是 ``None``。
+#: 远端失败的内部标记。**不能用 ``None``**：``commit`` 成功时返回的就是 ``None``。
 _RETRY = object()
-
-
-def apply_request(engine: Engine, request: Request) -> Any:
-    """把请求施加到引擎上。**只有写者会调它** —— 这就是「唯一读写」的落点。"""
-    if request.op == OP_READ:
-        return engine.read(request.key)
-    if request.op == OP_DECLARE:
-        return engine.declare(
-            request.key,
-            request.value,
-            doc=request.doc,
-            type=request.type,
-            force=request.force,
-        )
-    if request.op == OP_SYNC:
-        engine.sync()
-        return None
-    raise ConfError(f"不认识的请求：{request.op!r}（只有 read / declare / sync）")
 
 
 # --------------------------------------------------------------------------- #
@@ -294,24 +290,26 @@ class Owner:
     """本进程里的那个写者：**一个引擎，一个端点，一个应答线程**。
 
     端点一绑上，别的进程就只能发请求，磁盘上的读改写从此只有这一个线程在做。
-    自己的请求走本地直调 —— 不给自己的 IPC 排队。
     """
 
-    def __init__(self, engine: Engine, listener: ipc.Listener) -> None:
+    def __init__(self, engine: Engine, listener: ipc.Listener, execute: _Exec) -> None:
         self.engine = engine
+        self._execute = execute
         self._listener = listener
         self._key = authkey_for(engine.home)
         #: 写者自己的两个调用方（主线程 + 应答线程）也要互斥：引擎不是线程安全的
         self._lock = threading.Lock()
         self._closed = threading.Event()
-        self._current: Conn | None = None
+        #: 还开着的会话连接。``close()`` 靠它把卡在 ``recv()`` 的会话线程叫醒。
+        self._sessions: set[Conn] = set()
+        self._sessions_lock = threading.Lock()
         self._worker: threading.Thread | None = None
 
     @classmethod
-    def claim(cls, engine: Engine) -> Owner | None:
+    def claim(cls, engine: Engine, execute: _Exec) -> Owner | None:
         """试着当写者；抢不到说明别人已经在当，返回 ``None``。"""
         listener = claim(engine.home)
-        return None if listener is None else cls(engine, listener)
+        return None if listener is None else cls(engine, listener, execute)
 
     def start(self) -> None:
         """开应答线程。**必须赶在客户端连上来之前** —— 见模块文档那个死等的坑。"""
@@ -324,15 +322,15 @@ class Owner:
             self._worker.start()
 
     def submit(self, request: Request) -> Any:
-        """写者自己的请求：本地直调，不绕 IPC。"""
+        """写者自己的请求：本地直调，不绕 IPC，也不给自己的 IPC 排队。"""
         with self._lock:
-            return apply_request(self.engine, request)
+            return self._execute(request)
 
     def close(self) -> None:
         """下班。**这里的顺序就是全部要点**，而且只能是这样：
 
         1. 举旗 ``_closed``；
-        2. 关掉手上那条连接 —— 线程要是卡在 ``recv()``，这样才醒得过来；
+        2. 关掉所有还开着的会话连接 —— 会话线程要是卡在 ``recv()``，这样才醒；
         3. 开一条空连接，叫醒卡在 ``accept()`` 里的线程；
         4. **等它真的退出**；
         5. 这时才 ``listener.close()``。
@@ -343,9 +341,11 @@ class Owner:
         下一个进程永远抢绑不到（写者真空）。先 join 掉线程，就没有这个窗口。
         """
         self._closed.set()
-        with self._lock, contextlib.suppress(OSError):
-            if self._current is not None:
-                self._current.close()
+        with self._sessions_lock:
+            live = list(self._sessions)
+        for conn in live:
+            with contextlib.suppress(OSError):
+                conn.close()
         self._wake()
         worker = self._worker
         if worker is not None and worker is not threading.current_thread():
@@ -365,19 +365,32 @@ class Owner:
     # ---------------------------------------------------------------- 应答线程
 
     def _serve(self) -> None:
+        """只干一件事：**接**。接到就交给一个会话线程，立刻回去接下一个。
+
+        绝不能在这里 inline 服务：``_handle`` 会一直占着 ``recv``，于是客户端 A
+        的整条会话把端口堵死 —— 客户端 B 连得上，却**没人跟它握手**，它只会以为
+        「没有写者」。这条是踩出来的：单客户端时看不出来，一多客户端就必炸。
+        """
         while not self._closed.is_set():
             try:
                 conn = self._listener.accept()
             except OSError, EOFError:
                 return
-            self._current = conn
-            try:
-                if self._greet(conn):
-                    self._handle(conn)
-            finally:
-                self._current = None
-                with contextlib.suppress(OSError):
-                    conn.close()
+            session = threading.Thread(target=self._session, args=(conn,), daemon=True)
+            session.start()
+
+    def _session(self, conn: Conn) -> None:
+        """一条连接一个会话线程，活到这条连接结束（或写者下班）。"""
+        with self._sessions_lock:
+            self._sessions.add(conn)
+        try:
+            if self._greet(conn):
+                self._handle(conn)
+        finally:
+            with self._sessions_lock:
+                self._sessions.discard(conn)
+            with contextlib.suppress(OSError):
+                conn.close()
 
     def _greet(self, conn: Conn) -> bool:
         """验一下对面的认证码，回一句欢迎。**有界**：不说话的连接直接放弃。"""
@@ -385,7 +398,7 @@ class Owner:
             if not conn.poll(HELLO_TIMEOUT):
                 return False
             hello = conn.recv()
-        except Exception:  # noqa: BLE001 - 坏客户端不许带走应答线程
+        except Exception:  # noqa: BLE001 - 坏客户端不许带走会话线程
             return False
         if not (isinstance(hello, tuple) and hello[0] == _HELLO and hello[1] == self._key):
             return False
@@ -397,7 +410,7 @@ class Owner:
         while not self._closed.is_set():
             try:
                 request = conn.recv()
-            except Exception:  # noqa: BLE001 - 坏客户端不许带走应答线程
+            except Exception:  # noqa: BLE001 - 坏客户端不许带走会话线程
                 return
             try:
                 conn.send(_respond(self, request))
@@ -423,7 +436,9 @@ def _respond(owner: Owner, request: Request) -> tuple[str, Any]:
 
 
 class Channel:
-    """三层，逐层退让：
+    """**一个引擎一条通道**（不是「一个目录一条」）。
+
+    三层，逐层退让：
 
     1. **我是写者** ⇒ 本地直调（不绕 IPC）；
     2. **别人是写者** ⇒ 走 IPC；
@@ -431,10 +446,15 @@ class Channel:
 
     第 3 层是安全网，不是常规路径：它让「端点建不出来」这种环境问题退化成
     「性能差一点」，而不是「库不能用」。正确性从来不靠 IPC 撑着。
+
+    按引擎而不是按目录管理，是因为同一进程里完全可能有两个引擎指着同一个配置
+    目录（测试里到处都是）。按目录的话，第二个引擎会被塞进第一个引擎的通道里，
+    它的声明就落到了**另一个引擎**的声明集上。
     """
 
-    def __init__(self, engine: Engine) -> None:
+    def __init__(self, engine: Engine, execute: _Exec) -> None:
         self.engine = engine
+        self._execute = execute
         #: 一条连接不能被两个线程同时收发，所以整轮往返都在这把锁里
         self._lock = threading.Lock()
         self._client: Conn | None = None
@@ -453,7 +473,7 @@ class Channel:
             self._client = connect(self.engine.home)
             if self._client is not None:
                 return
-            writer = Owner.claim(self.engine)
+            writer = Owner.claim(self.engine, self._execute)
             if writer is None:
                 # 抢绑失败 ⇒ 有人在我们探测之后绑上了。这是正常竞态，再连一次。
                 self._client = connect(self.engine.home)
@@ -466,6 +486,16 @@ class Channel:
         writer.start()
 
     # -------------------------------------------------------------------- 出口
+
+    def is_mine(self) -> bool:
+        """本通道的写者是不是本引擎自己。
+
+        **刻意不加锁**：路由会在持着 ``_lock`` 时重入这一问（写者的执行入口会
+        回到引擎，引擎再问一次「我是不是写者」），加锁就是自己跟自己死锁。
+        这个字段只在 ``_attach`` / ``close`` 里改，而那两处都持锁，所以读到的是
+        一个稳定的答案。
+        """
+        return self._writer is not None
 
     def submit(self, request: Request) -> Any:
         """发一次请求。请求是幂等的，所以「断了重发」天生安全。"""
@@ -492,8 +522,8 @@ class Channel:
             self._attach()
             outcome = self._route(request)
         if outcome is _RETRY:
-            # 退到底：直写。OS 锁还在，别的进程进不来，正确性不靠 IPC 撑着。
-            return apply_request(self.engine, request)
+            # 退到底：就地干。OS 锁还在，别的进程进不来，正确性不靠 IPC 撑着。
+            return self._execute(request)
         return outcome
 
     def _route(self, request: Request) -> Any:
@@ -526,30 +556,3 @@ class Channel:
             return payload
         name, message = payload
         raise _ERROR_KINDS.get(name, ConfError)(message)
-
-
-# --------------------------------------------------------------------------- #
-# 每进程一个通道（按配置目录）
-# --------------------------------------------------------------------------- #
-
-_CHANNELS: dict[Path, Channel] = {}
-_REGISTRY = threading.Lock()
-
-
-def channel_for(engine: Engine) -> Channel:
-    """取（或建）本进程面对这个配置目录的通道。一个目录一个，进程内共用。"""
-    with _REGISTRY:
-        existing = _CHANNELS.get(engine.home)
-        if existing is None:
-            existing = Channel(engine)
-            _CHANNELS[engine.home] = existing
-        return existing
-
-
-def close_channels() -> None:
-    """关掉本进程的所有通道（测试与进程退出用）。"""
-    with _REGISTRY:
-        existing = list(_CHANNELS.values())
-        _CHANNELS.clear()
-    for channel in existing:
-        channel.close()

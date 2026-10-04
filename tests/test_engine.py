@@ -580,6 +580,72 @@ class TestRealProcesses:
             assert key in data, f"{key} 被别的进程盖掉了"
 
 
+    _SYNCER = (
+        "import sys\n"
+        "from auto_conf import Engine\n"
+        "eng = Engine(sys.argv[1], flush_window=0.0)\n"
+        "eng(sys.argv[2], sys.argv[2])\n"
+        "eng.sync()\n"  # 完整提交点 ⇒ 规则 1 允许执行
+        "eng.close()\n"
+    )
+
+    _KEEPER = (
+        "import sys\n"
+        "from auto_conf import Engine\n"
+        "eng = Engine(sys.argv[1], flush_window=0.0)\n"
+        "eng('keeper.alive', 1)\n"
+        "print('ready', flush=True)\n"
+        "sys.stdin.readline()\n"
+        "eng.close()\n"
+    )
+
+    def test_rule_one_uses_every_process_declaration_set(self, tmp_path: Path) -> None:
+        """**写者活着的时候**，规则 1 的基准才是所有进程的声明并集。
+
+        规则 1（清理未知数据）必须拿**完整**声明集当基准。硬锁那条路做不到 —— 每个
+        进程只知道自己那份，于是后 ``sync()`` 的进程会把先写的键当「未知数据」删掉
+        （§18.4 记着的那个洞）。写者是唯一收口点，它的声明集是并集，所以一个键都不
+        该少。
+
+        **但这条有个前提：写者得活着。** 声明集**不是**持久状态 —— 写者一换人，
+        并集就跟着没了，接着上来的新写者会拿自己那一份去清理。进程起一个就退一个
+        的用法（下面 :meth:`test_four_processes_do_not_lose_each_others_keys` 那种）
+        正好踩在这个前提之外。所以这里先起一个守着的写者，再串行跑三个客户端。
+        """
+        keys = [f"key.of.sync{n}" for n in range(3)]
+        keeper = subprocess.Popen(  # noqa: S603 - 参数全是本测试自己造的，没有外部输入
+            [sys.executable, "-c", self._KEEPER, str(tmp_path)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert keeper.stdout is not None
+            assert keeper.stdout.readline().strip() == "ready", "守着的写者没起来"
+            for key in keys:
+                proc = subprocess.run(  # noqa: S603 - 同上
+                    [sys.executable, "-c", self._SYNCER, str(tmp_path), key],
+                    capture_output=True,
+                    check=False,  # 返回值自己判，好把 stderr 一起报出来
+                    timeout=120,
+                )
+                assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+        finally:
+            if keeper.stdin is not None:
+                keeper.stdin.close()
+            keeper.wait(timeout=120)
+            # 显式关掉，别留给 GC：本仓库 filterwarnings=error，
+            # 一个 ResourceWarning 就是一条失败的测试。
+            for stream in (keeper.stdout, keeper.stderr):
+                if stream is not None:
+                    stream.close()
+
+        data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+        for key in keys:
+            assert key in data, f"{key} 被后来者的规则 1 当成未知数据清掉了"
+
+
 # --------------------------------------------------------------------------- #
 # 锁本身
 # --------------------------------------------------------------------------- #
