@@ -161,7 +161,9 @@ Conventional Commits，**subject 用中文、不以句号结尾、一个提交�
 范围用英文小写（`core` / `engine` / `vocab` / `yaml` / `json` / `env` / `owner` / `ci` / `docs`）。
 破坏性变更加 `!` 并在脚注写 `BREAKING CHANGE:`。
 
-分支规范见 `CONTRIBUTING.md` §5.1（从 `main` 切，形如 `feat/env-backend`）；但注意
-`.pre-commit-config.yaml` 里有一条相反的现状说明：**本仓库当前的既定节奏是直接提交到
-`main`**，且刻意没有引入 `no-commit-to-branch` 钩子。跟随当前历史（`git log`）的
-节奏，不要擅自改变仓库的工作流。
+分支规范见 `CONTRIBUTING.md` §5.1（从 `main` 切，形如 `feat/env-backend`）。**`main` 不能
+直推**：服务端 ruleset `main` 禁止删除与强推，并且要求 CodeQL 对目标提交给出结果，而
+CodeQL 只在「推 `main`」和「针对 `main` 的 PR」上跑 —— 直推因此必然被拒
+（`GH013 … Code scanning is waiting for results from CodeQL`，实测踩过）。改动一律走
+「推分支 → 开 PR → 等 CI / CodeQL → 合并」；`.pre-commit-config.yaml` 里没有
+`no-commit-to-branch`，那只是本地钩子的取舍，**不代表允许直推**。

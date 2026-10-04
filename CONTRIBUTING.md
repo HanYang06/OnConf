@@ -245,6 +245,31 @@ git push origin main --follow-tags               # 4) 推 tag 触发 release.yml
 发版时还要把 `CHANGELOG.md` 的 `[Unreleased]` 收成 `## [x.y.z] - YYYY-MM-DD`，
 并在文件末尾补上对应的对比链接。
 
+#### PyPI 侧：Trusted Publisher 要注册什么
+
+`publish` job 用 OIDC（trusted publishing）换一次性上传凭据，**PyPI 上没有对应记录就直接
+拒绝**，报 `invalid-publisher: valid token, but no corresponding publisher`。要登记的值
+必须与 OIDC token 里的 claims 对齐：
+
+| PyPI 字段 | 填什么 | 说明 |
+|---|---|---|
+| PyPI Project Name | `onconf` | 项目名；**项目还不存在时只能用 pending publisher**，由第一次成功上传创建 |
+| Owner | `HanYang06` | claim 里的 `repository_owner`；PyPI 对它是**大小写敏感**的 `str.__eq__` |
+| Repository name | `OnConf` | claim 里的 `repository`（`HanYang06/OnConf`）；这一项 PyPI 折叠大小写 |
+| Workflow name | `release.yml` | **只填文件名**，不要带 `.github/workflows/` 路径 |
+| Environment name | `pypi` | 与 `publish` job 的 `environment:` 一致；PyPI 折叠大小写 |
+
+登记入口：已有项目走 project → Settings → Publishing；**首次发布走
+<https://pypi.org/manage/account/publishing/> 的 pending publisher**。
+
+踩过的两个坑，记在这里省得再查一次：
+
+- 仓库改名（`onconf` → `OnConf`）之后 PyPI 侧还留着旧配置 —— PyPI 自己的
+  [troubleshooting 文档](https://docs.pypi.org/trusted-publishers/troubleshooting/)
+  把「repository 被改名」列为 `invalid-publisher` 的典型原因；
+- 修好配置后**不需要重新打 tag**：在原运行上点 **Re-run failed jobs** 就行（`ref` 与
+  artifact 都没变，claims 因此完全一致）。
+
 ---
 
 ## 5. 分支、提交与 PR
