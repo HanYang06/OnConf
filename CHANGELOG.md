@@ -69,7 +69,7 @@
 ### Added
 
 - 仓库骨架：`pyproject.toml`、`uv.lock`、包入口、`.python-version`（`3ef3f4f`）。
-- 纯内存核心：对账四条规则、读取五步、类型推断与转换、声明集哈希（`b6f8433`）。
+- 纯内存核心：对账四条规则、读取五步、声明集哈希（`b6f8433`）。
 - 异常族 `ConfError` / `KeyNotRegistered` / `KeyHasNoValue` / `TypeConflict` /
   `UnknownEngineParam`：读取错误按「键名写错」与「部署漏配」分开，调用方可用 `except` 区分
   （`b6f8433`）。

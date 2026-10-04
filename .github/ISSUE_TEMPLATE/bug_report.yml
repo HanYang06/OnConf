@@ -69,10 +69,9 @@ body:
       label: 最小复现
       description: 能直接跑的最小代码片段，或最小配置目录结构（含文件内容）。请去掉无关的业务代码。
       placeholder: |
-        # 1. 目录结构
-        # conf/app.yaml
-        #   app:
-        #     port: 8080
+        # 1. 目录结构：值文件名必须是 settings.{yaml,yml,json,toml,env}
+        # conf/settings.yaml
+        #   app.port: 8080
 
         # 2. 运行这段代码
         from onconf import conf
@@ -101,8 +100,8 @@ body:
   - type: textarea
     id: logs
     attributes:
-      label: 审计日志与报错全文
-      description: 完整的 traceback、审计事件流（JSONL）或人读报告。请勿删减关键帧，也请先抹掉真实密钥与敏感值。
+      label: 报错全文与相关日志
+      description: 完整的 traceback 与相关日志（请贴文本）。审计输出在当前版本还没有落地，不必附审计事件流。请勿删减关键帧，也请先抹掉真实密钥与敏感值。
       render: text
     validations:
       required: true

@@ -23,7 +23,7 @@
 | 引擎装配 | `conf` / `AutoConf` 两个面接通，声明到读回端到端可用 | `src/onconf/_engine.py` |
 | 用值当键 | 间接寻址，`conf(conf("app.key_name"))` | `_core.py` + `_engine.py` |
 | `$schema` 指针 | 每次落盘都保证值文件里有指向词表的指针（放不下成员的后端除外） | `_engine.Engine._ensure_schema_pointer` |
-| 异常族 | `ConfError` 与四个子类（读取错误按责任方分成两类）；另有 `.env` 后端的 `EnvSyntaxError`（`ValueError` 子类，定义在 `_env_backend.py`） | `src/onconf/errors.py` |
+| 异常族 | `ConfError` 与五个子类（读取错误按责任方分成两类；`LockTimeoutError` 定义在 `_lock.py`）；另有三个**读期**的 `ValueError` 子类（`EnvSyntaxError` / `YamlFlatRequiredError` / `TomlFlatRequiredError`，定义在各后端），**不是** `ConfError` 子类 | `src/onconf/errors.py` |
 | 提交点 | 每次 `conf(key, value)` 当场对账落盘；`atexit` 触发 `Engine.sync()`；`flush_window > 0` 时改为四个提交点（窗口到期 / 一次读 / `sync()` / 进程退出） | `__init__._sync_at_exit` |
 | 跨进程排他锁 | 操作系统级锁（Windows `msvcrt.locking`、其它 `fcntl.flock`），进程崩溃由 OS 释放；超时抛 `LockTimeoutError` | `src/onconf/_lock.py` |
 | 锁内按需重读 | 指纹（`mtime` + 大小）**同时**看值文件与词表，避免把别人刚登记的键挤掉 | `Engine._reload_if_changed` |

@@ -99,7 +99,10 @@ uv python install 3.14
 
 #### Linux
 
-- 关注权限位：涉及 endpoint / authkey 之类的敏感文件，实现里要求 `0600`。
+- 关注权限位：只有写者的认证码文件 `schema/settings.key` 被显式收紧到 `0600`
+  （`_owner.authkey_for` 在 `os.link` 之前 `chmod`，硬链接共享 inode）。
+  端点本身是 `ipc.Listener`（Windows 命名管道 / POSIX 下 `schema/` 里的 socket 文件），
+  库没有给它设权限位。
 - CI 使用 `ubuntu-latest`，本地能过、CI 不能过时，优先看时区、语言环境（`LC_ALL`）
   与文件系统大小写差异。
 
@@ -127,17 +130,27 @@ uv run pre-commit install --install-hooks
 
 ### 3.2 提交前会发生什么
 
-执行 `git commit` 时，pre-commit 会对你**本次改动的文件**依次跑：
+执行 `git commit` 时，pre-commit 会依次跑这些钩子（多数只看**本次改动的文件**）：
 
 - 行尾与空白字符检查 —— 确认文件是 UTF-8、LF 行尾、文件末尾有且只有一个换行；
-- 文件完整性检查 —— 大文件、私钥、冲突标记、YAML / TOML 语法；
+- 文件完整性检查 —— 大文件、私钥、冲突标记、YAML / TOML / JSON 语法；
 - `ruff check` —— lint（含自动修复）；
-- `ruff format` —— 格式化；
-- `codespell` —— 拼写检查。
+- `mypy` —— 严格类型检查（`--strict`，配置见 `pyproject.toml`）；
+- `codespell` —— 拼写检查；
+- `bandit` —— `src/` 安全静态扫描；
+- `zizmor` —— GitHub Actions 安全审计。
+
+还有几个钩子挂在**别的阶段**，不在 `git commit` 的主流程里：
+
+- `conventional-pre-commit` —— 挂在 `commit-msg` 阶段，校验提交信息符合 Conventional Commits；
+- `ruff format` —— **只在 manual 阶段**（`.pre-commit-config.yaml` 里写死 `stages: [manual]`）：
+  团队约定暂不重排既有排版，要跑得显式调
+  `uv run pre-commit run ruff-format --hook-stage manual --all-files`；
+- `pip-audit` 与 `mkdocs-build` —— 同样是 manual 阶段；`pytest` 挂在 `pre-push`。
 
 任何一项失败，提交就会被拦下。这是**预期行为**，不是环境坏了：
 
-- hook 自动改了文件（ruff / ruff format / 行尾修正）⇒ 改动留在工作区，
+- hook 自动改了文件（`ruff check --fix` / 行尾修正）⇒ 改动留在工作区，
   你确认后再 `git add` 一次、重新提交即可；
 - hook 报了无法自动修的问题 ⇒ 按提示改代码，然后重新提交。
 
@@ -266,7 +279,7 @@ $schema 这类以 $ 开头的指令键不参与「清理未知数据」，
 
    | 工作流 | job | 内容 |
    |---|---|---|
-   | `.github/workflows/ci.yml` | `lint` | ruff check + ruff format --check + codespell + markdownlint |
+   | `.github/workflows/ci.yml` | `lint` | ruff check + ruff format --check + codespell + 第三方许可清单校验（`scripts/gen_third_party_notices.py --check`）+ markdownlint |
    | `.github/workflows/ci.yml` | `typecheck` | mypy --strict |
    | `.github/workflows/ci.yml` | `test` | 三平台矩阵 + pytest + 覆盖率 |
    | `.github/workflows/ci.yml` | `security` | bandit + pip-audit + zizmor |
@@ -318,15 +331,15 @@ $schema 这类以 $ 开头的指令键不参与「清理未知数据」，
 ### 6.4 许可头
 
 **每个新增的源码文件**（Python 文件）必须在**文件最顶部**写下面两行，逐字照抄，
-随后空一行再接模块 docstring：
+紧接着就是模块 docstring（中间不空行）：
 
 ```python
+# SPDX-FileCopyrightText: 2026 HanYang06
 # SPDX-License-Identifier: Apache-2.0
-# Copyright 2026 HanYang06 <jihanyang123@163.com>
 ```
 
 - 顺序不能颠倒，`#` 后有一个空格，年份写 `2026`；
-- 不要改写署名与邮箱；
+- 不要改写署名；
 - 新建的文件如果漏了这两行，请在同一个 PR 里补上。
 
 第三方代码的许可与归属见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，
@@ -381,7 +394,9 @@ $schema 这类以 $ 开头的指令键不参与「清理未知数据」，
 以下内容**绝对不能进仓库**（`.gitignore` 已尽量兜底，但它不是保险）：
 
 - **任何密钥与凭据**：token、私钥（`*.pem` / `*.key`）、keystore、云厂商 AK/SK；
-- **`.env` 及其变体**（`*.env`、`.env.*`）。示例请写成不含真实值的样例文件；
+- **`.env` 及其变体**（`.gitignore` 里只有 `.env`、`.env.*`，并放行 `!.env.example`）。
+  注意引擎自己的 env 值文件叫 `settings.env`，**不匹配**上面任何一条模式
+  （默认布局下靠 `/conf/` 兜底）。示例请写成不含真实值的样例文件；
 - **运行时产物**：`/conf/` 目录、`*.wal` 预写日志、`audit.log` / `audit-*.log` 审计日志；
   这些是本项目自己的运行痕迹，属于产物而非源码；
 - **构建与缓存产物**：`dist/`、`build/`、`site/`、各类 `*_cache/`、`*.egg-info/`；

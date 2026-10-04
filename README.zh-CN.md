@@ -150,8 +150,8 @@ conf("app.port", 9090, force=True)  # 覆盖文件里已有的值
 | **专职写者** —— 谁先绑上端点，谁就是唯一的读写者；其余进程通过 `multiprocessing.connection` 发请求。**抢绑本身就是选举**，所以不涉及锁文件（DESIGN §32） | ✅ |
 | **原子写** —— 同目录临时文件 → `fsync` → `os.replace`，POSIX 再加父目录 `fsync`；行尾与权限位原样保留，新建文件是 `0600` | ✅ |
 | 可选攒批窗口 —— `flush_window`（默认 `0`，当场落盘），窗口挂在**客户端**侧，所以每个引擎的窗口归自己 | ✅ |
-| 用值当键（间接寻址）+ 每次落盘都保证 `$schema` 指针 | ✅ |
-| 异常族 —— `ConfError`、`KeyNotRegisteredError`、`KeyHasNoValueError`、`TypeConflictError`、`UnknownEngineParamError`、`EnvSyntaxError` | ✅ |
+| 用值当键（间接寻址）+ 每次落盘都保证 `$schema` 指针（仅 JSON / YAML —— `.env` 与 `.toml` 放不下成员，会直接跳过） | ✅ |
+| 异常族 —— `ConfError` 作基类，含 `KeyNotRegisteredError`、`KeyHasNoValueError`、`TypeConflictError`、`UnknownEngineParamError` 与 `LockTimeoutError`（定义在 `_lock.py` 而非 `errors.py`；等 10 秒拿不到锁时抛）。`EnvSyntaxError`、`YamlFlatRequiredError`、`TomlFlatRequiredError` 是 `ValueError` 子类，**不会**被 `except ConfError` 捕获 | ✅ |
 | 测试 —— 每个模块一个测试文件，外加安全不变量 | ✅ 本地全绿；CI 在 ubuntu / windows / macos 上跑 |
 
 ## 路线图 —— 当前不可用
@@ -185,7 +185,8 @@ uv run pip-audit
 uv run zizmor .github/workflows
 ```
 
-CI 跑 **ubuntu / windows / macos × Python 3.14**，并强制：`ruff check`、`mypy --strict`、
+CI 跑 **ubuntu / windows / macos × Python 3.14**，并强制：`ruff check`、`codespell`、
+第三方许可清单检查（`python scripts/gen_third_party_notices.py --check`）、`mypy --strict`、
 带覆盖率下限的 `pytest`、`bandit`、`pip-audit`、`zizmor`、`actionlint`、`gitleaks`、
 CodeQL、依赖审查与 OpenSSF Scorecard。
 
@@ -201,7 +202,7 @@ CodeQL、依赖审查与 OpenSSF Scorecard。
 
 - 默认路径**不开任何网络端口**、**不 spawn 子进程**（写者的端点只是 OS 命名空间里的一个
   同用户本地管道，而写者是个**线程**，不是子进程）
-- 配置只经 `yaml.safe_load` 解析，绝不用 `yaml.load`
+- YAML 配置只经 `yaml.safe_load` / `yaml.safe_load_all` 解析，绝不用 `yaml.load`（JSON 走 `json.loads`，TOML 走 `tomllib.loads`，`.env` 是纯文本逐行扫描）
 - 键名永不变成文件系统路径
 - 不对配置内容做 `eval` / `exec` / `pickle`
 
@@ -212,7 +213,7 @@ CodeQL、依赖审查与 OpenSSF Scorecard。
 | **规则 1 需要写者长命** | 写者的声明集不是持久状态：写者进程起一个退一个时，`sync()` 只能拿**自己这一个进程**的声明去清理（DESIGN §32.4） |
 | **写者是同伴，不是服务** | 它住在最先抢到该目录的那个进程里，请求在一把锁后面串行 —— 客户端要等自己的请求，还要等前面那个跑完。没有队列，也没有后台重试 |
 | **兜底路径是进程内的** | 端点完全建不出来时，引擎退回「直接写 + OS 锁」：正确性在，但规则 1 的基准变成每进程各自一份 |
-| **符号链接会被跟随** | 值文件是符号链接时，写入会落到链接目标上 |
+| **符号链接会被替换** | 写入走 `os.replace`：符号链接本身被替换成普通文件，链接目标一个字节都不会被写（链接就此断开） |
 | **`ONCONF_HOME` 是可信输入** | 它决定配置目录，库不做目录包含性校验 |
 
 完整分析（逐条威胁 + 代码依据）：[`docs/security/threat-model.md`](docs/security/threat-model.md)。

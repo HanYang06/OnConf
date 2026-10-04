@@ -158,8 +158,8 @@ Notes on semantics that surprise people:
 | **Dedicated writer** — whichever process first binds the endpoint is the only reader/writer; the rest send requests over `multiprocessing.connection`. Binding *is* the election, so no lock file is involved (DESIGN §32) | ✅ |
 | **Atomic write** — same-directory temp file → `fsync` → `os.replace`, plus a parent-directory `fsync` on POSIX; original line endings and permission bits preserved, new files land as `0600` | ✅ |
 | Optional batching window — `flush_window` (default `0`, i.e. commit immediately), held **client-side** so each engine's window stays its own | ✅ |
-| Value-as-key (indirect addressing) + guaranteed `$schema` pointer on every write | ✅ |
-| Error taxonomy — `ConfError`, `KeyNotRegisteredError`, `KeyHasNoValueError`, `TypeConflictError`, `UnknownEngineParamError`, `EnvSyntaxError` | ✅ |
+| Value-as-key (indirect addressing) + guaranteed `$schema` pointer on every write (JSON / YAML only — `.env` and `.toml` cannot hold a member, so the pointer is skipped) | ✅ |
+| Error taxonomy — `ConfError` as the base, with `KeyNotRegisteredError`, `KeyHasNoValueError`, `TypeConflictError`, `UnknownEngineParamError` and `LockTimeoutError` (defined in `_lock.py`, not `errors.py`; raised after a 10 s lock wait). `EnvSyntaxError`, `YamlFlatRequiredError` and `TomlFlatRequiredError` are `ValueError` subclasses, so they are **not** caught by `except ConfError` | ✅ |
 | Test suite — one file per module plus security invariants | ✅ green locally; CI runs it on ubuntu / windows / macos |
 
 ## Roadmap — not available yet
@@ -193,7 +193,8 @@ uv run pip-audit
 uv run zizmor .github/workflows
 ```
 
-CI runs on **ubuntu / windows / macos × Python 3.14** and enforces: `ruff check`, `mypy --strict`,
+CI runs on **ubuntu / windows / macos × Python 3.14** and enforces: `ruff check`, `codespell`, the
+third-party notices check (`python scripts/gen_third_party_notices.py --check`), `mypy --strict`,
 `pytest` with a coverage floor, `bandit`, `pip-audit`, `zizmor`, `actionlint`, `gitleaks`,
 CodeQL, dependency review and OpenSSF Scorecard.
 
@@ -209,7 +210,7 @@ Invariants this project commits to (each one has a regression test in
 
 - the default path opens **no network ports** and spawns **no subprocesses** (the writer's endpoint
   is a per-user local pipe in the OS namespace, and the writer is a *thread*, not a child process)
-- configuration is only ever parsed with `yaml.safe_load` — never `yaml.load`
+- YAML configuration is only ever parsed with `yaml.safe_load` / `yaml.safe_load_all` — never `yaml.load` (JSON uses `json.loads`, TOML `tomllib.loads`, `.env` a plain line scan)
 - key names never become filesystem paths
 - no `eval` / `exec` / `pickle` on configuration content
 
@@ -220,7 +221,7 @@ Invariants this project commits to (each one has a regression test in
 | **Rule 1 needs a long-lived writer** | The writer's declaration set is not persisted, so if writer processes come and go, `sync()` cleans against only its own process's declarations (DESIGN §32.4) |
 | **The writer is a peer, not a service** | It lives inside whichever process claimed the directory first, and requests are serialised behind one lock — a client waits for its own request, and behind whatever is running. There is no queue and no background retry |
 | **The fallback path is process-local** | If the endpoint cannot be created at all, the engine degrades to direct writes under the OS lock: correctness holds, but rule 1's baseline becomes per-process |
-| **Symlinks are followed** | If a value file is a symlink, the write lands on its target |
+| **A symlinked value file is replaced** | Writes go through `os.replace`: the symlink is replaced by a regular file and the link's target is left untouched (the link itself is destroyed) |
 | **`ONCONF_HOME` is trusted input** | It decides the config directory and is not containment-checked |
 
 Full analysis, per threat with code evidence: [`docs/security/threat-model.md`](docs/security/threat-model.md).

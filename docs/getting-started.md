@@ -70,11 +70,16 @@ print(conf("app.server.port")) # 读
   settings.json          # 值文件：用户手写，库只做外科手术式回写
   schema/
     settings.json        # 词表：库自己的资产，整篇重写
+    settings.lock        # 跨进程锁的握手点（空文件）
+    settings.key         # 专职写者的认证码（0600）
+    settings.sock        # 专职写者的端点（仅 POSIX）
 ```
 
-值文件名按 `settings.yaml` → `settings.yml` → `settings.json` → `settings.env` 的顺序探测
+`schema/` 下另外三个文件是库自己的簿记，不是配置，不用手改。
+
+值文件名按 `settings.yaml` → `settings.yml` → `settings.json` → `settings.toml` → `settings.env` 的顺序探测
 （取第一个已存在的），都不存在时默认用 `settings.json`。能吃下成员的后端会在值文件里写入一条
-`$schema` 指针，指向 `schema/settings.json`，供编辑器读取补全；`.env` 放不下成员，所以不写指针。
+`$schema` 指针，指向 `schema/settings.json`，供编辑器读取补全；`.env` 与 `.toml` 放不下成员，所以不写指针。
 
 `.env` 后端是**纯字符串**后端：值只能是字符串，非字符串会直接被拒绝（错误信息会指路 JSON / YAML
 值文件）；读回来也一律是字符串，不做类型推断——要整数请自己写 `int(conf("PORT"))`。
@@ -87,8 +92,10 @@ print(conf("app.server.port")) # 读
 
 ## 常见问题：几个异常怎么区分
 
-异常族都在 [`src/onconf/errors.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/errors.py)，
-共同基类是 `ConfError`，所以「全部接住」写 `except ConfError` 就够，「分开处理」按下表区分：
+异常族的共同基类是 `ConfError`，定义在
+[`src/onconf/errors.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/errors.py)；
+`LockTimeoutError` 在 `_lock.py`，也是它的子类。但**读期**还有三个后端错误是 `ValueError`
+的子类，`except ConfError` 接不住它们，「分开处理」按下表区分：
 
 | 异常 | 触发时机 | 含义 | 责任方 |
 |---|---|---|---|
@@ -96,8 +103,11 @@ print(conf("app.server.port")) # 读
 | `KeyHasNoValueError` | 读 | 词表里有登记，但值文件里没有值，也没有默认值 | 部署（漏配必填项） |
 | `TypeConflictError` | 声明 | 默认值与 `type=` 声明的类型不一致 | 调用方 |
 | `UnknownEngineParamError` | 调用 `AutoConf` / `conf` | 透传给引擎的参数名不存在 | 调用方 |
-| `EnvSyntaxError` | 读 `.env` 值文件 | `.env` 里有既不是空行、注释，也不是 `KEY=value` 的行 | 部署（`ValueError` 的子类，**不是** `ConfError`） |
-| `ConfError` | 任意 | 上述四者的基类（也用于「引擎已启动又改配置」这类情形） | —— |
+| `LockTimeoutError` | 任意落盘 | 超时内没拿到跨进程锁（另一个进程正卡在写盘上） | 部署（进程长期持锁） |
+| `EnvSyntaxError` | 读 `.env` 值文件 | `.env` 里有既不是空行、注释，也不是 `KEY=value` 的行 | 部署/使用者（`ValueError` 的子类，**不是** `ConfError`） |
+| `YamlFlatRequiredError` | 读 YAML 值文件 | 文件用了 v1 不支持的构造（嵌套 / 块标量 / 跨行 / 多文档） | 部署/使用者（`ValueError` 的子类，**不是** `ConfError`） |
+| `TomlFlatRequiredError` | 读 TOML 值文件 | 文件用了 v1 不支持的构造（表数组 `[[…]]` / 跨行值） | 部署/使用者（`ValueError` 的子类，**不是** `ConfError`） |
+| `ConfError` | 任意 | `ConfError` 子类的共同基类（也用于「引擎已启动又改配置」这类情形） | —— |
 
 「键名写错」与「部署漏配」被刻意分成两类，因为它们的**责任方不同**：
 前者你改代码，后者你改配置。把两者混成一句「配置不存在」，会让线上排障多绕一圈。
