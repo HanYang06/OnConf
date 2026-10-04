@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 import yaml
 
-from auto_conf._yaml_backend import (
+from onconf._yaml_backend import (
     YamlFlatRequiredError,
     append_key,
     delete_key,

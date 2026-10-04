@@ -1,12 +1,12 @@
 # ============================================================================
-# auto-conf —— 项目元数据与工具链配置
+# onconf（展示名 OnConf）—— 项目元数据与工具链配置
 #
-# TODO(rename): 项目名与仓库 URL 尚未定案（见 README 顶部说明）。
-#               description 已是定稿的官方定位句 —— 改名时不要动它。
+# description 是**定稿的官方定位句**：改它必须同步两份 README、mkdocs.yml 的
+# site_description 与 docs/index.md。
 # ============================================================================
 
 [project]
-name = "auto-conf"
+name = "onconf"
 version = "0.1.0"
 description = "Configuration has no verbs: one name reads and writes it, in both directions, without losing a byte or an update."
 readme = "README.md"
@@ -50,17 +50,16 @@ dependencies = [
 ]
 
 [project.scripts]
-auto-conf = "auto_conf:main"
+onconf = "onconf:main"
 
-# TODO(rename): 仓库地址待定，改名后此处 7 条 URL 一并替换。
 [project.urls]
-Homepage = "https://github.com/HanYang06/auto-conf"
-Documentation = "https://hanyang06.github.io/auto-conf/"
-Repository = "https://github.com/HanYang06/auto-conf"
-Issues = "https://github.com/HanYang06/auto-conf/issues"
-Discussions = "https://github.com/HanYang06/auto-conf/discussions"
-Changelog = "https://github.com/HanYang06/auto-conf/blob/main/CHANGELOG.md"
-Security = "https://github.com/HanYang06/auto-conf/security/policy"
+Homepage = "https://github.com/HanYang06/onconf"
+Documentation = "https://hanyang06.github.io/onconf/"
+Repository = "https://github.com/HanYang06/onconf"
+Issues = "https://github.com/HanYang06/onconf/issues"
+Discussions = "https://github.com/HanYang06/onconf/discussions"
+Changelog = "https://github.com/HanYang06/onconf/blob/main/CHANGELOG.md"
+Security = "https://github.com/HanYang06/onconf/security/policy"
 
 [build-system]
 requires = ["uv_build>=0.12.22,<0.13.0"]
@@ -201,7 +200,7 @@ notice-rgx = "(?i)SPDX-License-Identifier:\\s*Apache-2\\.0"
 min-file-size = 1
 
 [tool.ruff.lint.isort]
-known-first-party = ["auto_conf"]
+known-first-party = ["onconf"]
 force-single-line = false
 lines-after-imports = 2
 
@@ -288,7 +287,7 @@ filterwarnings = ["error"]
 [tool.coverage.run]
 branch = true
 source = ["src"]
-omit = ["src/auto_conf/__main__.py"]
+omit = ["src/onconf/__main__.py"]
 
 [tool.coverage.report]
 show_missing = true

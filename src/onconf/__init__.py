@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 HanYang06
 # SPDX-License-Identifier: Apache-2.0
-"""auto_conf —— 本地文件配置引擎。
+"""onconf —— 本地文件配置引擎。
 
 对外只有两个面（§15.2）::
 
@@ -135,4 +135,4 @@ def conf(
 
 def main() -> None:
     """控制台入口占位。命令行体系（交互式补全等）排在后面。"""
-    print(f"auto_conf：配置目录 {default_home()}")  # noqa: T201 - 这就是控制台入口的活儿
+    print(f"onconf：配置目录 {default_home()}")  # noqa: T201 - 这就是控制台入口的活儿

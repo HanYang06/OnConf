@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from auto_conf import (
+from onconf import (
     AutoConf,
     ConfError,
     KeyHasNoValueError,
@@ -25,8 +25,8 @@ from auto_conf import (
     _reset,
     conf,
 )
-from auto_conf._engine import SCHEMA_POINTER, Engine
-from auto_conf._lock import LockTimeoutError, exclusive
+from onconf._engine import SCHEMA_POINTER, Engine
+from onconf._lock import LockTimeoutError, exclusive
 
 
 if TYPE_CHECKING:
@@ -301,7 +301,7 @@ class TestDeclaredType:
 
 
 class TestModuleLevelFaces:
-    def test_auto_conf_then_conf(self, tmp_path: Path) -> None:
+    def test_onconf_then_conf(self, tmp_path: Path) -> None:
         AutoConf(home=str(tmp_path))
         assert conf("a.b", 1) == 1
         assert conf("a.b") == 1
@@ -309,11 +309,11 @@ class TestModuleLevelFaces:
     def test_zero_bootstrap_uses_the_home_env(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("AUTO_CONF_HOME", str(tmp_path))
+        monkeypatch.setenv("ONCONF_HOME", str(tmp_path))
         assert conf("a.b", 1) == 1
         assert (tmp_path / "settings.json").exists()
 
-    def test_repeated_auto_conf_without_params_is_fine(self, tmp_path: Path) -> None:
+    def test_repeated_onconf_without_params_is_fine(self, tmp_path: Path) -> None:
         first = AutoConf(home=str(tmp_path))
         assert AutoConf() is first
 
@@ -554,7 +554,7 @@ class TestRealProcesses:
 
     _WORKER = (
         "import sys\n"
-        "from auto_conf import Engine\n"
+        "from onconf import Engine\n"
         "eng = Engine(sys.argv[1], flush_window=0.0)\n"
         "for key in sys.argv[2:]:\n"
         "    eng(key, key)\n"
@@ -582,7 +582,7 @@ class TestRealProcesses:
 
     _SYNCER = (
         "import sys\n"
-        "from auto_conf import Engine\n"
+        "from onconf import Engine\n"
         "eng = Engine(sys.argv[1], flush_window=0.0)\n"
         "eng(sys.argv[2], sys.argv[2])\n"
         "eng.sync()\n"  # 完整提交点 ⇒ 规则 1 允许执行
@@ -591,7 +591,7 @@ class TestRealProcesses:
 
     _KEEPER = (
         "import sys\n"
-        "from auto_conf import Engine\n"
+        "from onconf import Engine\n"
         "eng = Engine(sys.argv[1], flush_window=0.0)\n"
         "eng('keeper.alive', 1)\n"
         "print('ready', flush=True)\n"

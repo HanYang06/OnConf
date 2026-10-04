@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from auto_conf._core import (
+from onconf._core import (
     NO_VALUE,
     Action,
     Decl,
@@ -19,7 +19,7 @@ from auto_conf._core import (
     read_value,
     reconcile,
 )
-from auto_conf.errors import KeyHasNoValueError, KeyNotRegisteredError
+from onconf.errors import KeyHasNoValueError, KeyNotRegisteredError
 
 
 # --------------------------------------------------------------------------- #

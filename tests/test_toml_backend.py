@@ -8,7 +8,7 @@ import datetime as dt
 
 import pytest
 
-from auto_conf._toml_backend import (
+from onconf._toml_backend import (
     TomlFlatRequiredError,
     append_key,
     delete_key,

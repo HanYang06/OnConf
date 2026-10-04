@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from auto_conf._env_backend import (
+from onconf._env_backend import (
     EnvSyntaxError,
     append_key,
     delete_key,

@@ -15,8 +15,8 @@ uv run python scripts/gen_third_party_notices.py --check
 
 依赖清单由 `uv export --no-dev --no-emit-project --format requirements-txt --no-hashes` 得出，许可证信息由 `importlib.metadata` 从**已安装分发**的元数据读出。
 
-本文件覆盖 auto-conf 的**运行时依赖闭包**（含传递依赖），不含 dev / docs 依赖组；
-后两组只在开发期使用，不进入发行物。auto-conf 自身的许可证见仓库根目录的 `LICENSE`
+本文件覆盖 onconf 的**运行时依赖闭包**（含传递依赖），不含 dev / docs 依赖组；
+后两组只在开发期使用，不进入发行物。onconf 自身的许可证见仓库根目录的 `LICENSE`
 与 `NOTICE`（Apache-2.0）。
 
 许可证列优先取 PEP 639 的 `License-Expression`（SPDX 表达式），其次为 `Classifier: License ::` 分类器，再次为旧式 `License` 字段；都没有时记为 `UNKNOWN`。许可证全文随各分发一并提供，路径见下方逐包明细（相对 `site-packages`），也可在对应的上游页面获取。

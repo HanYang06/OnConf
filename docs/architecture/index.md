@@ -1,6 +1,6 @@
 # 架构总览
 
-本页范围：auto-conf 的模块划分、数据流与关键算法的入口位置。
+本页范围：onconf 的模块划分、数据流与关键算法的入口位置。
 
 ⏳ 正文待补：等设计定稿后补齐。权威来源是
 [设计稿](../design/DESIGN.md)——它本身也是**未定稿草案**；本页后续只做「实现视角的转述」，
@@ -20,15 +20,15 @@
 
 | 模块 | 职责 |
 |---|---|
-| [`_core.py`](https://github.com/HanYang06/auto-conf/blob/main/src/auto_conf/_core.py) | 纯内存核心：对账四条规则、读取五步、类型推断与转换、声明集哈希 |
-| [`_vocab.py`](https://github.com/HanYang06/auto-conf/blob/main/src/auto_conf/_vocab.py) | 词表：三态持久化、JSON Schema 往返、哈希短路 |
-| [`_json_backend.py`](https://github.com/HanYang06/auto-conf/blob/main/src/auto_conf/_json_backend.py) | JSON 值后端：外科手术式回写 |
-| [`_yaml_backend.py`](https://github.com/HanYang06/auto-conf/blob/main/src/auto_conf/_yaml_backend.py) | YAML 值后端：注释、缩进、键序逐字保留 |
-| [`_env_backend.py`](https://github.com/HanYang06/auto-conf/blob/main/src/auto_conf/_env_backend.py) | `.env` 值后端：纯字符串，不做键名映射；`EnvSyntaxError` 也定义在这里 |
-| [`_textscan.py`](https://github.com/HanYang06/auto-conf/blob/main/src/auto_conf/_textscan.py) | 各后端共用的字节级扫描 |
-| [`_lock.py`](https://github.com/HanYang06/auto-conf/blob/main/src/auto_conf/_lock.py) | 跨进程排他锁：操作系统级锁（`msvcrt` / `fcntl`），进程崩溃由 OS 释放。**兜底路径**才用得上 |
-| [`_owner.py`](https://github.com/HanYang06/auto-conf/blob/main/src/auto_conf/_owner.py) | 专职写者：端点选举（抢绑即选举）、应用层认证、IPC、写者循环与会话线程 |
-| [`_engine.py`](https://github.com/HanYang06/auto-conf/blob/main/src/auto_conf/_engine.py) | 引擎装配：路由（「我是不是写者」）、后端选择、提交点、原子落盘、`$schema` 指针 |
+| [`_core.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_core.py) | 纯内存核心：对账四条规则、读取五步、类型推断与转换、声明集哈希 |
+| [`_vocab.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_vocab.py) | 词表：三态持久化、JSON Schema 往返、哈希短路 |
+| [`_json_backend.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_json_backend.py) | JSON 值后端：外科手术式回写 |
+| [`_yaml_backend.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_yaml_backend.py) | YAML 值后端：注释、缩进、键序逐字保留 |
+| [`_env_backend.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_env_backend.py) | `.env` 值后端：纯字符串，不做键名映射；`EnvSyntaxError` 也定义在这里 |
+| [`_textscan.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_textscan.py) | 各后端共用的字节级扫描 |
+| [`_lock.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_lock.py) | 跨进程排他锁：操作系统级锁（`msvcrt` / `fcntl`），进程崩溃由 OS 释放。**兜底路径**才用得上 |
+| [`_owner.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_owner.py) | 专职写者：端点选举（抢绑即选举）、应用层认证、IPC、写者循环与会话线程 |
+| [`_engine.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_engine.py) | 引擎装配：路由（「我是不是写者」）、后端选择、提交点、原子落盘、`$schema` 指针 |
 
 ## 尚未定稿的部分
 

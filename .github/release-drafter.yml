@@ -164,10 +164,10 @@ template: |
   ## 安装
 
   ```bash
-  uv add auto-conf
+  uv add onconf
   ```
 
-  需要 Python >= 3.14。完整说明见[文档站](https://hanyang06.github.io/auto-conf/)。
+  需要 Python >= 3.14。完整说明见[文档站](https://hanyang06.github.io/onconf/)。
 
   ## 贡献者
 
@@ -179,7 +179,7 @@ template: |
   - 标记为「破坏性变更」的条目，请先读迁移说明再升级。
   - 构建与发布由 `.github/workflows/release.yml` 的 `build` 与 `publish` 两个 job 完成，
     发布使用 PyPI trusted publishing（手动触发 + tag 触发）。
-  - 安全漏洞请走 [SECURITY.md](https://github.com/HanYang06/auto-conf/blob/main/SECURITY.md)
+  - 安全漏洞请走 [SECURITY.md](https://github.com/HanYang06/onconf/blob/main/SECURITY.md)
     的私密渠道报告。
 
-  **完整变更记录**：https://github.com/HanYang06/auto-conf/compare/$PREVIOUS_TAG...v$NEXT_PATCH_VERSION
+  **完整变更记录**：https://github.com/HanYang06/onconf/compare/$PREVIOUS_TAG...v$NEXT_PATCH_VERSION

@@ -1,6 +1,6 @@
 # 参与方式
 
-本页范围：参与 auto-conf 的入口索引。
+本页范围：参与 onconf 的入口索引。
 
 ⏳ 正文待补：等设计定稿后补齐。流程性内容不在本页复制——它们由仓库根目录的文档定义，
 站点复制一份就一定会漂移。
@@ -9,11 +9,11 @@
 
 | 文档 | 内容 |
 |---|---|
-| [CONTRIBUTING.md](https://github.com/HanYang06/auto-conf/blob/main/CONTRIBUTING.md) | 开发环境、提交信息规范、质量门槛、PR 流程、文档改动的要求 |
-| [CODE_OF_CONDUCT.md](https://github.com/HanYang06/auto-conf/blob/main/CODE_OF_CONDUCT.md) | 社区行为准则（Contributor Covenant 2.1 简体中文译本） |
-| [SUPPORT.md](https://github.com/HanYang06/auto-conf/blob/main/SUPPORT.md) | 遇到问题时该走哪条渠道、维护者的分工 |
-| [CHANGELOG.md](https://github.com/HanYang06/auto-conf/blob/main/CHANGELOG.md) | 变更日志的唯一事实来源 |
-| [SECURITY.md](https://github.com/HanYang06/auto-conf/blob/main/SECURITY.md) | 安全问题请走私密渠道，不要开公开 issue |
+| [CONTRIBUTING.md](https://github.com/HanYang06/onconf/blob/main/CONTRIBUTING.md) | 开发环境、提交信息规范、质量门槛、PR 流程、文档改动的要求 |
+| [CODE_OF_CONDUCT.md](https://github.com/HanYang06/onconf/blob/main/CODE_OF_CONDUCT.md) | 社区行为准则（Contributor Covenant 2.1 简体中文译本） |
+| [SUPPORT.md](https://github.com/HanYang06/onconf/blob/main/SUPPORT.md) | 遇到问题时该走哪条渠道、维护者的分工 |
+| [CHANGELOG.md](https://github.com/HanYang06/onconf/blob/main/CHANGELOG.md) | 变更日志的唯一事实来源 |
+| [SECURITY.md](https://github.com/HanYang06/onconf/blob/main/SECURITY.md) | 安全问题请走私密渠道，不要开公开 issue |
 
 ## 本站页面
 

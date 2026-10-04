@@ -1,15 +1,8 @@
-<!--
-  TODO(rename): 项目名与仓库地址尚未定案。定案后需全局替换的字符串：
-    auto-conf / auto_conf / HanYang06/auto-conf / hanyang06.github.io/auto-conf
-  替换点：README.md、README.zh-CN.md、pyproject.toml、mkdocs.yml、CONTRIBUTING.md、
-          SECURITY.md、SUPPORT.md、docs/**、.github/**、NOTICE、CODE_OF_CONDUCT.md。
--->
+# OnConf
 
-# auto-conf
-
-[![CI](https://github.com/HanYang06/auto-conf/actions/workflows/ci.yml/badge.svg)](https://github.com/HanYang06/auto-conf/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/HanYang06/auto-conf/actions/workflows/codeql.yml/badge.svg)](https://github.com/HanYang06/auto-conf/actions/workflows/codeql.yml)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/HanYang06/auto-conf/badge)](https://securityscorecards.dev/viewer/?uri=github.com/HanYang06/auto-conf)
+[![CI](https://github.com/HanYang06/onconf/actions/workflows/ci.yml/badge.svg)](https://github.com/HanYang06/onconf/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/HanYang06/onconf/actions/workflows/codeql.yml/badge.svg)](https://github.com/HanYang06/onconf/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/HanYang06/onconf/badge)](https://securityscorecards.dev/viewer/?uri=github.com/HanYang06/onconf)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
 [![mypy: strict](https://img.shields.io/badge/mypy-strict-blue.svg)](pyproject.toml)
@@ -39,7 +32,7 @@ changing one requires changing the other — plus `README.zh-CN.md`, `pyproject.
 > [threat model](docs/security/threat-model.md) before you rely on this.
 
 Chinese documentation (design draft and threat model included) lives at
-<https://hanyang06.github.io/auto-conf/>.
+<https://hanyang06.github.io/onconf/>.
 
 ---
 
@@ -70,19 +63,19 @@ A configuration engine for programs that keep their settings in **plain files th
 
 ## Quick start
 
-`auto-conf` is **not on PyPI yet** (the distribution name is still being decided).
+`onconf` is **not on PyPI yet** (the distribution name is still being decided).
 Install from source:
 
 ```bash
-git clone https://github.com/HanYang06/auto-conf.git
-cd auto-conf
+git clone https://github.com/HanYang06/onconf.git
+cd onconf
 uv sync --all-groups
 ```
 
 Then, from a scratch directory:
 
 ```python
-from auto_conf import AutoConf, conf
+from onconf import AutoConf, conf
 
 AutoConf(home="./conf")        # optional — omit it and the engine follows its conventions
 conf("app.server.port", 8080)  # declare + write; returns the now-effective value
@@ -92,7 +85,7 @@ print(conf("app.server.port")) # read
 This is the actual, verified output of that snippet:
 
 ```console
-$ uv run python -c "from auto_conf import conf; print(conf('app.server.port', 8080)); print(conf('app.server.port'))"
+$ uv run python -c "from onconf import conf; print(conf('app.server.port', 8080)); print(conf('app.server.port'))"
 8080
 8080
 ```
@@ -115,7 +108,7 @@ It creates two files:
   "properties": {
     "app.server.port": { "default": 8080 }
   },
-  "x-auto-conf-hash": "5778fdddf8dfa9be"
+  "x-onconf-hash": "5778fdddf8dfa9be"
 }
 ```
 
@@ -176,12 +169,13 @@ Do not plan around these; they are **not implemented**:
 | Capability | Milestone |
 |---|---|
 | WAL (write-ahead log) — judged **unnecessary**: the batching window covers merged bursts, declarations are re-derivable from code, the writer serialises, and read-modify-write plus atomic replace gives the ordering (DESIGN §32.7) | not planned |
+| C accelerator (future) — an **extra**, not a separate distribution: `pip install onconf[c]` | — |
 | Rule 1 (cleaning unknown keys) across **short-lived** processes — the writer's declaration set is not persisted, so a writer handover resets the baseline (DESIGN §32.4) | open design question |
 | Prefix-sharded locks — the current lock is a single lock per config directory | — |
 | Audit report and audit event stream (`audit=` is accepted but inert) | M4 — the next stage |
-| System environment variables as a configuration **source** (`AUTO_CONF_HOME` only locates the config dir) | — |
+| System environment variables as a configuration **source** (`ONCONF_HOME` only locates the config dir) | — |
 | Per-format vocabulary export | — |
-| A real CLI (`auto-conf` currently prints the config directory and exits) | — |
+| A real CLI (`onconf` currently prints the config directory and exits) | — |
 
 See [`docs/roadmap.md`](docs/roadmap.md) for the full breakdown and
 [`docs/design/DESIGN.md`](docs/design/DESIGN.md) for the design draft (Chinese, still under review).
@@ -227,14 +221,14 @@ Invariants this project commits to (each one has a regression test in
 | **The writer is a peer, not a service** | It lives inside whichever process claimed the directory first, and requests are serialised behind one lock — a client waits for its own request, and behind whatever is running. There is no queue and no background retry |
 | **The fallback path is process-local** | If the endpoint cannot be created at all, the engine degrades to direct writes under the OS lock: correctness holds, but rule 1's baseline becomes per-process |
 | **Symlinks are followed** | If a value file is a symlink, the write lands on its target |
-| **`AUTO_CONF_HOME` is trusted input** | It decides the config directory and is not containment-checked |
+| **`ONCONF_HOME` is trusted input** | It decides the config directory and is not containment-checked |
 
 Full analysis, per threat with code evidence: [`docs/security/threat-model.md`](docs/security/threat-model.md).
 
 ## Project layout
 
 ```text
-src/auto_conf/
+src/onconf/
   __init__.py        # the two faces: AutoConf + conf
   _engine.py         # engine assembly, directory conventions, write-back
   _core.py           # reconciliation: the three-set algorithm
@@ -252,7 +246,7 @@ docs/                # documentation site sources (Chinese)
   design/DESIGN.md   # the design draft — authoritative for *intent*, not for *status*
 ```
 
-The module list grows as backends land; `src/auto_conf/` itself is authoritative.
+The module list grows as backends land; `src/onconf/` itself is authoritative.
 
 ## Contributing
 

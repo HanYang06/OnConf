@@ -1,6 +1,6 @@
 # 变更日志
 
-本文件记录 auto-conf 的所有重要变更。
+本文件记录 onconf 的所有重要变更。
 
 格式遵循 [Keep a Changelog 1.1.0](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循[语义化版本 2.0.0](https://semver.org/lang/zh-CN/)。
@@ -29,6 +29,11 @@
 
 ### Changed
 
+- **项目改名**：`auto-conf` → **OnConf**；仓库、PyPI 发布名、import 名与 CLI 入口统一为
+  `onconf`。历史提交信息里的旧名保留不动 —— 改它只能重写历史，收益不抵风险。
+- **破坏性变更**：词表字段 `x-auto-conf-hash` → `x-onconf-hash`（**磁盘格式变更**，
+  旧字段名不再被识别，会在下次落盘时按新名重写）。
+- **破坏性变更**：环境变量 `AUTO_CONF_HOME` → `ONCONF_HOME`（旧变量不再生效）。
 - 攒批窗口的默认值**反过来**：「攒批」改成「当场落盘」（`bbab1a8`，理由见 DESIGN §30）。
 - 攒批窗口挂在**客户端**侧，不搬到写者身上 —— 窗口挪到写者的话，客户端显式配的
   `flush_window` 会被静默忽略（`20f47b5`）。
@@ -84,7 +89,7 @@
 
 - 指令键（`$` 开头）豁免对账，`$schema` 不会被规则 1 清掉（`787360e`）。
 
-[Unreleased]: https://github.com/HanYang06/auto-conf/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/HanYang06/auto-conf/compare/3ef3f4f...v0.1.0
+[Unreleased]: https://github.com/HanYang06/onconf/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/HanYang06/onconf/compare/3ef3f4f...v0.1.0
 
 未发布能力见 [docs/roadmap.md](docs/roadmap.md)。

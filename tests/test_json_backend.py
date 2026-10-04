@@ -16,7 +16,7 @@ import json
 
 import pytest
 
-from auto_conf._json_backend import (
+from onconf._json_backend import (
     append_key,
     delete_key,
     find,

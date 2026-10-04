@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 HanYang06
 # SPDX-License-Identifier: Apache-2.0
-"""auto_conf 的异常族。
+"""onconf 的异常族。
 
 读取错误刻意分成两类（§18.2）：它们的责任方不同，
 用户应当能用 ``except`` 区分「我键名写错了」和「部署漏配了」。
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 
 class ConfError(Exception):
-    """auto_conf 所有异常的基类。"""
+    """onconf 所有异常的基类。"""
 
 
 class KeyNotRegisteredError(ConfError):

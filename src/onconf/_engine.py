@@ -22,7 +22,7 @@
 
 ## 并发：一个**专职写者**，OS 锁当安全网
 
-一个配置目录上，**谁抢绑到端点谁就是唯一的读写者**（:mod:`auto_conf._owner`）。
+一个配置目录上，**谁抢绑到端点谁就是唯一的读写者**（:mod:`onconf._owner`）。
 四个公开出口（``read`` / ``declare`` / ``flush`` / ``sync``）都先问一句「我是不是
 写者」：是就就地干，不是就把请求交给写者（见 :meth:`Engine._channel`）。于是磁盘上
 的读改写只有一个进程在做，其余进程只是发请求。
@@ -43,7 +43,7 @@
 重读只在文件真的变过时才发生（比 mtime + size），所以单进程连续提交不会退化成
 「每次都把整篇读一遍」。
 
-锁用的是操作系统的锁（见 :mod:`auto_conf._lock`），所以进程崩溃时它会被自动释放，
+锁用的是操作系统的锁（见 :mod:`onconf._lock`），所以进程崩溃时它会被自动释放，
 不会留下死锁。
 
 ## 落盘是原子的，而且不碰不该碰的字节
@@ -61,7 +61,7 @@ Windows 上不会把用户的 LF 文件偷偷改成 CRLF；已存在文件的权
     <home>/schema/settings.lock   锁的握手点（空文件；库里自己的簿记）
     <home>/schema/settings.key    写者端点的认证码（0600；库里自己的簿记）
 
-``<home>`` 由 ``home=`` 参数 / ``AUTO_CONF_HOME`` 环境变量 / 当前目录依次决定。
+``<home>`` 由 ``home=`` 参数 / ``ONCONF_HOME`` 环境变量 / 当前目录依次决定。
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ if TYPE_CHECKING:
     from types import ModuleType
 
 
-HOME_ENV = "AUTO_CONF_HOME"
+HOME_ENV = "ONCONF_HOME"
 VALUES_STEM = "settings"
 SCHEMA_DIR = "schema"
 SCHEMA_POINTER = f"{SCHEMA_DIR}/{VALUES_STEM}.json"
@@ -207,7 +207,7 @@ def _owner_module() -> ModuleType:
     **只能就地导入**：``_owner`` 在导入期就要本模块的目录常量
     （``SCHEMA_DIR`` / ``VALUES_STEM``），模块级导入会成环。
 
-    （:mod:`auto_conf._lock` 那边也是就地导入的 —— 同一类理由，那边还多一条
+    （:mod:`onconf._lock` 那边也是就地导入的 —— 同一类理由，那边还多一条
     mypy 的 ``warn_unreachable``。）
     """
     from . import _owner  # noqa: PLC0415 - 见上：打断循环导入
@@ -394,7 +394,7 @@ class Engine:
     def _execute_local(self, request: Any) -> Any:
         """**就地执行一条请求**。这是终点：调它一定动文件，不再问「我是不是写者」。
 
-        它以绑定方法的形式交给 :class:`auto_conf._owner.Channel` 当写者的执行入口，
+        它以绑定方法的形式交给 :class:`onconf._owner.Channel` 当写者的执行入口，
         所以不需要为它开一个公开面 —— 公开面仍然只有 ``AutoConf`` 和 ``conf``。
         """
         owner = _owner_module()

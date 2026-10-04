@@ -8,9 +8,9 @@ import json
 
 import pytest
 
-from auto_conf._core import NO_VALUE, Decl, declaration_hash, read_value, reconcile
-from auto_conf._vocab import Vocabulary, type_from_json, type_to_json
-from auto_conf.errors import KeyHasNoValueError
+from onconf._core import NO_VALUE, Decl, declaration_hash, read_value, reconcile
+from onconf._vocab import Vocabulary, type_from_json, type_to_json
+from onconf.errors import KeyHasNoValueError
 
 
 class TestTypeMapping:
@@ -95,12 +95,12 @@ class TestSchemaRoundTrip:
         assert vocab.to_schema()["properties"]["a.b"]["description"] == "格长档位之一"
 
     def test_tuple_type_is_preserved_via_extension(self) -> None:
-        """JSON Schema 没有 tuple，靠 x-auto-conf-py 无损保留。"""
+        """JSON Schema 没有 tuple，靠 x-onconf-py 无损保留。"""
         vocab = Vocabulary()
         vocab.register(Decl("a.b", (1, 2), type=tuple))
         schema = vocab.to_schema()["properties"]["a.b"]
         assert schema["type"] == "array"
-        assert schema["x-auto-conf-py"] == "tuple"
+        assert schema["x-onconf-py"] == "tuple"
         assert Vocabulary.from_schema(vocab.to_schema()).get("a.b").type is tuple  # type: ignore[union-attr]
 
     def test_schema_is_json_serialisable(self) -> None:

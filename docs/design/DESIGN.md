@@ -184,7 +184,7 @@ x.yaml.lock       ← 跨进程锁
 **提案 A（推荐）——「1 个 API」= 1 个入口符号**
 
 ```python
-from auto_conf import AutoConf
+from onconf import AutoConf
 
 conf = AutoConf.load("./conf", env=True, audit=False)   # 唯一入口
 
@@ -202,7 +202,7 @@ conf.report()               # 审计报告
 **提案 B —— 字面意义上的「一个函数」，op 是第一个参数**
 
 ```python
-from auto_conf import conf          # 模块级单例，无需初始化
+from onconf import conf          # 模块级单例，无需初始化
 
 conf("set", "app.port", 9090)
 conf("get", "app.port")             # -> 9090
@@ -277,7 +277,7 @@ Python 版本是 3.14。
 
 1. 「1 个 API」= 提案 A（入口类）还是 B/C（单函数 `conf`）？→ 倾向 **B/C**，待定。
    - 若选 B/C，则**不能有 `AutoConf.load(...)`** 这种初始化 API：
-     配置目录只能靠约定（`AUTO_CONF_HOME` 环境变量 / `./conf`）发现。
+     配置目录只能靠约定（`ONCONF_HOME` 环境变量 / `./conf`）发现。
      这反过来强化了「轻」的定位，但也要接受「隐式约定」这件事。
 2. `set()` 的持久性语义：进 WAL（推荐）还是纯内存攒批？
 3. 「无参数配置」是不是我理解的「只取默认值、不读文件和环境变量」？
@@ -313,7 +313,7 @@ Python 版本是 3.14。
 这正好补上了我上一轮指出的「单函数形态没有引导入口」的漏洞：
 
 ```python
-from auto_conf import AutoConf, conf
+from onconf import AutoConf, conf
 
 AutoConf(home="./conf", audit=True)   # ① 只管库自己；可省略，走约定
 conf("app.port", 9090)                # ② 干活
@@ -594,10 +594,10 @@ PyPI 上的 `autoconf` 是 PyAutoConf——「layered configuration system」，
 再加上 GNU Autoconf（C 构建工具、`configure` 脚本）这个更老的既成事实，
 「auto conf」这个名字在搜索、`pip install`、问题定位上都会被污染。
 
-**结论：import 名 `auto_conf` 可以留，但发布名要另选；或者整体改名。**
+**结论：import 名 `onconf` 可以留，但发布名要另选；或者整体改名。**
 
 其余候选可用性（实测）：`confhub` **可用**；
-`confetti / confit / confab / conflux / pyconf / konf / confkit / konfig / confer / auto_config` **均已被占用**。
+`confetti / confit / confab / conflux / pyconf / konf / confkit / konfig / confer / onconfig` **均已被占用**。
 
 ### 14.2 Python 3.14 实测（本机 3.14.8 / MSC v.1944 / 64bit）
 
@@ -722,7 +722,7 @@ with AutoConf(home=tmp_path):
 | 参数校验 | 类型注解 |
 
 **注解即规格即文档即校验。** 而这正好是 3.14 惰性注解（PEP 649/749）的用武之地：
-运行期反射注解的成本降下来了，`auto_conf` 可以放心把 `annotationlib` 用起来。
+运行期反射注解的成本降下来了，`onconf` 可以放心把 `annotationlib` 用起来。
 
 ---
 
@@ -856,8 +856,8 @@ R3 的深层作用：它把「最近写入缓存」这个优化**从设计里彻
 
 两个最重要的使用场景（配置角度、参数角度都不同）：
 
-1. `from auto_conf import AutoConf` → 做**全局配置**
-2. 全局配置完之后 `from auto_conf import conf` → **声明与获取配置项**
+1. `from onconf import AutoConf` → 做**全局配置**
+2. 全局配置完之后 `from onconf import conf` → **声明与获取配置项**
 
 ### 17.6 必须问清的场景：程序想持久化一个值怎么办
 
@@ -1480,7 +1480,7 @@ Windows 上最省事、endpoint 天然 `host:port`、`curl` 可调试、跨语�
 
 ### 24.3 三条新增约束
 
-1. **`httpx` 必须惰性导入。** 默认 `import auto_conf` 不许碰它，
+1. **`httpx` 必须惰性导入。** 默认 `import onconf` 不许碰它，
    否则每个用户白付 101 ms。
 2. **IPC 不是默认路径**，分三层：
 

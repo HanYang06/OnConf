@@ -22,14 +22,14 @@
 ### 从 PyPI 安装（发布后可用）
 
 ```bash
-uv add auto-conf
+uv add onconf
 ```
 
 ### 从源码安装（当前唯一可用的方式）
 
 ```bash
-git clone https://github.com/HanYang06/auto-conf.git
-cd auto-conf
+git clone https://github.com/HanYang06/onconf.git
+cd onconf
 uv sync --all-groups
 uv run pytest
 ```
@@ -40,7 +40,7 @@ uv run pytest
 ## 最小示例
 
 ```python
-from auto_conf import AutoConf, conf
+from onconf import AutoConf, conf
 
 AutoConf(home="./conf")      # 可省略，走约定
 conf("app.server.port", 8080)  # 声明 + 写，返回当前生效值
@@ -57,10 +57,10 @@ print(conf("app.server.port")) # 读
 ## 配置目录约定
 
 配置目录 `<home>` 的确定顺序（实现见
-[`src/auto_conf/_engine.py`](https://github.com/HanYang06/auto-conf/blob/main/src/auto_conf/_engine.py)）：
+[`src/onconf/_engine.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/_engine.py)）：
 
 1. `AutoConf(home=...)` 的显式参数；
-2. 环境变量 `AUTO_CONF_HOME`；
+2. 环境变量 `ONCONF_HOME`；
 3. 当前工作目录。
 
 目录布局：
@@ -87,7 +87,7 @@ print(conf("app.server.port")) # 读
 
 ## 常见问题：几个异常怎么区分
 
-异常族都在 [`src/auto_conf/errors.py`](https://github.com/HanYang06/auto-conf/blob/main/src/auto_conf/errors.py)，
+异常族都在 [`src/onconf/errors.py`](https://github.com/HanYang06/onconf/blob/main/src/onconf/errors.py)，
 共同基类是 `ConfError`，所以「全部接住」写 `except ConfError` 就够，「分开处理」按下表区分：
 
 | 异常 | 触发时机 | 含义 | 责任方 |

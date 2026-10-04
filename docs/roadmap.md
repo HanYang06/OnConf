@@ -15,29 +15,29 @@
 
 | 能力 | 说明 | 位置 |
 |---|---|---|
-| JSON 值后端 | 外科手术式回写：未触及的字节逐字不动 | `src/auto_conf/_json_backend.py` |
-| YAML 值后端 | 注释、缩进、键序逐字保留 | `src/auto_conf/_yaml_backend.py` |
-| `.env` 值后端 | 纯字符串后端：只接受字符串值，不做键名映射，不认行内注释 | `src/auto_conf/_env_backend.py` |
-| TOML 值后端 | 表头归一成点分键 | `src/auto_conf/_toml_backend.py` |
-| 词表 | 三态持久化 + JSON Schema 往返 + 哈希短路 | `src/auto_conf/_vocab.py` |
-| 引擎装配 | `conf` / `AutoConf` 两个面接通，声明到读回端到端可用 | `src/auto_conf/_engine.py` |
+| JSON 值后端 | 外科手术式回写：未触及的字节逐字不动 | `src/onconf/_json_backend.py` |
+| YAML 值后端 | 注释、缩进、键序逐字保留 | `src/onconf/_yaml_backend.py` |
+| `.env` 值后端 | 纯字符串后端：只接受字符串值，不做键名映射，不认行内注释 | `src/onconf/_env_backend.py` |
+| TOML 值后端 | 表头归一成点分键 | `src/onconf/_toml_backend.py` |
+| 词表 | 三态持久化 + JSON Schema 往返 + 哈希短路 | `src/onconf/_vocab.py` |
+| 引擎装配 | `conf` / `AutoConf` 两个面接通，声明到读回端到端可用 | `src/onconf/_engine.py` |
 | 用值当键 | 间接寻址，`conf(conf("app.key_name"))` | `_core.py` + `_engine.py` |
 | `$schema` 指针 | 每次落盘都保证值文件里有指向词表的指针（放不下成员的后端除外） | `_engine.Engine._ensure_schema_pointer` |
-| 异常族 | `ConfError` 与四个子类（读取错误按责任方分成两类）；另有 `.env` 后端的 `EnvSyntaxError`（`ValueError` 子类，定义在 `_env_backend.py`） | `src/auto_conf/errors.py` |
+| 异常族 | `ConfError` 与四个子类（读取错误按责任方分成两类）；另有 `.env` 后端的 `EnvSyntaxError`（`ValueError` 子类，定义在 `_env_backend.py`） | `src/onconf/errors.py` |
 | 提交点 | 每次 `conf(key, value)` 当场对账落盘；`atexit` 触发 `Engine.sync()`；`flush_window > 0` 时改为四个提交点（窗口到期 / 一次读 / `sync()` / 进程退出） | `__init__._sync_at_exit` |
-| 跨进程排他锁 | 操作系统级锁（Windows `msvcrt.locking`、其它 `fcntl.flock`），进程崩溃由 OS 释放；超时抛 `LockTimeoutError` | `src/auto_conf/_lock.py` |
+| 跨进程排他锁 | 操作系统级锁（Windows `msvcrt.locking`、其它 `fcntl.flock`），进程崩溃由 OS 释放；超时抛 `LockTimeoutError` | `src/onconf/_lock.py` |
 | 锁内按需重读 | 指纹（`mtime` + 大小）**同时**看值文件与词表，避免把别人刚登记的键挤掉 | `Engine._reload_if_changed` |
-| 专职写者 | 谁先抢绑到配置目录的端点，谁就是唯一的读写者；其余进程经 `multiprocessing.connection` 发请求。**抢绑即选举**，不涉及锁文件；认证在应用层，等待有界 | `src/auto_conf/_owner.py` |
+| 专职写者 | 谁先抢绑到配置目录的端点，谁就是唯一的读写者；其余进程经 `multiprocessing.connection` 发请求。**抢绑即选举**，不涉及锁文件；认证在应用层，等待有界 | `src/onconf/_owner.py` |
 | 原子写 | 同目录临时文件 → `fsync` → `os.replace`，POSIX 再加父目录 `fsync`；沿用文件原本的**行尾**与权限位 | `Engine._atomic_write_text` |
 
 ## 进行中（已开始，尚未交付）
 
 | 事项 | 现状 |
 |---|---|
-| 声明集哈希的整体短路 | 声明集哈希**已经算出来并写进词表**（`x-auto-conf-hash`），但引擎还没用它做「整体跳过」，当前靠词表逐项 diff 达到等效效果（设计稿 §29.3 也是这么记的） |
+| 声明集哈希的整体短路 | 声明集哈希**已经算出来并写进词表**（`x-onconf-hash`），但引擎还没用它做「整体跳过」，当前靠词表逐项 diff 达到等效效果（设计稿 §29.3 也是这么记的） |
 | 运行中改引擎配置 | v1 只允许在第一次调用之前设置 `home` / `audit` / `flush_window`；引擎起来后再带参数调用 `AutoConf(...)` 会抛 `ConfError` |
 | `audit=` 开关 | 参数会被接受并通过校验，但**当前不产生任何行为**（`Engine.audit` 只被赋值，没有读者）；真正的审计留给 M4 |
-| 项目重命名 | **只剩项目名与仓库 URL 待定案**（定位句已定稿，见两份 README）；定案后需统一替换，替换点已在 `pyproject.toml`、`mkdocs.yml`、两份 README 与 `docs/` 中标注 |
+| 项目重命名 | **已定案并完成**：展示名 `OnConf`，仓库 / PyPI / import / CLI 统一 `onconf`。含两处磁盘与环境变量层面的变更：词表字段 `x-onconf-hash`、`ONCONF_HOME` |
 | 文档与 M5 收口 | README 与文档站骨架已就位；示例与 CI 侧的门槛联动仍在收口，命令行仍是占位 |
 
 ## 未实现（当前不可用）
@@ -50,9 +50,9 @@
 | 短命进程之间的规则 1（清理未知键） | **待定的设计问题**（§32.4）：写者的声明集不是持久状态，写者一换人基准就重置。倾向把规则 1 限定在「单写者且长命」的前提下 —— 多进程 + 短命进程下没有任何一个进程知道完整期望集 |
 | 前缀分片锁 | —（当前是每个配置目录一把锁） |
 | 审计报告与审计事件流 | M4 —— **下一阶段** |
-| 把系统环境变量当作配置源（`AUTO_CONF_HOME` 目前只用来定位配置目录） | — |
+| 把系统环境变量当作配置源（`ONCONF_HOME` 目前只用来定位配置目录） | — |
 | 按格式导出词表（当前只产出 JSON Schema 一份） | — |
-| 真正的命令行（`auto-conf` 入口目前只打印配置目录） | M5 |
+| 真正的命令行（`onconf` 入口目前只打印配置目录） | M5 |
 
 ## 与 M1–M5 里程碑的对应
 

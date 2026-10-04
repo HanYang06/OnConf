@@ -1,5 +1,5 @@
 # ============================================================================
-# MkDocs Material —— auto-conf 文档站
+# MkDocs Material —— onconf 文档站
 #
 # 两条约定，改本文件时必须一起守：
 #
@@ -8,11 +8,11 @@
 # 2. nav 与 docs/ 下的页面一一对应。页面新增 / 改名时，本文件的 nav 同步改。
 # ============================================================================
 
-site_name: auto-conf
+site_name: OnConf
 site_description: "配置不再有动词：同一个名字读它、写它，两个方向都不丢——不丢一个字节，也不丢一次更新。"
-site_url: https://hanyang06.github.io/auto-conf/
-repo_url: https://github.com/HanYang06/auto-conf
-repo_name: HanYang06/auto-conf
+site_url: https://hanyang06.github.io/onconf/
+repo_url: https://github.com/HanYang06/onconf
+repo_name: HanYang06/onconf
 edit_uri: edit/main/docs/
 copyright: Copyright 2026 HanYang06 — Apache-2.0
 
@@ -119,5 +119,5 @@ nav:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/HanYang06/auto-conf
+      link: https://github.com/HanYang06/onconf
       name: GitHub 仓库

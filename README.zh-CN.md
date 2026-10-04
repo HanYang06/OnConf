@@ -1,15 +1,8 @@
-<!--
-  TODO(rename): 项目名与仓库地址尚未定案。定案后需全局替换的字符串：
-    auto-conf / auto_conf / HanYang06/auto-conf / hanyang06.github.io/auto-conf
-  替换点：README.md、README.zh-CN.md、pyproject.toml、mkdocs.yml、CONTRIBUTING.md、
-          SECURITY.md、SUPPORT.md、docs/**、.github/**、NOTICE、CODE_OF_CONDUCT.md。
--->
+# OnConf
 
-# auto-conf
-
-[![CI](https://github.com/HanYang06/auto-conf/actions/workflows/ci.yml/badge.svg)](https://github.com/HanYang06/auto-conf/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/HanYang06/auto-conf/actions/workflows/codeql.yml/badge.svg)](https://github.com/HanYang06/auto-conf/actions/workflows/codeql.yml)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/HanYang06/auto-conf/badge)](https://securityscorecards.dev/viewer/?uri=github.com/HanYang06/auto-conf)
+[![CI](https://github.com/HanYang06/onconf/actions/workflows/ci.yml/badge.svg)](https://github.com/HanYang06/onconf/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/HanYang06/onconf/actions/workflows/codeql.yml/badge.svg)](https://github.com/HanYang06/onconf/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/HanYang06/onconf/badge)](https://securityscorecards.dev/viewer/?uri=github.com/HanYang06/onconf)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
 [![mypy: strict](https://img.shields.io/badge/mypy-strict-blue.svg)](pyproject.toml)
@@ -36,7 +29,7 @@
 > 并且沿用文件原本的行尾与权限位。
 > 依赖它之前，请先读下面的「已知限制」与[威胁模型](docs/security/threat-model.md)。
 
-文档站（含完整设计稿与威胁模型）：<https://hanyang06.github.io/auto-conf/>
+文档站（含完整设计稿与威胁模型）：<https://hanyang06.github.io/onconf/>
 
 ---
 
@@ -66,18 +59,18 @@
 
 ## 快速开始
 
-`auto-conf` **还没有发布到 PyPI**（发布名仍在定案中）。从源码安装：
+`onconf` **还没有发布到 PyPI**（发布名仍在定案中）。从源码安装：
 
 ```bash
-git clone https://github.com/HanYang06/auto-conf.git
-cd auto-conf
+git clone https://github.com/HanYang06/onconf.git
+cd onconf
 uv sync --all-groups
 ```
 
 然后在任意空目录里：
 
 ```python
-from auto_conf import AutoConf, conf
+from onconf import AutoConf, conf
 
 AutoConf(home="./conf")        # 可省略——省略时引擎按自己的约定找配置目录
 conf("app.server.port", 8080)  # 声明 + 写；返回当前生效值
@@ -87,7 +80,7 @@ print(conf("app.server.port")) # 读
 上面这段是**实测**输出：
 
 ```console
-$ uv run python -c "from auto_conf import conf; print(conf('app.server.port', 8080)); print(conf('app.server.port'))"
+$ uv run python -c "from onconf import conf; print(conf('app.server.port', 8080)); print(conf('app.server.port'))"
 8080
 8080
 ```
@@ -110,7 +103,7 @@ $ uv run python -c "from auto_conf import conf; print(conf('app.server.port', 80
   "properties": {
     "app.server.port": { "default": 8080 }
   },
-  "x-auto-conf-hash": "5778fdddf8dfa9be"
+  "x-onconf-hash": "5778fdddf8dfa9be"
 }
 ```
 
@@ -168,12 +161,13 @@ conf("app.port", 9090, force=True)  # 覆盖文件里已有的值
 | 能力 | 里程碑 |
 |---|---|
 | WAL（预写日志）—— **判定不做**：攒批窗口负责合并突发写、声明可从代码重新推导、专职写者负责串行、读改写 + 原子替换负责顺序（DESIGN §32.7） | 不计划 |
+| C 加速器（未来）—— 做成 **extra**，不另开包名：`pip install onconf[c]` | — |
 | **短命进程**之间的规则 1（清理未知键）—— 写者的声明集不是持久状态，写者一换人基准就重置（DESIGN §32.4） | 待定的设计问题 |
 | 前缀分片锁 —— 当前是每个配置目录一把锁 | — |
 | 审计报告与审计事件流（`audit=` 目前被接受但不起作用） | M4 —— 下一阶段 |
-| 把系统环境变量当作配置**来源**（`AUTO_CONF_HOME` 只用来定位配置目录） | — |
+| 把系统环境变量当作配置**来源**（`ONCONF_HOME` 只用来定位配置目录） | — |
 | 按格式导出词表 | — |
-| 真正的命令行（`auto-conf` 目前只打印配置目录就退出） | — |
+| 真正的命令行（`onconf` 目前只打印配置目录就退出） | — |
 
 完整清单见 [`docs/roadmap.md`](docs/roadmap.md)；设计稿见
 [`docs/design/DESIGN.md`](docs/design/DESIGN.md)（中文，未定稿）。
@@ -219,14 +213,14 @@ CodeQL、依赖审查与 OpenSSF Scorecard。
 | **写者是同伴，不是服务** | 它住在最先抢到该目录的那个进程里，请求在一把锁后面串行 —— 客户端要等自己的请求，还要等前面那个跑完。没有队列，也没有后台重试 |
 | **兜底路径是进程内的** | 端点完全建不出来时，引擎退回「直接写 + OS 锁」：正确性在，但规则 1 的基准变成每进程各自一份 |
 | **符号链接会被跟随** | 值文件是符号链接时，写入会落到链接目标上 |
-| **`AUTO_CONF_HOME` 是可信输入** | 它决定配置目录，库不做目录包含性校验 |
+| **`ONCONF_HOME` 是可信输入** | 它决定配置目录，库不做目录包含性校验 |
 
 完整分析（逐条威胁 + 代码依据）：[`docs/security/threat-model.md`](docs/security/threat-model.md)。
 
 ## 仓库结构
 
 ```text
-src/auto_conf/
+src/onconf/
   __init__.py        # 两个面：AutoConf + conf
   _engine.py         # 引擎装配、目录约定、落盘
   _core.py           # 对账：三集合算法
@@ -244,7 +238,7 @@ docs/                # 文档站源码（中文）
   design/DESIGN.md   # 设计稿 —— 对「意图」权威，对「现状」不权威
 ```
 
-模块会随后端增加而变多，以 `src/auto_conf/` 本身为准。
+模块会随后端增加而变多，以 `src/onconf/` 本身为准。
 
 ## 参与贡献
 

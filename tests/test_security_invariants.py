@@ -20,16 +20,16 @@ import ast
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import auto_conf
-from auto_conf import AutoConf, Engine, conf
-from auto_conf._engine import default_home
+import onconf
+from onconf import AutoConf, Engine, conf
+from onconf._engine import default_home
 
 
 if TYPE_CHECKING:
     import pytest
 
 
-_SRC = Path(auto_conf.__file__).parent
+_SRC = Path(onconf.__file__).parent
 
 #: 源码中不得出现的模块（一旦出现即网络 / 反序列化 / 子进程面被打开）
 _FORBIDDEN_MODULES = frozenset(
@@ -46,7 +46,7 @@ _VALUES_WHITELIST = frozenset(
 
 
 def _module_asts() -> list[tuple[Path, ast.Module]]:
-    """解析 ``src/auto_conf/`` 下每个模块的语法树（只读，不导入）。"""
+    """解析 ``src/onconf/`` 下每个模块的语法树（只读，不导入）。"""
     sources = sorted(_SRC.glob("*.py"))
     assert sources, f"没在 {_SRC} 下找到任何模块，测试本身失效了"
     return [(p, ast.parse(p.read_text(encoding="utf-8"))) for p in sources]
@@ -129,7 +129,7 @@ def test_key_name_cannot_escape_the_config_home(tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()
 
-    auto_conf._reset()
+    onconf._reset()
     AutoConf(home=str(home))
     conf("../../outside/escaped", 1)
     conf("..\\..\\outside\\escaped_win", 2)  # Windows 分隔符同样不得生效
@@ -147,20 +147,20 @@ def test_key_name_cannot_escape_the_config_home(tmp_path: Path) -> None:
     assert not (tmp_path / "escaped.json").exists()
     assert not (tmp_path / "escaped_win.json").exists()
 
-    auto_conf._reset()
+    onconf._reset()
 
 
 def test_home_env_is_only_a_trusted_bootstrap_input(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``AUTO_CONF_HOME`` 决定配置目录，且会被规范化（T2）。
+    """``ONCONF_HOME`` 决定配置目录，且会被规范化（T2）。
 
     这条**不是**安全保证 —— 它只是把「环境变量是可信输入」这个前提固定下来：
     库不做目录包含性校验，所以调用方不得让不可信来源控制它。
     """
     nested = tmp_path / "a" / "b"
     nested.mkdir(parents=True)
-    monkeypatch.setenv("AUTO_CONF_HOME", str(nested / ".." / "b"))
+    monkeypatch.setenv("ONCONF_HOME", str(nested / ".." / "b"))
 
     resolved = default_home()
     assert resolved == nested.resolve()

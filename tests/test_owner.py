@@ -12,14 +12,14 @@ from pathlib import Path
 
 import pytest
 
-from auto_conf import (
+from onconf import (
     ConfError,
     Engine,
     KeyHasNoValueError,
     KeyNotRegisteredError,
     _owner,
 )
-from auto_conf._core import MISSING, Decl
+from onconf._core import MISSING, Decl
 
 
 def _open(home: Path) -> Engine:
@@ -59,7 +59,7 @@ def test_endpoint_is_a_function_of_the_config_dir(tmp_path: Path) -> None:
     assert _owner.endpoint_for(here) != _owner.endpoint_for(there)
 
     if os.name == "nt":
-        assert _owner.endpoint_for(here).startswith("\\\\.\\pipe\\auto-conf-")
+        assert _owner.endpoint_for(here).startswith("\\\\.\\pipe\\onconf-")
         # 大小写不同的**同一个**目录必须映射到同一个端点：分成两个就是两个写者
         # 写同一个目录，而这正是本模块要防的事。
         assert _owner.endpoint_for(here) == _owner.endpoint_for(tmp_path / "Here")

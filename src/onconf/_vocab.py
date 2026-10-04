@@ -8,7 +8,7 @@
    JSON 里用「`default` 键缺失」表示无值，「`default: null`」表示值就是 ``None``。
    这两者语义完全不同，塌陷掉就是 §17 里那个最阴的 bug。
 2. **对齐 JSON Schema**（§12.4）：白拿 IDE 补全与现成工具链。
-   Python 独有类型（如 ``tuple``）用 ``x-auto-conf-py`` 扩展无损保留。
+   Python 独有类型（如 ``tuple``）用 ``x-onconf-py`` 扩展无损保留。
 3. **顶层带声明集哈希**（§18.7）：脏检查的指纹，对得上就整体跳过写入。
 """
 
@@ -32,8 +32,8 @@ if TYPE_CHECKING:
 
 
 SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema"
-HASH_KEY = "x-auto-conf-hash"
-PY_TYPE_KEY = "x-auto-conf-py"
+HASH_KEY = "x-onconf-hash"
+PY_TYPE_KEY = "x-onconf-py"
 
 # bool 必须排在 int 前面（bool 是 int 的子类）
 _PY_TO_JSON: tuple[tuple[type, str], ...] = (
@@ -67,11 +67,11 @@ def type_to_json(t: type | None) -> str | None:
     for py, js in _PY_TO_JSON:
         if t is py:
             return js
-    return "string"  # 未知类型降级成 string，并靠 x-auto-conf-py 保住原样
+    return "string"  # 未知类型降级成 string，并靠 x-onconf-py 保住原样
 
 
 def type_from_json(name: str | None, py_hint: str | None = None) -> type | None:
-    """JSON Schema 的 ``type`` 名 → Python 类型，优先采信 ``x-auto-conf-py``。"""
+    """JSON Schema 的 ``type`` 名 → Python 类型，优先采信 ``x-onconf-py``。"""
     if py_hint and py_hint in _BY_NAME:
         return _BY_NAME[py_hint]
     if name is None:
@@ -104,7 +104,7 @@ class Vocabulary:
         return sorted(self.entries)
 
     def as_dict(self) -> dict[str, VocabEntry]:
-        """给 :func:`auto_conf._core.read_value` 用的只读视图。"""
+        """给 :func:`onconf._core.read_value` 用的只读视图。"""
         return self.entries
 
     # ---------------------------------------------------------------- 变更

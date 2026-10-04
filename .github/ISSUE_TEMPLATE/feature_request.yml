@@ -12,7 +12,7 @@ body:
         这会显著提高被采纳的概率，也能避免双方在实现细节上反复拉扯。
 
         如果你想要的只是「怎么用现有能力做到这件事」，那属于用法问题，
-        请走 [Discussions](https://github.com/HanYang06/auto-conf/discussions)。
+        请走 [Discussions](https://github.com/HanYang06/onconf/discussions)。
 
   - type: textarea
     id: scenario
@@ -37,7 +37,7 @@ body:
       label: 期望的 API 形态
       description: 如果你已经想好了写法，请写在这里；同时说明调用方式、参数、返回值与错误行为。
       placeholder: |
-        from auto_conf import conf
+        from onconf import conf
 
         conf("app.port", 9090, ...)
       render: python

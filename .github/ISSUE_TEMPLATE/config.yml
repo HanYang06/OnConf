@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: 用法问答与开放式讨论（GitHub Discussions）
-    url: https://github.com/HanYang06/auto-conf/discussions
+    url: https://github.com/HanYang06/onconf/discussions
     about: 「怎么用」「为什么这样设计」「这样写对不对」请来这里，答案能被后来的人搜到。
   - name: 安全漏洞私密报告（SECURITY.md）
-    url: https://github.com/HanYang06/auto-conf/blob/main/SECURITY.md
+    url: https://github.com/HanYang06/onconf/blob/main/SECURITY.md
     about: 安全漏洞请走私密渠道，不要在公开 Issue 或 Discussions 里贴细节与 PoC。

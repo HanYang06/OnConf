@@ -1,4 +1,4 @@
-# auto-conf
+# OnConf
 
 > **配置不再有动词：同一个名字读它、写它，两个方向都不丢——不丢一个字节，也不丢一次更新。**
 >
@@ -53,7 +53,7 @@
 ## 最小示例
 
 ```python
-from auto_conf import AutoConf, conf
+from onconf import AutoConf, conf
 
 AutoConf(home="./conf")      # 可省略，走约定
 conf("app.server.port", 8080)  # 声明 + 写，返回当前生效值

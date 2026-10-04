@@ -108,7 +108,7 @@ if TYPE_CHECKING:
     Conn = Any
 
 #: Windows 命名管道的**全局**命名空间前缀
-_PIPE_PREFIX = r"\\.\pipe\auto-conf-"
+_PIPE_PREFIX = r"\\.\pipe\onconf-"
 
 #: 端点名里的哈希长度：够长到不撞，够短到还能一眼认出是它
 _HASH_CHARS = 24
@@ -316,7 +316,7 @@ class Owner:
         if self._worker is None:
             self._worker = threading.Thread(
                 target=self._serve,
-                name="auto-conf-owner",
+                name="onconf-owner",
                 daemon=True,
             )
             self._worker.start()

@@ -12,9 +12,9 @@
 
 ## 仓库根目录
 
-- [SECURITY.md](https://github.com/HanYang06/auto-conf/blob/main/SECURITY.md)
+- [SECURITY.md](https://github.com/HanYang06/onconf/blob/main/SECURITY.md)
   —— 漏洞报告渠道与支持范围。安全问题请走私密渠道，不要开公开 issue。
-- [CODE_OF_CONDUCT.md](https://github.com/HanYang06/auto-conf/blob/main/CODE_OF_CONDUCT.md)
+- [CODE_OF_CONDUCT.md](https://github.com/HanYang06/onconf/blob/main/CODE_OF_CONDUCT.md)
   —— 社区行为准则（Contributor Covenant 2.1 简体中文译本）。
 
 ## 待补内容
@@ -25,4 +25,4 @@
   依赖目录 ACL —— 见威胁模型 T6）。
 - 密钥类配置的处理建议（当前实现仍不适合存放需要严格保密的凭据）。
 - 依赖供应链（第三方许可证清单见仓库根目录的
-  [THIRD_PARTY_NOTICES.md](https://github.com/HanYang06/auto-conf/blob/main/THIRD_PARTY_NOTICES.md)）。
+  [THIRD_PARTY_NOTICES.md](https://github.com/HanYang06/onconf/blob/main/THIRD_PARTY_NOTICES.md)）。

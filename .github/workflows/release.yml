@@ -7,7 +7,7 @@
 #
 #    发布前需要在 PyPI 配置 Trusted Publisher，三项必须与此处完全一致：
 #      Owner:            HanYang06
-#      Repository:       auto-conf
+#      Repository:       onconf
 #      Workflow name:    release.yml
 #      Environment name: pypi
 #    项目名定案后，先在 PyPI 创建对应项目（或提交 pending publisher），
@@ -86,7 +86,7 @@ jobs:
           retention-days: 30
 
       # 对 dist/* 生成 SLSA 构建来源证明：使用者可用
-      # `gh attestation verify <file> --repo HanYang06/auto-conf` 校验产物
+      # `gh attestation verify <file> --repo HanYang06/onconf` 校验产物
       # 确实由本仓库的这次运行构建，而非事后被替换。
       - name: Generate build provenance attestation
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2

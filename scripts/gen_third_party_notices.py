@@ -271,8 +271,8 @@ def _render_header(packages: list[Package]) -> list[str]:
             " --no-hashes` 得出，许可证信息由 `importlib.metadata` 从**已安装分发**的元数据读出。"
         ),
         "",
-        "本文件覆盖 auto-conf 的**运行时依赖闭包**（含传递依赖），不含 dev / docs 依赖组；",
-        "后两组只在开发期使用，不进入发行物。auto-conf 自身的许可证见仓库根目录的 `LICENSE`",
+        "本文件覆盖 onconf 的**运行时依赖闭包**（含传递依赖），不含 dev / docs 依赖组；",
+        "后两组只在开发期使用，不进入发行物。onconf 自身的许可证见仓库根目录的 `LICENSE`",
         "与 `NOTICE`（Apache-2.0）。",
         "",
         (
