@@ -259,6 +259,51 @@ class TestSync:
         assert data["a.name"] == "demo", "缺的补上"
         assert "ghost" not in data, "未声明的键被删掉"
 
+    def test_sync_works_from_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """**空目录直接 sync 也要能跑**：没有值文件、没有词表，语义上照样成立。
+
+        命令行只依据当前代码 —— 有多少 `.py` 就扫多少，所以它不需要「先有一份配置」
+        才能开始，重建与收敛是同一件事的两面。
+        """
+        home = tmp_path / "conf"
+        _write(tmp_path, "from onconf import conf\nconf('a.port', 8080, '端口')\n")
+
+        assert _run(tmp_path, monkeypatch, "sync", "--home", str(home)) == 0
+
+        assert json.loads((home / "settings.json").read_text(encoding="utf-8"))["a.port"] == 8080
+        assert (home / "schema" / "settings.json").exists()
+
+    def test_sync_from_nothing_in_multi_file_mode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """同上，但多文件开启：没有 `:` 的键与带路径的键各自落在该落的地方。"""
+        home = tmp_path / "conf"
+        _write(
+            tmp_path,
+            "from onconf import conf\n"
+            "conf('plain.key', 1)\n"
+            "conf('app/net:net.port', 8080)\n",
+        )
+
+        assert (
+            _run(
+                tmp_path,
+                monkeypatch,
+                "sync",
+                "--home",
+                str(home),
+                "--no-one-file",
+            )
+            == 0
+        )
+
+        assert json.loads((home / "settings.json").read_text(encoding="utf-8"))["plain.key"] == 1
+        assert (
+            json.loads((home / "app" / "net.json").read_text(encoding="utf-8"))["net.port"] == 8080
+        )
+
     def test_no_clean_keeps_undeclared_keys(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
