@@ -720,7 +720,7 @@ class TestProcessStructure:
     ) -> None:
         """端点整条路不通时，日志要说明「没连上、就地干」，而不是假装连上了。"""
         monkeypatch.setattr(_owner, "connect", lambda _home, **_kw: None)
-        monkeypatch.setattr(_owner, "claim", lambda _home: None)
+        monkeypatch.setattr(_owner, "claim", lambda *_a, **_kw: None)
 
         engine = Engine(tmp_path)
         engine("k", 1)

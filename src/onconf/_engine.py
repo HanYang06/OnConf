@@ -56,14 +56,21 @@ Windows 上不会把用户的 LF 文件偷偷改成 CRLF；已存在文件的权
 
 ::
 
-    <home>/settings.json          值文件（用户手改）；后缀由 ``file_type`` 决定
-    <home>/schema/settings.json   词表（**库自己的资产**，随便重写）
+    <home>/settings.json          值文件（用户手改）；名字由 ``file_name``、后缀由 ``file_type``
+    <home>/schema/settings.json   词表（**库自己的资产**，随便重写；一份，与值文件个数无关）
     <home>/schema/settings.lock   锁的握手点（空文件；库里自己的簿记）
     <home>/schema/settings.key    写者端点的认证码（0600；库里自己的簿记）
     <home>/audit.log              审计文件（append-only；``audit=True`` 才有）
 
-``<home>`` 由 ``home=`` 参数 / ``ONCONF_HOME`` 环境变量 / ``./conf`` 依次决定；
-文件名主干固定 ``settings``，后缀由 ``file_type`` 单值参数决定（空串 = JSON）。
+``<home>`` 由 ``home=`` 参数 / ``ONCONF_HOME`` 环境变量 / ``./conf`` 依次决定。
+文件名主干由 ``file_name``（缺省 ``settings``）、后缀由 ``file_type``（缺省 **字面**
+``"json"``）决定；两者都是**单值**参数，改了等于换一个值文件，必须重启。
+
+**多文件**（``no_one_file=True``）：键里的 ``<路径>:`` 前缀决定它落在
+``<home>/<路径>.<ext>`` 的哪个文件里，没有前缀的键仍落在默认文件
+``<home>/<file_name>.<ext>``。词表仍然只有一份（``schema/<file_name>.json``），
+每个值文件的 ``$schema`` 指针按自己的层级算出相对路径。归这个引擎管的文件 =
+**默认文件 + 当前声明集引用到的路径段**；磁盘上其它值文件一个字节都不动。
 
 ## 日志与审计（§20 / §21）
 
@@ -89,10 +96,11 @@ import os
 import stat
 import tempfile
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import _env_backend, _json_backend, _toml_backend, _yaml_backend
+from . import _env_backend, _json_backend, _paths, _toml_backend, _yaml_backend
 from ._audit import (
     AUDIT_NAME,
     TERMINAL_STDERR,
@@ -115,10 +123,17 @@ if TYPE_CHECKING:
 
 
 HOME_ENV = "ONCONF_HOME"
-VALUES_STEM = "settings"
+#: 值文件名的缺省主干。**可被 ``file_name`` 参数覆盖**，所以它只是缺省值，
+#: 不再是「写死的名字」（D01 §3.2：目录 + 名称 + 类型，三者派生路径）。
+DEFAULT_FILE_NAME = "settings"
+#: 兼容旧名：历史上它是写死的文件名主干，现在与 :data:`DEFAULT_FILE_NAME` 同源。
+VALUES_STEM = DEFAULT_FILE_NAME
 SCHEMA_DIR = "schema"
-SCHEMA_POINTER = f"{SCHEMA_DIR}/{VALUES_STEM}.json"
 LOCK_SUFFIX = ".lock"
+#: 缺省值文件类型（D01 §5）：**字面 ``"json"``**，不是空串隐含出来的 json。
+DEFAULT_FILE_TYPE = "json"
+#: 缺省值文件的 ``$schema`` 指针（多文件模式下每个文件按自己的层级算出相对路径）。
+SCHEMA_POINTER = f"{SCHEMA_DIR}/{DEFAULT_FILE_NAME}.json"
 
 #: 攒批窗口的默认值（秒）。**0 = 每次声明当场落盘**。
 #: 见模块文档：默认立即是语义决定，不是保守。
@@ -202,10 +217,9 @@ _BACKENDS = {
 #: （TOML 那边另有 Taplo 的 ``#:schema`` 注释指令，留待后续。）
 _POINTER_CAPABLE = frozenset({".json", ".yaml", ".yml"})
 
-#: ``file_type`` 的合法取值 → 值文件后缀。**空串是默认值，等价于 ``"json"``** ——
-#: 「本质上以 JSON 为主」这条定位就落在这一行（见 ``docs/design/file_support.md``）。
+#: ``file_type`` 的合法取值 → 值文件后缀。**空串不再是合法取值**（D01 §5 / ISSUE-054）：
+#: 缺省值是字面的 ``"json"``，默认值只有一个来源，不靠空串隐含的语义。
 _FILE_TYPES = {
-    "": ".json",
     "json": ".json",
     "yaml": ".yaml",
     "yml": ".yml",
@@ -214,25 +228,53 @@ _FILE_TYPES = {
 }
 
 
+def _file_suffix(file_type: str) -> str:
+    """``file_type`` → 值文件后缀。取值非法当场报错，消息里列出全部合法取值。"""
+    try:
+        return _FILE_TYPES[file_type]
+    except KeyError:
+        raise ConfError(
+            f"不认识的 file_type：{file_type!r}；合法取值：{sorted(_FILE_TYPES)}"
+        ) from None
+
+
+def _values_path(home: Path, file_name: str, suffix: str) -> Path:
+    """值文件路径 = ``<home>/<file_name><suffix>``，**经包含性校验**。
+
+    名字与后缀分开传，是因为多文件模式的后缀来自同一个 ``file_type``、名字却来自
+    键里内嵌的路径段（见 :mod:`onconf._paths`）。
+    """
+    return _paths.values_path(home, file_name, suffix)
+
+
+def _schema_pointer(values_path: Path, schema_path: Path) -> str:
+    """值文件里的 ``$schema`` 指针：**从值文件所在目录到词表的相对路径**。
+
+    单文件（``<home>/settings.json``）算出来就是 ``schema/settings.json``；多文件
+    （``<home>/app/conf/net.json``）算出来是 ``../../schema/settings.json``。
+    指针是给编辑器解析的，必须以值文件所在目录为基准，所以不能写死。
+    """
+    return Path(os.path.relpath(schema_path, values_path.parent)).as_posix()
+
+
 def default_home() -> Path:
     """按约定发现配置目录：显式参数 → 环境变量 → ``./conf``。"""
     return Path(os.environ.get(HOME_ENV) or "conf").resolve()
 
 
-def _values_path(home: Path, file_type: str) -> Path:
-    """值文件路径 = ``<home>/settings<ext>``，后缀由 ``file_type`` 单值参数决定。
+@dataclass
+class _FileState:
+    """一个值文件在内存里的样子（多文件模式下会有很多个）。
 
-    ``file_type`` 一次只有一个类型，「用哪个文件」因此是**显式声明**的，
-    不再靠「按存在性从候选名里挑第一个」——那是把决定权交给磁盘上恰好有什么。
+    ``key`` 是**路径段**：空串表示默认文件 ``<home>/<file_name><ext>``，其余是键里
+    ```:`` 左边那段相对路径。``facts`` 里的键是**文件内**的键名（不含路径段）。
     """
-    try:
-        suffix = _FILE_TYPES[file_type]
-    except KeyError:
-        raise ConfError(
-            f"不认识的 file_type：{file_type!r}；合法取值：{sorted(_FILE_TYPES)}"
-            "（空串等价于 'json'）"
-        ) from None
-    return home / f"{VALUES_STEM}{suffix}"
+
+    key: str
+    path: Path
+    text: str | None = None
+    facts: dict[str, Any] = field(default_factory=dict)
+    newline: str = field(default_factory=lambda: os.linesep)
 
 
 def _owner_module() -> ModuleType:
@@ -256,7 +298,9 @@ class Engine:
         self,
         home: str | os.PathLike[str] | None = None,
         *,
-        file_type: str = "",
+        file_name: str = DEFAULT_FILE_NAME,
+        file_type: str = DEFAULT_FILE_TYPE,
+        no_one_file: bool = False,
         audit: bool = False,
         flush_window: float = DEFAULT_FLUSH_WINDOW,
         lock_timeout: float = 10.0,
@@ -264,11 +308,17 @@ class Engine:
         identity: str = "",
     ) -> None:
         self.home = Path(home).resolve() if home is not None else default_home()
-        #: 值文件类型（单值）。空串 = JSON。改了它等于换一个值文件，必须重启。
+        #: 值文件名主干 —— **纯文件名**，缺省 ``settings``，经包含性校验（§3.2）。
+        self.file_name = _paths.file_name_stem(file_name)
+        #: 值文件类型（单值）。缺省**字面** ``"json"``，空串不是合法取值。必须重启才改。
         self.file_type = file_type
-        self.values_path = _values_path(self.home, file_type)
-        self.schema_path = self.home / SCHEMA_DIR / f"{self.values_path.stem}.json"
-        self.lock_path = self.home / SCHEMA_DIR / f"{self.values_path.stem}{LOCK_SUFFIX}"
+        self.suffix = _file_suffix(file_type)
+        #: 多文件开关：开了之后键里的 ``<路径>:`` 前缀参与寻址（缺省关）。
+        self.no_one_file = no_one_file
+        #: 默认值文件。多文件模式下它是「没有路径段的键」的落点，所以仍在。
+        self.values_path = _values_path(self.home, self.file_name, self.suffix)
+        self.schema_path = self.home / SCHEMA_DIR / f"{self.file_name}.json"
+        self.lock_path = self.home / SCHEMA_DIR / f"{self.file_name}{LOCK_SUFFIX}"
         self.audit = audit
         self.flush_window = flush_window
         self.lock_timeout = lock_timeout
@@ -281,22 +331,18 @@ class Engine:
             identity=identity,
         )
 
-        suffix = self.values_path.suffix.lower()
-        if suffix not in _BACKENDS:
+        if self.suffix not in _BACKENDS:  # pragma: no cover - _file_suffix 已经挡了
             raise ConfError(f"不认识的值文件后缀：{self.values_path.name}")
-        self.backend = _BACKENDS[suffix]
+        self.backend = _BACKENDS[self.suffix]
 
         self._decls: dict[str, Decl] = {}
         self._pending: dict[str, Decl] = {}
         self._window_started: float | None = None
         self._vocab = Vocabulary()
-        self._facts: dict[str, Any] = {}
-        self._text: str | None = None
+        #: 路径段 → 值文件状态。**空串是默认文件**，永远在；多文件模式下还有别的。
+        self._files: dict[str, _FileState] = {}
         self._stamp: tuple[Any, ...] | None = None
         self._loaded = False
-        #: 值文件原本的行尾；新建文件时用平台默认。词表跟着它走 —— 两者是一对，
-        #: 同一个目录里给人和编辑器看，行尾不该一个 LF 一个 CRLF。
-        self._values_newline: str = os.linesep
         #: 本引擎的通道，懒建。``_owner`` 只能用绑定方法传进来当写者的执行入口，
         #: 所以这里存的是不透明句柄（见 :meth:`_channel`）。
         self._chan: Any = None
@@ -305,6 +351,45 @@ class Engine:
         self._logged_failure: BaseException | None = None
         #: ``[Start]`` 只记一次（第一次真正用到这个引擎时）。
         self._started = False
+
+    # ------------------------------------------------------------ 键 → 文件寻址
+
+    def _address(self, key: str) -> tuple[str, str]:
+        """全键 → ``(路径段, 文件内键名)``。
+
+        **多文件关闭时路径段恒为空串**：``conf("a:b")`` 就是一个普通字面键，
+        ``:`` 不参与任何解析（D02 §1 的验收条款）。打开之后才按**第一个** ``:`` 切，
+        左边是相对路径、右边是文件内的键。
+        """
+        if self.no_one_file and ":" in key:
+            path_part, inner = key.split(":", 1)
+            return path_part, inner
+        return "", key
+
+    def _file_key(self, path_part: str, inner: str) -> str:
+        """``(路径段, 文件内键名)`` → 全键（``_address`` 的逆）。"""
+        return f"{path_part}:{inner}" if path_part else inner
+
+    def _file_for(self, path_part: str) -> _FileState:
+        """取（必要时建）某个路径段对应的值文件状态。路径在这里**过包含性校验**。"""
+        state = self._files.get(path_part)
+        if state is None:
+            name = path_part or self.file_name
+            state = _FileState(key=path_part, path=_values_path(self.home, name, self.suffix))
+            self._files[path_part] = state
+        return state
+
+    def _label(self, path_part: str) -> str:
+        """审计里的 ``file=``：默认文件就是文件名，子目录用相对 ``home`` 的路径。
+
+        用相对路径而不是纯文件名：多文件模式下 ``a/net.json`` 与 ``b/net.json``
+        同名，只写文件名分不清动的是哪一个。
+        """
+        path = self._file_for(path_part).path
+        try:
+            return path.relative_to(self.home).as_posix()
+        except ValueError:  # pragma: no cover - 包含性校验已经保证在 home 之内
+            return path.name
 
     # ------------------------------------------------------------------ 两个面
 
@@ -554,17 +639,28 @@ class Engine:
         退出）。失败的记录则当场落账 —— 异常一抛就没有下一个提交点了。
         """
         try:
-            result = read_value(key, self._facts, self._vocab.as_dict())
+            result = read_value(key, self._facts_view(), self._vocab.as_dict())
         except ConfError as exc:
             self._log_failure(exc, item=key)
             raise
         self._audit.read(
             item=key,
-            file=self.values_path.name,
+            file=self._label_for_key(key),
             source=result.origin,
             data=result.value,
         )
         return result.value
+
+    def _label_for_key(self, key: str) -> str:
+        """某个键落在哪个值文件 —— 审计里的 ``file=``。
+
+        定位不到（键里内嵌的路径本身就非法，或者引擎还没加载）时退回默认值文件名：
+        留痕的目的地不能因为「定位失败」而丢掉这一条记录。
+        """
+        try:
+            return self._label(self._address(key)[0])
+        except ConfError:
+            return self.values_path.name
 
     def _collect_remote(self, reply: Reply) -> None:
         """别的进程替我执行时，把它**这一次真正输出出去的**记录补到自己终端上。
@@ -580,21 +676,17 @@ class Engine:
         *,
         item: str = "",
         at: str = "",
-        message: str | None = None,
     ) -> None:
         """失败留痕（§20.2 第 4 项）：记一条 ``[E]`` 并当场收口。**调用方负责继续抛。**
 
         当场收口是因为异常一抛，后面就没有提交点会替这条记录收尾了。
         审计**自己**写不出去时不在这里抛：那会盖住真正的异常，而调用方要诊断的是配置那件事。
-
-        ``message`` 可以覆盖：类型冲突那种「一句话太长」的异常，日志里写紧凑的
-        ``want=int got=str`` 比抄一遍中文异常消息有用。
         """
         self._audit.failed(
             item=item,
-            file=self.values_path.name,
+            file=self._label_for_key(item),
             err=error_kind(exc),
-            message=str(exc) if message is None else message,
+            message=str(exc),
             at=at,
         )
         self._logged_failure = exc
@@ -670,12 +762,7 @@ class Engine:
             # 锁内重读：别的进程可能刚写过。少了这一步就是「各写各的，后写的盖掉先写的」。
             with exclusive(self.lock_path, timeout=self.lock_timeout):
                 self._reload_if_changed()
-                actions = reconcile(
-                    list(self._decls.values()),
-                    self._facts,
-                    self._vocab.as_dict(),
-                    clean_unknown=clean,
-                )
+                actions = self._reconcile_all(list(self._decls.values()), clean=clean)
                 if actions:
                     self._commit(actions)
                 records = self._action_records(actions, batch)
@@ -690,6 +777,31 @@ class Engine:
         self._audit.close_txn()
         return tuple(records)
 
+    def _reconcile_all(self, decls: list[Decl], *, clean: bool) -> list[Action]:
+        """**按值文件分组**做对账，再拼成一份动作清单。
+
+        多文件模式下规则 1 的判据是「**这个文件里**有、期望集里没有」—— 分组不能省：
+        拿全部事实去对全部声明，A 文件里的键会被判成 B 文件的未知数据而被删掉。
+        分组之后每个文件各自跑一遍三集合算法，**期望集仍是全局的那一份**。
+
+        加载范围只到「当前声明集引用到的文件」：磁盘上其它值文件不归这个引擎管，
+        一个字节都不会动（也就不会被规则 1 清理）。
+        """
+        groups: dict[str, list[Decl]] = {}
+        for decl in decls:
+            groups.setdefault(self._address(decl.key)[0], []).append(decl)
+
+        actions: list[Action] = []
+        for path_part, group in sorted(groups.items()):
+            if path_part not in self._files:
+                self._load_file(path_part)
+            state = self._file_for(path_part)
+            facts = {
+                self._file_key(path_part, inner): value for inner, value in state.facts.items()
+            }
+            actions.extend(reconcile(group, facts, self._vocab.as_dict(), clean_unknown=clean))
+        return actions
+
     def _action_records(self, actions: Iterable[Action], batch: tuple[Decl, ...]) -> list[Record]:
         """对账动作 → 审计记录。**写全量**；本批里无事可做的声明留一行 ``op=noop``。
 
@@ -697,13 +809,13 @@ class Engine:
         否则「我的声明到底生效没有」只能靠猜。只给**本批**的声明补 noop，所以不会
         退化成「每次提交都把全部已声明键刷一遍」。
         """
-        file = self.values_path.name
         records: list[Record] = []
         covered: set[str] = set()
         for action in actions:
             covered.add(action.key)
             decl = self._decls.get(action.key)
             at = decl.at if decl is not None else ""
+            file = self._label_for_key(action.key)
             if action.kind == "skip":
                 # 「值不一致但尊重文件、想改没改」—— old / new 都要留（§20.2）。
                 records.append(
@@ -738,7 +850,12 @@ class Engine:
                     )
                 )
         records.extend(
-            self._audit.wrote(item=decl.key, file=file, op="noop", at=decl.at)
+            self._audit.wrote(
+                item=decl.key,
+                file=self._label_for_key(decl.key),
+                op="noop",
+                at=decl.at,
+            )
             for decl in batch
             if decl.key not in covered
         )
@@ -750,8 +867,9 @@ class Engine:
         这条修的是 Cairn 的 D5：声明返回默认值、取值返回文件值，会让同一键的相邻
         两行拿到不同结果。现在两者都以事实为准。
         """
-        if key in self._facts:
-            return self._facts[key]
+        facts = self._facts_view()
+        if key in facts:
+            return facts[key]
         if decl.value is MISSING:
             # 只登记不给值 ⇒ 登记得先算数（所以先交出去），再按读的规则取值。
             # 必须重读磁盘：**登记是写者做的**，词表是它写到磁盘上的，我们内存里
@@ -769,21 +887,50 @@ class Engine:
         self._loaded = True
         self._reload()
 
-    def _disk_stamp(self) -> tuple[Any, ...]:
-        """值文件与词表的「指纹」（mtime + size），用来判断要不要重读。
+    def _known_path_parts(self) -> list[str]:
+        """归这个引擎管的值文件：默认文件 + 当前声明集引用到的每个路径段。"""
+        parts = {""}
+        parts.update(self._address(key)[0] for key in self._decls)
+        return sorted(parts)
 
-        两个都看：只动词表的提交（例如「只登记不给值」）不会碰值文件，
+    def _load_file(self, path_part: str) -> _FileState:
+        """把一个值文件读进内存（不存在就是空状态）。"""
+        state = self._file_for(path_part)
+        if state.path.exists():
+            raw = state.path.read_bytes()
+            state.newline = _detect_newline(raw)
+            state.text = _decode_universal(raw)
+            state.facts = self.backend.loads(state.text)
+        else:
+            state.text = None
+            state.facts = {}
+        return state
+
+    def _facts_view(self) -> dict[str, Any]:
+        """把「路径段 + 文件内键名」摊平成**全键 → 值**，供 :func:`_core.read_value` 用。"""
+        view: dict[str, Any] = {}
+        for path_part, state in self._files.items():
+            for inner, value in state.facts.items():
+                view[self._file_key(path_part, inner)] = value
+        return view
+
+    @staticmethod
+    def _file_stamp(path: Path) -> tuple[int, int] | None:
+        """一个文件的指纹（mtime + size）；不存在返回 ``None``。"""
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
+
+    def _disk_stamp(self) -> tuple[Any, ...]:
+        """已加载的每个值文件 + 词表的「指纹」，用来判断要不要重读。
+
+        词表也必须看：只动词表的提交（例如「只登记不给值」）不会碰值文件，
         只看值文件就会漏掉它，然后把别人刚登记的键从词表里挤掉。
         """
-
-        def one(path: Path) -> tuple[int, int] | None:
-            try:
-                stat = path.stat()
-            except FileNotFoundError:
-                return None
-            return (stat.st_mtime_ns, stat.st_size)
-
-        return (one(self.values_path), one(self.schema_path))
+        files = tuple(self._file_stamp(state.path) for _, state in sorted(self._files.items()))
+        return (files, self._file_stamp(self.schema_path))
 
     def _reload_if_changed(self) -> None:
         """锁内重读 —— 但只在磁盘真的变过时才读，免得退化成每次全篇重读。"""
@@ -791,15 +938,12 @@ class Engine:
             self._reload()
 
     def _reload(self) -> None:
-        """从磁盘重读事实与词表。锁内调用，所以看到的是别人的最新提交。"""
-        if self.values_path.exists():
-            raw = self.values_path.read_bytes()
-            self._values_newline = _detect_newline(raw)
-            self._text = _decode_universal(raw)
-            self._facts = self.backend.loads(self._text)
-        else:
-            self._text = None
-            self._facts = {}
+        """从磁盘重读事实与词表。锁内调用，所以看到的是别人的最新提交。
+
+        加载范围 = **默认文件 + 当前声明集引用到的每个路径段**（见 :meth:`_known_path_parts`）。
+        """
+        for path_part in self._known_path_parts():
+            self._load_file(path_part)
 
         if self.schema_path.exists():
             raw_schema = self.schema_path.read_bytes()
@@ -808,51 +952,68 @@ class Engine:
         self._stamp = self._disk_stamp()
 
     def _commit(self, actions: Iterable[Action]) -> None:
-        """把对账动作落到两个文件上。"""
-        creating = self._text is None
-        # 新建文件时从后端给的**种子**起步：JSON 要 ``"{}"``，另外三种后端空文本即可。
-        original: str = self._text if self._text is not None else self.backend.EMPTY_TEXT
-        # 指针先补、动作后落 —— 反过来的话，等落完动作文件已经不是空对象了。
-        text = self._ensure_schema_pointer(original)
+        """把对账动作落到各自的值文件上，再整篇重写词表。"""
+        action_list = list(actions)
+        by_part: dict[str, list[Action]] = {}
+        for action in action_list:
+            by_part.setdefault(self._address(action.key)[0], []).append(action)
 
-        for action in actions:
-            if action.kind == "fill":
-                if self.backend.find(text, action.key) is None:
-                    text = self.backend.append_key(text, action.key, action.value)
-                else:
-                    text = self.backend.set_value(text, action.key, action.value)
-                self._facts[action.key] = action.value
-            elif action.kind == "clean":
-                if self.backend.find(text, action.key) is not None:
-                    text = self.backend.delete_key(text, action.key)
-                self._facts.pop(action.key, None)
-
-        if creating or text != original:
-            _atomic_write_text(self.values_path, text, newline=self._values_newline)
-            self._text = text
+        for path_part, group in sorted(by_part.items()):
+            self._commit_one(path_part, group)
 
         # 词表是**库自己的资产**（归属权见 docs/design/file_support.md），
         # 所以整篇重写是合法的，不需要外科手术
-        self._vocab.apply(actions, list(self._decls.values()))
+        self._vocab.apply(action_list, list(self._decls.values()))
         _atomic_write_text(
             self.schema_path,
             json.dumps(self._vocab.to_schema(), indent=2, ensure_ascii=False) + "\n",
-            newline=self._values_newline,
+            newline=self._file_for("").newline,
         )
         self._stamp = self._disk_stamp()
 
-    def _ensure_schema_pointer(self, text: str) -> str:
+    def _commit_one(self, path_part: str, actions: list[Action]) -> None:
+        """把一批动作落到**一个**值文件上（外科手术式回写）。"""
+        state = self._file_for(path_part)
+        creating = state.text is None
+        # 新建文件时从后端给的**种子**起步：JSON 要 ``"{}"``，另外三种后端空文本即可。
+        original: str = state.text if state.text is not None else self.backend.EMPTY_TEXT
+        # 指针先补、动作后落 —— 反过来的话，等落完动作文件已经不是空对象了。
+        text = self._ensure_schema_pointer(original, state)
+
+        for action in actions:
+            inner = self._address(action.key)[1]
+            if action.kind == "fill":
+                if self.backend.find(text, inner) is None:
+                    text = self.backend.append_key(text, inner, action.value)
+                else:
+                    text = self.backend.set_value(text, inner, action.value)
+                state.facts[inner] = action.value
+            elif action.kind == "clean":
+                if self.backend.find(text, inner) is not None:
+                    text = self.backend.delete_key(text, inner)
+                state.facts.pop(inner, None)
+
+        if creating or text != original:
+            _atomic_write_text(state.path, text, newline=state.newline)
+            state.text = text
+
+    def _ensure_schema_pointer(self, text: str, state: _FileState) -> str:
         """值文件必须带 ``$schema`` 指针（能吃下的后端）。
 
         没有它，编辑器就不知道词表在哪 —— 用户面对一个几十项的配置只能靠翻文件
         （§27.3）。所以这条**不是新建时才补，是每次落盘都保证有**。
         它是**指令**不是配置键，不参与对账（§18.1）。
 
+        指针是**从这一个值文件的所在目录**到词表的相对路径：多文件模式下每个文件
+        算出来的都不一样（``app/conf/net.json`` 要写 ``../../schema/settings.json``）。
+
         ``.env`` 之类放不下成员的后端直接跳过：硬塞只会让文件变成语法错误。
         """
-        if self.values_path.suffix.lower() not in _POINTER_CAPABLE:
+        if state.path.suffix.lower() not in _POINTER_CAPABLE:
             return text
         if self.backend.find(text, "$schema") is not None:
             return text
-        seeded: str = self.backend.append_key(text, "$schema", SCHEMA_POINTER)
+        seeded: str = self.backend.append_key(
+            text, "$schema", _schema_pointer(state.path, self.schema_path)
+        )
         return seeded

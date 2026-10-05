@@ -88,7 +88,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ._audit import Reply
-from ._engine import SCHEMA_DIR, VALUES_STEM
+from ._engine import DEFAULT_FILE_NAME, SCHEMA_DIR
 from ._lock import LockTimeoutError
 from .errors import (
     ConfError,
@@ -123,8 +123,14 @@ _HASH_CHARS = 24
 #: 认证码长度（字节）
 _KEY_BYTES = 32
 
-#: 认证码文件名（相对配置目录）
-KEY_NAME = f"{SCHEMA_DIR}/{VALUES_STEM}.key"
+def key_path(home: Path, stem: str = DEFAULT_FILE_NAME) -> Path:
+    """认证码文件路径：``<home>/schema/<stem>.key``。
+
+    ``stem`` 就是引擎的 ``file_name``。**必须带上它**：同一个配置目录上的两个引擎
+    如果值文件名不同，就是两套互不相干的簿记（值文件、词表、锁、端点、钥匙全都
+    不同名），共用一个端点会让请求落到**另一个引擎**的声明集上。
+    """
+    return home / SCHEMA_DIR / f"{stem}.key"
 
 #: 打招呼用的两句话
 _HELLO = "hello"
@@ -163,14 +169,16 @@ SOCKET_PATH_LIMIT = 100
 _FALLBACK_TMP = Path("/tmp")  # noqa: S108  # nosec B108
 
 
-def _short_socket(home: Path) -> Path:
+def _short_socket(home: Path, stem: str) -> Path:
     """路径太长时的**短端点**：临时目录下一个只有本人可进的子目录。
 
-    名字仍然只由**解析后的**配置目录决定（哈希），所以同一个目录在每个进程里算出的
-    端点完全一样 —— 只是它不再住在配置目录里。``0o700`` 那个子目录是补回来的隔离：
-    端点在共享的临时目录里，别人能连上就等于能冒充写者。
+    名字仍然只由**解析后的配置目录 + 值文件名**决定（哈希），所以同一个
+    ``(目录, 文件名)`` 在每个进程里算出的端点完全一样 —— 只是它不再住在配置目录里。
+    ``stem`` 也要进哈希：同一目录上的两个引擎文件名不同时，短端点不能撞在一起。
+    ``0o700`` 那个子目录是补回来的隔离：端点在共享的临时目录里，别人能连上就等于能冒充写者。
     """
-    digest = hashlib.sha256(str(home).encode("utf-8")).hexdigest()[:_HASH_CHARS]
+    seed = f"{home}\x00{stem}"
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:_HASH_CHARS]
     uid = getattr(os, "getuid", lambda: 0)()  # Windows 没有 getuid；这条分支也不在 Windows 上走
     for base in (Path(tempfile.gettempdir()), _FALLBACK_TMP):
         directory = base / f"onconf-{uid}"
@@ -185,30 +193,31 @@ def _short_socket(home: Path) -> Path:
     return _FALLBACK_TMP / f"onconf-{digest}.sock"  # pragma: no cover - TMPDIR 长到离谱时
 
 
-def endpoint_for(home: Path) -> str:
-    r"""端点名：**只由配置目录决定**，别的什么都不看。
+def endpoint_for(home: Path, stem: str = DEFAULT_FILE_NAME) -> str:
+    r"""端点名：**只由配置目录 + 值文件名决定**，别的什么都不看。
 
     Windows 把名字放进全局命名空间，所以只能哈希（路径塞不进去）；POSIX 用配置
     目录里的 socket 文件，按构造就已经隔离了。
 
     Windows 上先 ``normcase``：``D:\a`` 与 ``d:\a`` 是同一个目录，但字符串不同
     —— 不折叠大小写就会出现**两个写者写着同一个目录**，那正是这个模块要防的事。
+    ``stem`` 也进哈希：同一目录、不同值文件名是两个引擎，不该共用一个写者。
 
-    POSIX 上路径太长时改用 :func:`_short_socket` 的短名字（仍然只由配置目录决定）。
+    POSIX 上路径太长时改用 :func:`_short_socket` 的短名字（仍然只由这两样决定）。
     不这么做的话，macOS 上稍微深一点的路径就会让专职写者失效 —— 那是**静默**的，
     只有从「所有请求都退到就地执行」才能看出来。
     """
     if os.name == "nt":
-        seed = os.path.normcase(str(home))
+        seed = f"{os.path.normcase(str(home))}\x00{stem}"
         digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:_HASH_CHARS]
         return f"{_PIPE_PREFIX}{digest}"
-    natural = str(home / SCHEMA_DIR / f"{VALUES_STEM}.sock")
+    natural = str(home / SCHEMA_DIR / f"{stem}.sock")
     if len(natural.encode("utf-8")) <= SOCKET_PATH_LIMIT:
         return natural
-    return str(_short_socket(home))
+    return str(_short_socket(home, stem))
 
 
-def authkey_for(home: Path) -> str:
+def authkey_for(home: Path, stem: str = DEFAULT_FILE_NAME) -> str:
     """认证码（十六进制）：**原子创建**，保证并发的首次调用者拿到的是同一把。
 
     「创建」和「写入」必须是一步。先 ``O_CREAT|O_EXCL`` 再 ``write`` 会留下一个
@@ -216,7 +225,7 @@ def authkey_for(home: Path) -> str:
     其中一个从此连不上自己刚绑上的端点 —— 这种 bug 只在并发下露头，最难查。
     ``os.link`` 正是要的那个原语：目标已存在就失败，而内容**早就写好了**。
     """
-    path = home / KEY_NAME
+    path = key_path(home, stem)
     path.parent.mkdir(parents=True, exist_ok=True)
     key = os.urandom(_KEY_BYTES).hex()
     staging = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}")
@@ -230,12 +239,12 @@ def authkey_for(home: Path) -> str:
     return path.read_text(encoding="ascii").strip()
 
 
-def claim(home: Path) -> ipc.Listener | None:
+def claim(home: Path, stem: str = DEFAULT_FILE_NAME) -> ipc.Listener | None:
     """抢绑端点：抢到就是写者，返回 ``Listener``；抢不到返回 ``None``。
 
     **这个返回值就是选举结果**，没有第二次确认 —— 抢绑是原子的。
     """
-    address = endpoint_for(home)
+    address = endpoint_for(home, stem)
     if os.name != "nt":  # pragma: no cover - 本机是 Windows；POSIX 见下面两个函数
         _ensure_endpoint_dir(address)
         _reap_stale(address)
@@ -259,15 +268,17 @@ def _ensure_endpoint_dir(address: str) -> None:
         Path(address).parent.mkdir(parents=True, exist_ok=True)
 
 
-def connect(home: Path, *, timeout: float = HELLO_TIMEOUT) -> Conn | None:
+def connect(
+    home: Path, *, stem: str = DEFAULT_FILE_NAME, timeout: float = HELLO_TIMEOUT
+) -> Conn | None:
     """连当前写者并打完招呼；没人在、或没人答话，都返回 ``None``。
 
     **两次有界**：``Client(...)`` 不再做握手（无超时的那一步已经搬走），
     我们自己的招呼又带 ``timeout``。所以这个函数不会把调用方挂死。
     """
-    if not (home / KEY_NAME).exists():
+    if not key_path(home, stem).exists():
         return None
-    return _hello(endpoint_for(home), authkey_for(home), timeout)
+    return _hello(endpoint_for(home, stem), authkey_for(home, stem), timeout)
 
 
 def _hello(address: str, key: str, timeout: float) -> Conn | None:
@@ -382,7 +393,7 @@ class Owner:
         self.engine = engine
         self._execute = execute
         self._listener = listener
-        self._key = authkey_for(engine.home)
+        self._key = authkey_for(engine.home, engine.file_name)
         #: 写者自己的两个调用方（主线程 + 应答线程）也要互斥：引擎不是线程安全的
         self._lock = threading.Lock()
         self._closed = threading.Event()
@@ -394,7 +405,7 @@ class Owner:
     @classmethod
     def claim(cls, engine: Engine, execute: _Exec) -> Owner | None:
         """试着当写者；抢不到说明别人已经在当，返回 ``None``。"""
-        listener = claim(engine.home)
+        listener = claim(engine.home, engine.file_name)
         return None if listener is None else cls(engine, listener, execute)
 
     def start(self) -> None:
@@ -446,7 +457,7 @@ class Owner:
         失败，无视即可。
         """
         with contextlib.suppress(OSError):
-            ipc.Client(endpoint_for(self.engine.home)).close()
+            ipc.Client(endpoint_for(self.engine.home, self.engine.file_name)).close()
 
     # ---------------------------------------------------------------- 应答线程
 
@@ -567,14 +578,14 @@ class Channel:
         硬链接、端点被谁的残留占着……）不该让 ``conf()`` 失败 —— 退回直写就是。
         """
         try:
-            self._client = connect(self.engine.home)
+            self._client = connect(self.engine.home, stem=self.engine.file_name)
             if self._client is not None:
                 self._notify_link("connect")
                 return
             writer = Owner.claim(self.engine, self._execute)
             if writer is None:
                 # 抢绑失败 ⇒ 有人在我们探测之后绑上了。这是正常竞态，再连一次。
-                self._client = connect(self.engine.home)
+                self._client = connect(self.engine.home, stem=self.engine.file_name)
                 self._notify_link("connect" if self._client is not None else "fallback")
                 return
         except OSError, ConfError:

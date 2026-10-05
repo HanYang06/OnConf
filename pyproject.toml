@@ -54,7 +54,7 @@ dependencies = [
 ]
 
 [project.scripts]
-onconf = "onconf:main"
+onconf = "onconf._cli:main"
 
 [project.urls]
 Homepage = "https://github.com/HanYang06/OnConf"
@@ -253,11 +253,13 @@ disallow_any_explicit = false
 [[tool.mypy.overrides]]
 module = [
     "test_audit",
+    "test_cli",
     "test_core",
     "test_engine",
     "test_env_backend",
     "test_json_backend",
     "test_owner",
+    "test_paths",
     "test_security_invariants",
     "test_toml_backend",
     "test_vocab",

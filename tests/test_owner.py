@@ -137,7 +137,7 @@ def test_authkey_is_created_once_and_atomically(tmp_path: Path) -> None:
 
     assert len(bytes.fromhex(first)) == _owner._KEY_BYTES
     assert _owner.authkey_for(home) == first
-    assert (home / _owner.KEY_NAME).is_file()
+    assert _owner.key_path(home).is_file()
 
     # 并发的首次创建（目录是全新的）
     fresh = tmp_path / "fresh"
@@ -383,7 +383,7 @@ def test_channel_falls_back_to_direct_write_when_there_is_no_writer(
     """安全网：端点这条路整个不通时，**库还是能写**（OS 锁还在）。"""
     home = tmp_path / "conf"
     monkeypatch.setattr(_owner, "connect", lambda _home, **_kw: None)
-    monkeypatch.setattr(_owner, "claim", lambda _home: None)
+    monkeypatch.setattr(_owner, "claim", lambda *_a, **_kw: None)
 
     engine = _open(home)
     channel = _owner.Channel(engine, engine._execute_local)

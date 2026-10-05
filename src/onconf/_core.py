@@ -134,7 +134,8 @@ def read_value(
     一个字符串值会莫名其妙变成数字。要数字请在取用处显式 ``int(…)``，
     这样「哪里发生了转换」在代码里一眼可见。）
 
-    声明期的 ``type=`` 只做**一致性校验**，不参与读取。
+    类型声明（``conf(..., type=int)``）已整体取消：词表不记类型，声明期也不做校验
+    （口径见 ``docs/design/file_support.md``）。
     """
     if key in facts:
         return ReadResult(key=key, value=facts[key], origin="file")

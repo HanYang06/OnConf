@@ -20,7 +20,7 @@ import atexit
 from typing import Any, TypedDict, Unpack
 
 from ._core import MISSING
-from ._engine import Engine, default_home
+from ._engine import Engine
 from .errors import (
     ConfError,
     KeyHasNoValueError,
@@ -45,13 +45,15 @@ class EngineParams(TypedDict, total=False):
     """引擎自身的可调参数 —— **唯一事实来源**（§15.5）。
 
     参数清单、默认值文档、运行时校验全部从这一个类型派生，
-    所以它的注解必须完整且准确：写漏一个，``help`` 里就没有。
+    所以它的注解必须完整且准确：写漏一个，`AutoConf` 的运行时校验就漏一个。
 
     这些全是**引导层**参数：决定引擎怎么装配，运行中不可改。
     """
 
     home: str
+    file_name: str
     file_type: str
+    no_one_file: bool
     audit: bool
     flush_window: float
     lock_timeout: float
@@ -94,9 +96,10 @@ def _check_engine_params(params: dict[str, Any]) -> None:
 def AutoConf(**engine: Unpack[EngineParams]) -> Engine:  # noqa: N802 - 公开 API 就是这个名字
     """配置引擎自己。走约定时可完全不调它；无参数调用 = 把单例**取回来**。
 
-    **引导层不可运行中改**：``home`` / ``file_type`` / ``lock_timeout`` 这些参数
-    决定引擎怎么装配，改了等于改代码（§15.3 的「单例可变」定性作废）。引擎一旦
-    起来再带参数调用会抛 ``ConfError`` —— 要换配置请在第一次调用之前设置。
+    **引导层不可运行中改**：``home`` / ``file_name`` / ``file_type`` / ``no_one_file`` /
+    ``lock_timeout`` 这些参数决定引擎怎么装配，改了等于改代码（§15.3 的「单例可变」
+    定性作废）。引擎一旦起来再带参数调用会抛 ``ConfError`` —— 要换配置请在第一次
+    调用之前设置。
 
     值层不受这条限制：值每次都从文件重新读。
     """
@@ -107,8 +110,9 @@ def AutoConf(**engine: Unpack[EngineParams]) -> Engine:  # noqa: N802 - 公开 A
         _engine = Engine(**engine)
     elif engine:
         raise ConfError(
-            "引擎已经启动：引导层参数（配置目录 / 值文件类型 / 日志去向 / 审计 / 身份 / "
-            "锁超时）不可运行中改，改了等于改代码。请在第一次调用之前设置。"
+            "引擎已经启动：引导层参数（配置目录 / 值文件名 / 值文件类型 / 多文件开关 / "
+            "日志去向 / 审计 / 身份 / 锁超时）不可运行中改，改了等于改代码。"
+            "请在第一次调用之前设置。"
         )
     return _engine
 
@@ -131,8 +135,3 @@ def conf(key: str, value: Any = MISSING, doc: str | None = None) -> Any:
     """
     target = _engine if _engine is not None else AutoConf()
     return target(key, value, doc)
-
-
-def main() -> None:
-    """控制台入口占位。命令行体系（交互式补全等）排在后面。"""
-    print(f"onconf：配置目录 {default_home()}")  # noqa: T201 - 这就是控制台入口的活儿
