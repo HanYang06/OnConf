@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """onconf 的异常族。
 
-读取错误刻意分成两类（§18.2）：它们的责任方不同，
+读取错误刻意分成两类：它们的责任方不同，
 用户应当能用 ``except`` 区分「我键名写错了」和「部署漏配了」。
 """
 
@@ -22,4 +22,4 @@ class KeyHasNoValueError(ConfError):
 
 
 class UnknownEngineParamError(ConfError, TypeError):
-    """透传的引擎参数里有未定义的键（§15.4 规则 1：不许静默失效）。"""
+    """透传的引擎参数里有未定义的键。"""

@@ -54,7 +54,7 @@ def engine(tmp_path: Path) -> Engine:
 
 class TestDeclareAndRead:
     def test_declare_returns_the_effective_value(self, engine: Engine) -> None:
-        """返回的是当前生效值，不是声明处的默认值（§17.9 / 缺陷 D5）。"""
+        """返回的是当前生效值，不是声明处的默认值。"""
         assert engine("pack.max.byte", 2147483648) == 2147483648
 
     def test_read_after_declare_comes_from_the_file(self, engine: Engine) -> None:
@@ -118,7 +118,7 @@ class TestDeclareAndRead:
 
 class TestArtifacts:
     def test_values_file_gets_a_schema_pointer(self, engine: Engine) -> None:
-        """新建值文件时写下 $schema，编辑器立刻有补全（§27.3）。"""
+        """新建值文件时写下 $schema，编辑器立刻有补全。"""
         engine("a.b", 1)
         assert json.loads(engine.values_path.read_text(encoding="utf-8"))["$schema"] == (
             SCHEMA_POINTER
@@ -135,7 +135,7 @@ class TestArtifacts:
         assert engine.schema_path.name == "settings.json"
 
     def test_user_comments_survive_a_new_key(self, tmp_path: Path) -> None:
-        """YAML 值文件：补一个新键，用户手写的注释逐字保留（§27.3）。"""
+        """YAML 值文件：补一个新键，用户手写的注释逐字保留。"""
         values = tmp_path / "settings.yaml"
         values.write_text(
             "# 我手写的注释\na.b: 1   # 行尾注释\nc.d: 2\n",
@@ -160,7 +160,7 @@ class TestArtifacts:
         assert "c.d: 2" in text
 
     def test_repeat_run_writes_nothing(self, engine: Engine) -> None:
-        """声明集没变 ⇒ 哈希短路 ⇒ 一个字节都不写（§18.7）。"""
+        """声明集没变 ⇒ 哈希短路 ⇒ 一个字节都不写。"""
         engine("a.b", 1)
         stamp = engine.values_path.stat().st_mtime_ns
         schema_stamp = engine.schema_path.stat().st_mtime_ns
@@ -172,7 +172,7 @@ class TestArtifacts:
 
 
 class TestIndirection:
-    """值代表另一个配置项 —— 引擎不设限（§28.3）。
+    """值代表另一个配置项 —— 引擎不设限。
 
     ``conf(conf("alias"))`` 的**第一实参仍是字面量**，静态扫描看得见 ``alias`` 这一层；
     看不见的只有它解出来的那一层，这是明示的代价，不是禁令。
@@ -202,7 +202,7 @@ class TestIndirection:
 
 class TestSchemaPointer:
     def test_pointer_is_added_to_an_existing_file(self, tmp_path: Path) -> None:
-        """老文件缺指针也要补 —— 没有它编辑器不知道词表在哪（§28.6）。"""
+        """老文件缺指针也要补 —— 没有它编辑器不知道词表在哪。"""
         values = tmp_path / "settings.yaml"
         values.write_text("# 注释\npack.max.byte: 1\n", encoding="utf-8")
 
@@ -327,7 +327,7 @@ class TestValueFileSelection:
         assert Engine(tmp_path).values_path.name == "settings.json"
 
     def test_empty_string_is_no_longer_a_type(self, tmp_path: Path) -> None:
-        """缺省值是**字面** ``"json"``：空串不再是「等价于 json」的暗号（D01 §5）。"""
+        """缺省值是**字面** ``"json"``：空串不再是「等价于 json」的暗号。"""
         with pytest.raises(ConfError, match="不认识的 file_type"):
             Engine(tmp_path, file_type="")
 
@@ -372,7 +372,7 @@ class TestValueFileSelection:
 
 
 class TestCrossBackendTypes:
-    """同一个键，不同后端读回不同类型 —— **不承诺可移植**（D01 §2.3）。
+    """同一个键，不同后端读回不同类型 —— **不承诺可移植**。
 
     这条差异刻意不进词表（词表只有一份 JSON Schema），只写进 README 与设计页。
     """
@@ -445,7 +445,7 @@ class TestMultiFile:
         return Engine(tmp_path, no_one_file=True)
 
     def test_off_means_the_colon_is_just_a_key(self, tmp_path: Path) -> None:
-        """多文件关闭时 ``:`` 不参与解析 —— 整个字符串就是一个普通键（D02 §1 验收）。"""
+        """多文件关闭时 ``:`` 不参与解析 —— 整个字符串就是一个普通键。"""
         engine = Engine(tmp_path)
         engine("app/conf/net:net.id.post", 1)
         data = json.loads(engine.values_path.read_text(encoding="utf-8"))
@@ -467,7 +467,7 @@ class TestMultiFile:
         assert json.loads(multi.values_path.read_text(encoding="utf-8"))["plain.key"] == "x"
 
     def test_one_vocabulary_for_every_file(self, multi: Engine) -> None:
-        """词表只有一份，键是全键（含路径段）—— 多文件不搞多份词表（D02 未决 3 的裁定）。"""
+        """词表只有一份，键是全键（含路径段）—— 多文件不搞多份词表。"""
         multi("app/conf/net:net.id.post", 1)
         multi("plain.key", 2)
         props = json.loads(multi.schema_path.read_text(encoding="utf-8"))["properties"]
@@ -523,7 +523,7 @@ class TestMultiFile:
         assert untouched.read_text(encoding="utf-8") == '{"someone.elses": 1}\n'
 
     def test_env_backend_works_in_multi_file(self, tmp_path: Path) -> None:
-        """D02 §1 验收：``.env`` 后端在多文件开启时可用。"""
+        """包含性校验的验收：``.env`` 后端在多文件开启时可用。"""
         engine = Engine(tmp_path, file_type="env", no_one_file=True)
         assert engine("app/net:NET_PORT", "8080") == "8080"
         assert (tmp_path / "app" / "net.env").read_text(encoding="utf-8") == "NET_PORT=8080\n"
@@ -536,7 +536,7 @@ class TestMultiFile:
 
 
 class TestThreeModes:
-    """ISSUE-001 的验收：五种写法与模式一一对应，一个都不能走岔。"""
+    """五种写法与模式一一对应，一个都不能走岔。"""
 
     @pytest.fixture(autouse=True)
     def _home(self, tmp_path: Path) -> None:
@@ -634,7 +634,7 @@ class TestModuleLevelFaces:
             AutoConf(home=str(tmp_path / "other"))
 
     def test_unknown_engine_param_is_not_swallowed(self, tmp_path: Path) -> None:
-        """开放 kwargs 的默认行为是静默吞掉拼写错误 —— 必须堵死（§15.4）。"""
+        """开放 kwargs 的默认行为是静默吞掉拼写错误 —— 必须堵死。"""
         with pytest.raises(TypeError, match="未知的引擎参数"):
             # 就是要传一个拼错的参数，看它会不会被静默吞掉
             AutoConf(hme=str(tmp_path))  # type: ignore[call-arg]
@@ -704,7 +704,7 @@ class TestTomlValuesFile:
         assert engine("gc.auto.byte") == 0
 
     def test_table_header_is_normalised_to_a_dotted_key(self, tmp_path: Path) -> None:
-        """对上层完全透明：它只看得见点分键（§28.4）。"""
+        """对上层完全透明：它只看得见点分键。"""
         (tmp_path / "settings.toml").write_text("[pack.max]\nbyte = 512\n", encoding="utf-8")
         assert Engine(tmp_path, file_type="toml")("pack.max.byte") == 512
 
@@ -916,7 +916,7 @@ class TestRealProcesses:
 
         规则 1（清理未知数据）必须拿**完整**声明集当基准。硬锁那条路做不到 —— 每个
         进程只知道自己那份，于是后 ``sync()`` 的进程会把先写的键当「未知数据」删掉
-        （§18.4 记着的那个洞）。写者是唯一收口点，它的声明集是并集，所以一个键都不
+        写者是唯一收口点，它的声明集是并集，所以一个键都不
         该少。
 
         **但这条有个前提：写者得活着。** 声明集**不是**持久状态 —— 写者一换人，

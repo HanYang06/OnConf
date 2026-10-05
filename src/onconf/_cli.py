@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: 2026 HanYang06
 # SPDX-License-Identifier: Apache-2.0
-"""命令行：``onconf build`` / ``onconf sync``（D08 §1 的头两条命令）。
+"""命令行：``onconf build`` / ``onconf sync``。
 
 ## 声明从哪里来：**找 ``conf`` 这个函数，分析它的参数构成**
 
 这个库的公开 API 只有一个使用口 ``conf(key, value=…, doc=…)``，参数结构与三种模式
-一一对应（§17.7）。所以命令行不需要「加载并执行用户代码」这套新机制，也不需要约定
+一一对应。所以命令行不需要「加载并执行用户代码」这套新机制，也不需要约定
 声明文件的格式：**在项目里找 ``conf(...)`` 调用，按参数形态解读**。
 
 无歧义、可以直接对号入座的形态：
@@ -28,7 +28,7 @@
 ## 期望集不完整时怎么办
 
 * ``sync``（**会删键**）：期望集不完整就**不清理**，直接以非 0 退出 —— 这是引擎
-  「规则 1 只在期望集完整时才允许执行」那条正确性前提（§18.1 / §29.1）在命令行的落地。
+  「规则 1 只在期望集完整时才允许执行」那条正确性前提在命令行的落地。
   加 ``--no-clean`` 时只补缺、不删键，因此期望集不完整也不再危险，照常执行。
 * ``build``（**重建值文件**）：重建本来就是「以声明为准」，所以照常执行、把读不懂的
   调用逐条打出来；先用 ``--dry-run`` 看一眼再决定。
@@ -500,7 +500,7 @@ def _emit(payload: dict[str, Any], *, as_json: bool) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """``onconf`` 的入口：目前只有 ``build`` / ``sync``（其余命令见 D08 / D09）。"""
+    """``onconf`` 的入口：目前只有 ``build`` / ``sync``（其余命令尚未实现）。"""
     args = _parser().parse_args(argv)
     handler: Callable[[argparse.Namespace], int] = args.handler
     try:

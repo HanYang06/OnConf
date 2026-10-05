@@ -10,7 +10,7 @@
 * 默认路径不开网络端口、不 spawn 子进程
 * 只用 ``yaml.safe_load``，绝不 ``yaml.load``
 * 不对配置内容做 ``eval`` / ``exec`` / ``pickle``
-* **外部字符串（值文件名、键内嵌路径）到路径只经包含性校验**（D01 §3.5 / D02 §2）
+* **外部字符串（值文件名、键内嵌路径）到路径只经包含性校验**
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ _FORBIDDEN_YAML_ATTRS = frozenset({"load", "load_all", "FullLoader", "UnsafeLoad
 #: 不得出现的内建调用
 _FORBIDDEN_BUILTINS = frozenset({"eval", "exec", "compile", "__import__"})
 
-#: 文件名的非法形态：逐个都必须被包含性校验拒绝（D02 §2 验收）
+#: 文件名的非法形态：逐个都必须被包含性校验拒绝
 _BAD_FILE_NAMES = ("..", ".", "a/b", "a\\b", "C:evil", "", "\x00")
 
 
@@ -62,7 +62,7 @@ def _files_under(root: Path) -> list[Path]:
 
 
 def test_no_forbidden_modules_are_imported() -> None:
-    """不开网络 / 不反序列化 / 不起子进程 —— 这三条是身份问题（DESIGN §26.3）。"""
+    """不开网络 / 不反序列化 / 不起子进程 —— 这三条是身份问题。"""
     offenders: list[str] = []
     for path, tree in _module_asts():
         bad = _imported_roots(tree) & _FORBIDDEN_MODULES
@@ -120,7 +120,7 @@ def test_values_path_is_derived_from_a_validated_name(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("bad", _BAD_FILE_NAMES)
 def test_a_file_name_that_could_escape_the_home_is_refused(tmp_path: Path, bad: str) -> None:
-    """包含性校验的第一道：``file_name`` 只能是纯文件名（D02 §2）。"""
+    """包含性校验的第一道：``file_name`` 只能是纯文件名。"""
     home = tmp_path / "conf"
     home.mkdir()
     with pytest.raises(onconf.ConfError, match="不合法"):
@@ -162,7 +162,7 @@ def test_key_name_cannot_escape_the_config_home(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("bad", ["../x:k", "/abs/x:k", "a/../../x:k", "a\\b:k"])
 def test_multi_file_path_cannot_escape_the_config_home(tmp_path: Path, bad: str) -> None:
-    """多文件**开启**时路径来自键字符串，必须整条被包含性校验挡住（T1 + D02 §1 验收）。"""
+    """多文件**开启**时路径来自键字符串，必须整条被包含性校验挡住（T1）。"""
     home = tmp_path / "conf"
     home.mkdir()
     outside = tmp_path / "outside"

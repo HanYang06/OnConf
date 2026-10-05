@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 HanYang06
 # SPDX-License-Identifier: Apache-2.0
-"""包含性校验的回归（D01 §3.5 / D02 §2）。
+"""包含性校验的回归。
 
 这些用例守护的是**唯一入口**：外部字符串（文件名、键里内嵌的路径）到路径的转换
 只能经过 :mod:`onconf._paths`，五条规则逐条有一个反例。规则本身很短，漏一条的

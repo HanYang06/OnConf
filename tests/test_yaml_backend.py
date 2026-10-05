@@ -71,7 +71,7 @@ class TestLoads:
         }
 
     def test_an_explicit_tag_is_respected(self) -> None:
-        """``!!str "8080"`` 读回**字符串**：载体明说了类型，引擎原样交出（D01 §2.4）。"""
+        """``!!str "8080"`` 读回**字符串**：载体明说了类型，引擎原样交出。"""
         assert loads('port: !!str "8080"\n') == {"port": "8080"}
 
     def test_empty_file(self) -> None:

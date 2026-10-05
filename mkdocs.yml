@@ -21,11 +21,6 @@ site_dir: site
 use_directory_urls: true
 strict: true
 
-# docs/issues/ 是即将删除的旧决策工作区（嵌套仓库，未跟踪）。删除动作落地前先排除它，
-# 否则 strict 会因它内部的悬空链接而失败。
-exclude_docs: |
-  issues/
-
 # ---------------------------------------------------------------------------
 # 主题
 # ---------------------------------------------------------------------------
@@ -107,8 +102,10 @@ plugins:
 nav:
   - 首页: index.md
   - 快速开始: getting-started.md
-  - 路线图: roadmap.md
-  - 2.0 设计决策: roadmap/2.0-roadmap.md
+  - 路线图:
+      - 总览与读法: roadmap/index.md
+      - 1.0.x（已发布）: roadmap/1.0.x/roadmap.md
+      - 2.0.x（下一版）: roadmap/2.0.x/roadmap.md
   - API 参考:
       - API 总览: api/index.md
   - 架构:
@@ -118,7 +115,6 @@ nav:
       - 初始化配置: design/init_config.md
       - 文件支持: design/file_support.md
       - 审计日志: design/log.md
-      - 旧设计稿（逐步退役）: design/DESIGN.md
   - 安全:
       - 安全总览: security/index.md
       - 威胁模型: security/threat-model.md
