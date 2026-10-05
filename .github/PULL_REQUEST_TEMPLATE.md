@@ -35,7 +35,7 @@
 - [ ] 新增的函数与公共 API 都有完整类型注解与中文 docstring
 - [ ] 新增源码文件已在文件顶部写 Apache-2.0 的两行 SPDX 许可头
 - [ ] 新增或修改的行为都有对应测试（新增行为必须带测试）
-- [ ] 用户可见的行为变化已同步到 `docs/`（设计取舍另见 `docs/design/DESIGN.md`）
+- [ ] 用户可见的行为变化已同步到 `docs/`（设计取舍另见 `docs/design/`）
 - [ ] 需要记入发布说明的内容已写好（本项目用 release-drafter 依据 Conventional Commits 生成，
       请确认每个提交信息与 PR 标题都符合规范；如有 CHANGELOG 条目请一并更新）
 - [ ] 本 PR 不含任何密钥、凭据、`.env` 文件

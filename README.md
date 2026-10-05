@@ -22,6 +22,8 @@ changing one requires changing the other — plus `README.zh-CN.md`, `pyproject.
 > **`1.0.0` — the first stable release** (2026-10-04). The public API and the on-disk format now
 > follow [semantic versioning](https://semver.org/): from here on they change only in a **major**
 > release, and every change is recorded in the [changelog](CHANGELOG.md).
+> **Both `1.0` and `2.0` are breaking-change releases**: **follow 2.0 from here on**;
+> the 1.0 shape lives in [the 1.0.x roadmap](docs/roadmap/1.0.x/roadmap.md).
 > **Both halves of the line above have mechanism behind them**: *without losing a byte* by
 > surgical write-back, and *without losing an update* by a **dedicated writer** — whichever process
 > first claims a config directory serves every other process over a local named pipe (Windows) or
@@ -151,8 +153,8 @@ Hard rules:
 - The second position always belongs to `value`, so `conf(key, x)` is *always* a write;
   the "register only" mode can only be triggered by the `doc=` keyword.
 - `doc` is a **positional** third parameter and the only registration metadata there is.
-  The rule mentions nothing else, so the parameter surface is **closed**: adding a parameter
-  later no longer means touching the rule.
+  The rule is just that one bit, so the parameter surface is **closed**: adding a parameter
+  later does not touch it.
 - The usage face **cannot configure the engine**: `conf(..., home=…)` is a `TypeError`.
 
 Notes on semantics that surprise people:
@@ -209,7 +211,7 @@ library will not police your code. What a hidden declaration costs you:
 - **The CLI cannot see it.** `onconf build` / `onconf sync` find declarations by reading
   `conf(...)` arguments, so `sync` treats the key as *not declared*; while such calls exist it
   **refuses to delete anything** rather than guess (use `--no-clean` to keep going).
-- **Static review loses it.** `grep app.post` no longer finds the declaration, and no tool that
+- **Static review loses it.** `grep app.post` does not find the declaration, and no tool that
   reads the call site can — including the `check` command we plan to add (which will emit a
   warning, never an error).
 - **The site stops explaining itself.** Computed values and descriptions (`X if cond else Y`,
@@ -228,17 +230,17 @@ whatever key was registered.
 | `.env` value backend — **optional**; string-only, no inline comments, no key renaming | ✅ |
 | TOML value backend — **optional**; table headers normalized to dotted keys | ✅ |
 | Vocabulary (key space) — persisted, JSON Schema round-trip, hash short-circuit. It records exactly three things per key: the key, the description, the default | ✅ |
-| Value-file selection — `file_name` (default `settings`) plus `file_type` (single-valued, default `"json"`) pick `<home>/<file_name>.<ext>`; choosing by "first name that exists" is gone | ✅ |
+| Value-file selection — `file_name` (default `settings`) plus `file_type` (single-valued, default `"json"`) pick `<home>/<file_name>.<ext>` | ✅ |
 | **Multi-file** — `no_one_file=True` makes a key's `<path>:` prefix address `<home>/<path>.<ext>` (e.g. `conf("app/conf/net:net.id.post", 8080)` → `<home>/app/conf/net.json`). Keys without a prefix still land in the default file. One vocabulary, one lock, one writer per `(home, file_name)`; every embedded path goes through the containment check | ✅ |
 | Engine assembly — `conf` / `AutoConf` end-to-end | ✅ |
 | Cross-process exclusive lock — an **OS** lock (`msvcrt.locking` on Windows, `fcntl.flock` elsewhere), released by the OS even if the process dies; `LockTimeoutError` after a 10 s wait | ✅ |
 | Re-read under that lock — fingerprint (`mtime` + `size`) over **both** the values file and the vocabulary, so a concurrent registration is never clobbered | ✅ |
-| **Dedicated writer** — whichever process first binds the endpoint is the only reader/writer; the rest send requests over `multiprocessing.connection`. Binding *is* the election, so no lock file is involved (DESIGN §32) | ✅ |
+| **Dedicated writer** — whichever process first binds the endpoint is the only reader/writer; the rest send requests over `multiprocessing.connection`. Binding *is* the election, so no lock file is involved | ✅ |
 | **Atomic write** — same-directory temp file → `fsync` → `os.replace`, plus a parent-directory `fsync` on POSIX; original line endings and permission bits preserved, new files land as `0600` | ✅ |
 | Optional batching window — `flush_window` (default `0`, i.e. commit immediately), held **client-side** so each engine's window stays its own | ✅ |
 | Value-as-key (indirect addressing) + guaranteed `$schema` pointer on every write (JSON / YAML only — `.env` and `.toml` cannot hold a member, so the pointer is skipped) | ✅ |
 | Error taxonomy — `ConfError` as the base, with `KeyNotRegisteredError`, `KeyHasNoValueError`, `UnknownEngineParamError` and `LockTimeoutError` (defined in `_lock.py`, not `errors.py`; raised after a 10 s lock wait). `EnvSyntaxError`, `YamlFlatRequiredError` and `TomlFlatRequiredError` are `ValueError` subclasses, so they are **not** caught by `except ConfError` | ✅ |
-| **Logging + audit** — a mandatory `[Read]` / `[Write]` / `[Change]` / `[Error]` stream plus the process-structure trio `[Start]` / `[Link]` / `[Send]`; the destination can be changed but the log cannot be switched off; writes are logged in full (including `op=skip` "wanted to change, respected the file" and `op=noop` "this batch's declaration was already satisfied"), reads are de-duplicated per transaction (`n=1000`); every write carries its call site (`at=app/config.py:12`), the pid and the optional `identity=`; terminal columns are elastic tabstops measured in **display width** (CJK-safe), while the file form stays compact and is never truncated; `audit=True` appends to `<home>/audit.log` (`0600`, append-only, size-based rotation). See DESIGN §20 / §21 | ✅ |
+| **Logging + audit** — a mandatory `[Read]` / `[Write]` / `[Change]` / `[Error]` stream plus the process-structure trio `[Start]` / `[Link]` / `[Send]`; the destination can be changed but the log cannot be switched off; writes are logged in full (including `op=skip` "wanted to change, respected the file" and `op=noop` "this batch's declaration was already satisfied"), reads are de-duplicated per transaction (`n=1000`); every write carries its call site (`at=app/config.py:12`), the pid and the optional `identity=`; terminal columns are elastic tabstops measured in **display width** (CJK-safe), while the file form stays compact and is never truncated; `audit=True` appends to `<home>/audit.log` (`0600`, append-only, size-based rotation). See the [audit-log design](docs/design/log.md) | ✅ |
 | Test suite — one file per module plus security invariants | ✅ green locally; CI runs it on ubuntu / windows / macos |
 | **CLI (first two commands)** — `onconf build` rebuilds the value file(s) and the vocabulary from the declarations (`--path` writes the whole rebuild into a new directory instead); `onconf sync` fills what is missing and deletes keys the declarations do not know (`--no-clean` keeps them). Declarations are found by **scanning the project for `conf(...)` calls** and reading their arguments — the single-function API is what makes that possible. Both commands support `--dry-run` (writes nothing) and `--json`; `sync` refuses to delete anything when some call could not be read statically | ✅ `build` / `sync`; the other seven commands are not implemented |
 
@@ -248,9 +250,9 @@ Do not plan around these; they are **not implemented**:
 
 | Capability | Milestone |
 |---|---|
-| WAL (write-ahead log) — judged **unnecessary**: the batching window covers merged bursts, declarations are re-derivable from code, the writer serialises, and read-modify-write plus atomic replace gives the ordering (DESIGN §32.7) | not planned |
+| WAL (write-ahead log) — judged **unnecessary**: the batching window covers merged bursts, declarations are re-derivable from code, the writer serialises, and read-modify-write plus atomic replace gives the ordering | not planned |
 | C accelerator (future) — an **extra**, not a separate distribution: `pip install onconf[c]` | — |
-| Rule 1 (cleaning unknown keys) in the runtime path — moving it out to `onconf sync` is decided (ISSUE-035) but not implemented; the writer's declaration set is not persisted, so a writer handover resets the baseline (DESIGN §32.4) | with the CLI |
+| Runtime cleanup of undeclared keys — not implemented (see [roadmap §2.7](docs/roadmap/2.0.x/roadmap.md)); `onconf sync` does the deleting offline. The writer's declaration set is not persisted, so a writer handover resets the baseline | with the CLI |
 | Prefix-sharded locks — the current lock is a single lock per config directory | — |
 | System environment variables as a configuration **source** (`ONCONF_HOME` only locates the config dir) | — |
 | Per-format vocabulary export | — |
@@ -258,10 +260,11 @@ Do not plan around these; they are **not implemented**:
 | The other seven CLI commands — `check` / `format` / `diff` / `read` / `get` / `set` / `add` | M5 |
 | `.pyproject.toml` / `.gitignore`-aware scan scope for the CLI (today it walks the project with a fixed skip list) | — |
 
-See [`docs/roadmap.md`](docs/roadmap.md) for the full breakdown. The design docs live under
-[`docs/design/`](docs/design/index.md) (Chinese): [`init_config.md`](docs/design/init_config.md)
-and [`file_support.md`](docs/design/file_support.md) are being written as replacements for
-[`DESIGN.md`](docs/design/DESIGN.md), which retires piece by piece.
+See the [roadmap](docs/roadmap/index.md) for the full breakdown —
+[1.0.x](docs/roadmap/1.0.x/roadmap.md) is what shipped,
+[2.0.x](docs/roadmap/2.0.x/roadmap.md) is what comes next. The design docs live under
+[`docs/design/`](docs/design/index.md) (Chinese): [`init_config.md`](docs/design/init_config.md),
+[`file_support.md`](docs/design/file_support.md) and [`log.md`](docs/design/log.md).
 
 ## Quality gates
 
@@ -306,7 +309,7 @@ Invariants this project commits to (each one has a regression test in
 
 | Limitation | Consequence |
 |---|---|
-| **Rule 1 needs a long-lived writer** | The writer's declaration set is not persisted, so if writer processes come and go, `sync()` cleans against only its own process's declarations (DESIGN §32.4) |
+| **Rule 1 needs a long-lived writer** | The writer's declaration set is not persisted, so if writer processes come and go, `sync()` cleans against only its own process's declarations |
 | **The writer is a peer, not a service** | It lives inside whichever process claimed the directory first, and requests are serialised behind one lock — a client waits for its own request, and behind whatever is running. There is no queue and no background retry |
 | **The fallback path is process-local** | If the endpoint cannot be created at all, the engine degrades to direct writes under the OS lock: correctness holds, but rule 1's baseline becomes per-process |
 | **A symlinked value file is replaced** | Writes go through `os.replace`: the symlink is replaced by a regular file and the link's target is left untouched (the link itself is destroyed) |
@@ -326,10 +329,10 @@ declarations by **scanning the project for `conf(...)` calls** — the single-fu
 what makes that possible — and neither one imports your code:
 
 ```console
-$ onconf build                # rebuild <home>/settings.json + the vocabulary from the declarations
-$ onconf build --path ./out   # write the whole rebuild elsewhere; the original is untouched
-$ onconf sync                 # fill what is missing, then delete keys the declarations do not know
-$ onconf sync --no-clean      # fill only — delete nothing
+onconf build                # rebuild <home>/settings.json + the vocabulary from the declarations
+onconf build --path ./out   # write the whole rebuild elsewhere; the original is untouched
+onconf sync                 # fill what is missing, then delete keys the declarations do not know
+onconf sync --no-clean      # fill only — delete nothing
 ```
 
 `--home` / `--file-name` / `--file-type` / `--no-one-file` mirror the `AutoConf` parameters,
@@ -350,7 +353,7 @@ src/onconf/
   _textscan.py       # shared byte-level scanning used by the backends
   _lock.py           # cross-process exclusive lock (OS lock; the fallback path)
   _owner.py          # dedicated writer: endpoint election, IPC, the writer loop
-  _audit.py          # mandatory log + append-only audit (DESIGN §20 / §21)
+  _audit.py          # mandatory log + append-only audit
   _json_backend.py   # JSON value backend
   _yaml_backend.py   # YAML value backend
   _env_backend.py    # .env value backend
@@ -360,7 +363,7 @@ tests/               # one file per module + security invariants
 docs/                # documentation site sources (Chinese)
   design/init_config.md   # the two faces, bootstrap vs value layer, the three modes
   design/file_support.md  # value-file selection, return types, backends, vocabulary
-  design/DESIGN.md        # the old design draft — being replaced piece by piece
+  design/log.md           # logging and audit
 ```
 
 The module list grows as backends land; `src/onconf/` itself is authoritative.

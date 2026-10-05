@@ -23,7 +23,7 @@ body:
       options:
         - README
         - 文档站（MkDocs Material）
-        - docs/design/DESIGN.md 设计草案
+        - docs/design/ 下的设计稿（init_config / file_support / log）
         - CONTRIBUTING.md 贡献指南
         - SUPPORT.md 获取支持
         - SECURITY.md 安全策略
@@ -38,7 +38,7 @@ body:
     attributes:
       label: 具体位置
       description: 文件路径 + 小节标题或行号，或文档站链接。
-      placeholder: 例如 docs/design/DESIGN.md 第 18.2 节「读取 = 五步」
+      placeholder: 例如 docs/design/file_support.md 第 2 节「读回来的是什么」
     validations:
       required: true
 

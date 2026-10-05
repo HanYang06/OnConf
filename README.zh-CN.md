@@ -22,6 +22,8 @@
 > **`1.0.0` —— 首个稳定版**（2026-10-04）。公开 API 与磁盘格式从 1.0 起遵循
 > [语义化版本](https://semver.org/lang/zh-CN/)：只有**主版本号**变更时才做破坏性变更，
 > 每一次变更都记进[变更日志](CHANGELOG.md)。
+> **`1.0` 与 `2.0` 都是破坏性变更版本**：**后续一律以 2.0 为准**；1.0 的形态见
+> [路线图 1.0.x](docs/roadmap/1.0.x/roadmap.md)。
 > **定位句的两个半句现在都有机制支撑**：「不丢一个字节」由外科手术式回写保证；
 > 「不丢一次更新」由**专职写者**保证 —— 谁先抢绑到配置目录的端点，谁就是唯一的读写者，
 > 其余进程通过本地命名管道（Windows）/ Unix socket（POSIX）发请求；跨进程 **OS** 锁 +
@@ -141,13 +143,13 @@ conf("app.port", doc="服务端口")     # 只登记一个键、不给值（必�
 
 - **`None` / `""` / `0` 都算填了**；`MISSING` 是唯一哨兵。
 - 第 2 位置恒属 `value`，所以 `conf(key, x)` 永远是写；「只登记」只能由 `doc=` 关键字触发。
-- `doc` 是第三个**位置**参数，也是唯一的登记元数据。判据里不再出现第二个参数，
-  参数面自此**封闭**：以后新增参数不需要动判据。
+- `doc` 是第三个**位置**参数，也是唯一的登记元数据。判据只有这一位，
+  参数面**封闭**：以后新增参数不需要动判据。
 - 使用口**不能配置引擎**：`conf(..., home=…)` 是 `TypeError`。
 
 几条容易踩的语义：
 
-- **类型声明已取消，引擎也从不转换值。** `.env` 给你的就是 `"8080"`；
+- **没有类型声明，引擎也从不转换值。** `.env` 给你的就是 `"8080"`；
   想要 `int` 就在调用点写 `int(conf("PORT"))`——显式，而且在哪儿转换一眼可见。
 - **同一个键在不同后端可以读回不同类型，且刻意不承诺可移植**：`conf("app.tags")`
   在 JSON 上是列表 `["a", "b"]`，在 `.env` 上是字符串 `"['a', 'b']"`。这条差异不进词表
@@ -192,7 +194,7 @@ conf(build_key(), 8080)              # ❌
   宁可不动也不猜（想继续就加 `--no-clean`）。
 - **静态复核看不见它。** `grep app.post` 找不到声明点，任何按调用点做的工具都找不到 ——
   包括计划中的 `check`（它只出 warning，永远不出 error）。
-- **声明点不再自证。** 计算出来的值与说明（`X if cond else Y`、f-string）在你查看的地方
+- **声明点不自证。** 计算出来的值与说明（`X if cond else Y`、f-string）在你查看的地方
   是看不见的；循环 / 数据结构那种写法更进一步：从代码里回答不了「我们到底有哪些配置项」。
 
 值文件里的编辑器补全**不受影响** —— 词表是运行期按登记过的键生成的。
@@ -206,17 +208,17 @@ conf(build_key(), 8080)              # ❌
 | `.env` 值后端 —— **可选**；纯字符串，不认行内注释，不做键名映射 | ✅ |
 | TOML 值后端 —— **可选**；表头归一成点分键 | ✅ |
 | 词表（键空间）—— 持久化 + JSON Schema 往返 + 哈希短路。每个键只记三样：键、说明、默认值 | ✅ |
-| 值文件选定 —— `file_name`（缺省 `settings`）与 `file_type`（单值，缺省 `"json"`）决定 `<home>/<file_name>.<ext>`；「按存在性挑第一个」已退役 | ✅ |
+| 值文件选定 —— `file_name`（缺省 `settings`）与 `file_type`（单值，缺省 `"json"`）决定 `<home>/<file_name>.<ext>` | ✅ |
 | **多文件** —— `no_one_file=True` 后键的 `<路径>:` 前缀寻址 `<home>/<路径>.<ext>`（例：`conf("app/conf/net:net.id.post", 8080)` → `<home>/app/conf/net.json`）。没有前缀的键仍落在默认文件。词表一份、锁一把、每个 `(home, file_name)` 一个写者；每一段内嵌路径都过包含性校验 | ✅ |
 | 引擎装配 —— `conf` / `AutoConf` 端到端 | ✅ |
 | 跨进程排他锁 —— **操作系统**级锁（Windows `msvcrt.locking`、其它 `fcntl.flock`），进程崩溃也由 OS 释放；等 10 秒拿不到抛 `LockTimeoutError` | ✅ |
 | 锁内按需重读 —— 指纹（`mtime` + 大小）同时看值文件与词表，别人刚登记的键不会被挤掉 | ✅ |
-| **专职写者** —— 谁先绑上端点，谁就是唯一的读写者；其余进程通过 `multiprocessing.connection` 发请求。**抢绑本身就是选举**，所以不涉及锁文件（DESIGN §32） | ✅ |
+| **专职写者** —— 谁先绑上端点，谁就是唯一的读写者；其余进程通过 `multiprocessing.connection` 发请求。**抢绑本身就是选举**，所以不涉及锁文件 | ✅ |
 | **原子写** —— 同目录临时文件 → `fsync` → `os.replace`，POSIX 再加父目录 `fsync`；行尾与权限位原样保留，新建文件是 `0600` | ✅ |
 | 可选攒批窗口 —— `flush_window`（默认 `0`，当场落盘），窗口挂在**客户端**侧，所以每个引擎的窗口归自己 | ✅ |
 | 用值当键（间接寻址）+ 每次落盘都保证 `$schema` 指针（仅 JSON / YAML —— `.env` 与 `.toml` 放不下成员，会直接跳过） | ✅ |
 | 异常族 —— `ConfError` 作基类，含 `KeyNotRegisteredError`、`KeyHasNoValueError`、`UnknownEngineParamError` 与 `LockTimeoutError`（定义在 `_lock.py` 而非 `errors.py`；等 10 秒拿不到锁时抛）。`EnvSyntaxError`、`YamlFlatRequiredError`、`TomlFlatRequiredError` 是 `ValueError` 子类，**不会**被 `except ConfError` 捕获 | ✅ |
-| **日志与审计** —— 强制 `[Read]` / `[Write]` / `[Change]` / `[Error]` 事件流，外加进程结构三行 `[Start]` / `[Link]` / `[Send]`：去向可改、**不可关闭**；写全量（含 `op=skip`「想改没改」与 `op=noop`「本批声明已满足」），读按事务去重（`n=1000`）；每条写记录带调用点（`at=app/config.py:12`）、pid 与可选 `identity=`；终端列宽是**显示宽度**的弹性制表位（中文不偏列），文件形态保持紧凑且永不截断；`audit=True` 追加写 `<home>/audit.log`（`0600`、只追加、按大小轮转）。见 DESIGN §20 / §21 | ✅ |
+| **日志与审计** —— 强制 `[Read]` / `[Write]` / `[Change]` / `[Error]` 事件流，外加进程结构三行 `[Start]` / `[Link]` / `[Send]`：去向可改、**不可关闭**；写全量（含 `op=skip`「想改没改」与 `op=noop`「本批声明已满足」），读按事务去重（`n=1000`）；每条写记录带调用点（`at=app/config.py:12`）、pid 与可选 `identity=`；终端列宽是**显示宽度**的弹性制表位（中文不偏列），文件形态保持紧凑且永不截断；`audit=True` 追加写 `<home>/audit.log`（`0600`、只追加、按大小轮转）。见[审计日志](docs/design/log.md) | ✅ |
 | 测试 —— 每个模块一个测试文件，外加安全不变量 | ✅ 本地全绿；CI 在 ubuntu / windows / macos 上跑 |
 | **命令行（头两条命令）** —— `onconf build` 按声明完整重建值文件与词表（`--path` 把整份重建写到新目录，原目录不动）；`onconf sync` 补缺并删除声明里没有的键（`--no-clean` 则一个键都不删）。声明靠**扫描项目里的 `conf(...)` 调用**、解读参数得到 —— 单函数 API 正是这件事的前提。两条命令都支持 `--dry-run`（一个字节都不写）与 `--json`；扫不动的调用会让 `sync` 拒绝删除任何键 | ✅ `build` / `sync`；其余七条命令尚未实现 |
 
@@ -226,9 +228,9 @@ conf(build_key(), 8080)              # ❌
 
 | 能力 | 里程碑 |
 |---|---|
-| WAL（预写日志）—— **判定不做**：攒批窗口负责合并突发写、声明可从代码重新推导、专职写者负责串行、读改写 + 原子替换负责顺序（DESIGN §32.7） | 不计划 |
+| WAL（预写日志）—— **判定不做**：攒批窗口负责合并突发写、声明可从代码重新推导、专职写者负责串行、读改写 + 原子替换负责顺序 | 不计划 |
 | C 加速器（未来）—— 做成 **extra**，不另开包名：`pip install onconf[c]` | — |
-| 运行期的规则 1（清理未知键）—— 移出运行期、交给 `onconf sync` 已经定了（ISSUE-035），但尚未实现；写者的声明集不是持久状态，写者一换人基准就重置（DESIGN §32.4） | 随命令行 |
+| 运行期清理未声明的键 —— 尚未实现（见[路线图 §2.7](docs/roadmap/2.0.x/roadmap.md)），删除由离线的 `onconf sync` 承担；写者的声明集不是持久状态，写者一换人基准就重置 | 随命令行 |
 | 前缀分片锁 —— 当前是每个配置目录一把锁 | — |
 | 把系统环境变量当作配置**来源**（`ONCONF_HOME` 只用来定位配置目录） | — |
 | 按格式导出词表 | — |
@@ -236,9 +238,10 @@ conf(build_key(), 8080)              # ❌
 | 其余七条命令行 —— `check` / `format` / `diff` / `read` / `get` / `set` / `add` | M5 |
 | 命令行按 `pyproject.toml` / `.gitignore` 收敛扫描范围（现在是固定跳过名单 + 整个项目） | — |
 
-完整清单见 [`docs/roadmap.md`](docs/roadmap.md)。设计文档在 [`docs/design/`](docs/design/index.md)：
-[`init_config.md`](docs/design/init_config.md) 与 [`file_support.md`](docs/design/file_support.md)
-正在逐步替换 [`DESIGN.md`](docs/design/DESIGN.md)，旧稿随之一节一节退役。
+完整清单见[路线图](docs/roadmap/index.md)：[1.0.x](docs/roadmap/1.0.x/roadmap.md) 是**已发布**的
+状态记录，[2.0.x](docs/roadmap/2.0.x/roadmap.md) 是**下一版**收什么。设计文档在
+[`docs/design/`](docs/design/index.md)：[`init_config.md`](docs/design/init_config.md)、
+[`file_support.md`](docs/design/file_support.md) 与 [`log.md`](docs/design/log.md)。
 
 ## 质量门槛
 
@@ -281,7 +284,7 @@ CodeQL、依赖审查与 OpenSSF Scorecard。
 
 | 限制 | 后果 |
 |---|---|
-| **规则 1 需要写者长命** | 写者的声明集不是持久状态：写者进程起一个退一个时，`sync()` 只能拿**自己这一个进程**的声明去清理（DESIGN §32.4） |
+| **规则 1 需要写者长命** | 写者的声明集不是持久状态：写者进程起一个退一个时，`sync()` 只能拿**自己这一个进程**的声明去清理 |
 | **写者是同伴，不是服务** | 它住在最先抢到该目录的那个进程里，请求在一把锁后面串行 —— 客户端要等自己的请求，还要等前面那个跑完。没有队列，也没有后台重试 |
 | **兜底路径是进程内的** | 端点完全建不出来时，引擎退回「直接写 + OS 锁」：正确性在，但规则 1 的基准变成每进程各自一份 |
 | **符号链接会被替换** | 写入走 `os.replace`：符号链接本身被替换成普通文件，链接目标一个字节都不会被写（链接就此断开） |
@@ -300,10 +303,10 @@ CodeQL、依赖审查与 OpenSSF Scorecard。
 找到声明 —— 单函数 API 正是这件事的前提 —— 而且**从不 import 你的代码**：
 
 ```console
-$ onconf build                # 按声明完整重建 <home>/settings.json 与词表
-$ onconf build --path ./out   # 整份重建写到别处；原目录一个字节不动
-$ onconf sync                 # 补缺，然后删掉声明里没有的键
-$ onconf sync --no-clean      # 只补缺，一个键都不删
+onconf build                # 按声明完整重建 <home>/settings.json 与词表
+onconf build --path ./out   # 整份重建写到别处；原目录一个字节不动
+onconf sync                 # 补缺，然后删掉声明里没有的键
+onconf sync --no-clean      # 只补缺，一个键都不删
 ```
 
 `--home` / `--file-name` / `--file-type` / `--no-one-file` 与 `AutoConf` 的参数一一对应；
@@ -324,7 +327,7 @@ src/onconf/
   _textscan.py       # 各后端共用的字节级扫描
   _lock.py           # 跨进程排他锁（OS 锁，兜底路径）
   _owner.py          # 专职写者：端点选举、IPC、写者循环
-  _audit.py          # 强制日志 + append-only 审计（DESIGN §20 / §21）
+  _audit.py          # 强制日志 + append-only 审计
   _json_backend.py   # JSON 值后端
   _yaml_backend.py   # YAML 值后端
   _env_backend.py    # .env 值后端
@@ -334,7 +337,7 @@ tests/               # 每个模块一个测试文件 + 安全不变量
 docs/                # 文档站源码（中文）
   design/init_config.md   # 两个面、引导层与值层、三种模式
   design/file_support.md  # 值文件选定、返回类型、后端、词表
-  design/DESIGN.md        # 旧设计稿 —— 正在被逐节替换
+  design/log.md           # 日志与审计
 ```
 
 模块会随后端增加而变多，以 `src/onconf/` 本身为准。

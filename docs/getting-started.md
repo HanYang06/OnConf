@@ -49,7 +49,7 @@ print(conf("app.server.port"))  # 读
 1. `conf(key)` 是读。读不到会抛异常，不会静默返回 `None`。
 2. `conf(key, value)` 是**声明 + 写**，返回**当前生效值**——文件里已有的值优先，不是你刚传的默认值。
 3. 引擎对值是**透明的**：文件里写 `"8080"` 读回来就是字符串，要整数请自己
-   `int(conf("app.server.port"))`。类型声明（`type=`）已整体取消，引擎不推断也不转换。
+   `int(conf("app.server.port"))`。引擎不接受类型声明，也不推断、不转换。
 
 ## 声明要写字面量
 
@@ -111,8 +111,7 @@ for key, value in TABLE:
 
     v1 只支持在**第一次调用之前**设置 `home` / `file_name` / `file_type` / `no_one_file` /
     `log` / `audit` / `identity` / `flush_window` / `lock_timeout`。
-    引擎已经启动后再带上参数调用 `AutoConf(...)` 会抛 `ConfError`。命名空间与「零全局状态」的
-    取舍见 `docs/design/DESIGN.md` §26。
+    引擎已经启动后再带上参数调用 `AutoConf(...)` 会抛 `ConfError`。
 
 ## 日志与审计去哪儿
 
@@ -193,10 +192,10 @@ AutoConf(identity="order-svc@host-3")  # 每行多一个 id=，回答「哪个�
 （只做语法分析，**不 import 你的代码**）：
 
 ```console
-$ onconf build                # 按声明完整重建值文件与词表（先备份，或用 --path）
-$ onconf build --path ./out   # 整份重建写到别处；原目录一个字节不动
-$ onconf sync                 # 补缺，然后删掉声明里没有的键
-$ onconf sync --no-clean      # 只补缺，一个键都不删
+onconf build                # 按声明完整重建值文件与词表（先备份，或用 --path）
+onconf build --path ./out   # 整份重建写到别处；原目录一个字节不动
+onconf sync                 # 补缺，然后删掉声明里没有的键
+onconf sync --no-clean      # 只补缺，一个键都不删
 ```
 
 `--home` / `--file-name` / `--file-type` / `--no-one-file` 与 `AutoConf` 的参数一一对应；

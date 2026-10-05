@@ -7,7 +7,7 @@
 
 本文件自 v0.1.0 起**人工维护**；v0.1.0 的历史条目由真实 git 提交整理
 （`git log --oneline --no-merges`，整理范围至 `988d5df`），每一条都对应一个真实提交，
-不是事后补写的愿景。尚未发布的能力与进度见 [docs/roadmap.md](docs/roadmap.md)。
+不是事后补写的愿景。尚未发布的能力与进度见[路线图](docs/roadmap/index.md)。
 
 ## [Unreleased]
 
@@ -39,7 +39,7 @@
 
 ### Added
 
-- **命令行 `onconf build` / `onconf sync`**（D08 §1 的头两条命令）：声明靠**静态扫描项目里的
+- **命令行 `onconf build` / `onconf sync`**（[路线图 §4](docs/roadmap/2.0.x/roadmap.md) 的头两条命令）：声明靠**静态扫描项目里的
   `conf(...)` 调用**得到（`ast.parse`，不 import、不执行用户代码），按 `key` / `value` / `doc`
   的参数形态解读。`build` 按声明完整重建值文件与词表（`--path` 把整份重建写到新目录）；
   `sync` 补缺并删除声明里没有的键（`--no-clean` 只补缺）。两者都支持 `--dry-run`（一个字节
@@ -63,7 +63,8 @@
 - 路线图的「未实现」段按**批次**重排（下一批 / 未来 / 不计划 / 已定不动），并把批次写进
   [`docs/design/log.md`](docs/design/log.md)、[`docs/design/init_config.md`](docs/design/init_config.md)、
   [`docs/design/file_support.md`](docs/design/file_support.md)：**下一批** = 日志两通道与
-  `audit` 口径（D06）、运行期规则 1 的移除；**未来** = 落盘形式与加密/轮转（D06/D07）、
+  `audit` 口径（[路线图 §3](docs/roadmap/2.0.x/roadmap.md)）、运行期规则 1 的移除；
+  **未来** = 落盘形式与加密/轮转（[路线图 §5](docs/roadmap/2.0.x/roadmap.md)）、
   `.env` 结构开关（2.2）、其余命令；**已定不动** = `$schema` 指针按载体能力、不新增参数。
 - README 一对与 [`docs/api/index.md`](docs/api/index.md) 补**主 / 辅后端**标注
   （JSON 是主后端：缺省值、能力最完整、`$schema` 指针的落点；YAML / TOML / `.env` 为可选后端）。
@@ -80,11 +81,25 @@
   并补齐 §11.1 / §17.7 / §18.1 情形 4 的认领。
 - 威胁模型 **T1 由「白名单 → 不适用」改为「包含性校验」**，新增 **T13**（命令行静态扫描与
   删除动作）；不变量表与边界判定表同步。
-- README 一对、`docs/api/index.md`、`docs/design/*`、`docs/roadmap.md` 同步；路线图把多文件与
+- README 一对、`docs/api/index.md`、`docs/design/*`、[路线图](docs/roadmap/2.0.x/roadmap.md)
+  同步；路线图把多文件与
   `build` / `sync` 从「未实现」移到「已实现」，`.env` 的 `dict` / `list` 仍预计 2.2。
 - 修掉三页用户文档里的陈旧陈述（`docs/index.md`、`docs/getting-started.md`、
   `docs/architecture/index.md`）：`type=` / `TypeConflictError` / 按存在性挑值文件 /
   `__all__` 符号数 / `op=overwrite` / 词表记类型。
+- **路线图重做**：[`docs/roadmap/`](docs/roadmap/index.md) 按版本分开 ——
+  [1.0.x](docs/roadmap/1.0.x/roadmap.md) 记 v1.0.0 实际交付的能力、
+  [2.0.x](docs/roadmap/2.0.x/roadmap.md) 记下一版收什么；每条固定「标题 / 正文 / 状态 /
+  引用设计文稿」四段，不用表格。旧的 `docs/roadmap.md` 与嵌套的 `docs/issues/` 删除，
+  文档里指向它们的 D0N / ISSUE-NNN 引用一并清掉；`mkdocs.yml` 导航同步；
+  README 一对补一条版本口径 —— **1.0 与 2.0 都是破坏性变更版本，后续以 2.0 为准**。
+- **文档口径统一为「只写现代」**：正文里不再出现「以前是…、改成了…、为什么改」这类
+  变更叙述，作废 / 已替换 / 曾考虑之类的标记一并去掉（沿革看 git 与本文件）；
+  `CONTRIBUTING.md` §8 与 `AGENTS.md` §6 记下这条约定；威胁模型的「修订记录」一节删除。
+- **旧设计稿 `docs/design/DESIGN.md` 退役删除**：现役口径就是
+  [设计稿索引](docs/design/index.md) 下的三份。源码与测试里指向它的节号引用全部清掉
+  （不留悬空编号），`AGENTS.md` §3.4 改成「引用现役设计稿的文件名 + 小节」；
+  `mkdocs.yml` 导航、codespell / markdownlint 的排除项、PR 与 issue 模板同步。
 
 ## [1.0.0] - 2026-10-04
 
@@ -195,7 +210,7 @@ classifier 仍是 `Development Status :: 2 - Pre-Alpha`，页面正文也还写�
 
 - 「跨进程规则 1」（清理未知键）只在写者**长命**时成立：写者的声明集不是持久状态，写者
   一换人基准就重置。进程起一个退一个的用法仍不安全 —— 相关取舍见 DESIGN §32.4 与
-  [docs/roadmap.md](docs/roadmap.md)。
+  [路线图](docs/roadmap/index.md)。
 - 写者进程内**自己**的调用与它的应答线程没有共用同一把锁：文件一致性由 OS 锁兜着，
   但其中一边可能等满 `lock_timeout`，引擎内存态在那个窗口里可竞争。没有回归测试守护，
   见[威胁模型](docs/security/threat-model.md) T4 的残余风险与 DESIGN §32.8 的「已知边界」。
@@ -238,4 +253,4 @@ classifier 仍是 `Development Status :: 2 - Pre-Alpha`，页面正文也还写�
 `v0.1.0` **从未打过 tag、也从未发布**，所以它只能按提交区间比对（`3ef3f4f...d166050`）；
 `v1.0.0` 的对比基准因此也退回同一个起点。详见 `CONTRIBUTING.md` §4.4 的版本闸门。
 
-未发布能力见 [docs/roadmap.md](docs/roadmap.md)。
+未发布能力见 [2.0.x 路线图](docs/roadmap/2.0.x/roadmap.md)。
