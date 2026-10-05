@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from onconf._core import (
@@ -49,7 +51,7 @@ class TestRead:
         assert isinstance(got.value, str)
 
     def test_vocab_default_is_returned_verbatim(self) -> None:
-        vocab = {"a.b": VocabEntry("a.b", type=int, default=8080)}
+        vocab = {"a.b": VocabEntry("a.b", default=8080)}
         got = read_value("a.b", {}, vocab)
         assert (got.value, got.origin) == (8080, "vocab")
 
@@ -79,7 +81,7 @@ class TestReconcile:
         assert _kinds(actions) == [("clean", "ghost")]
 
     def test_rule2_fill_missing_with_default(self) -> None:
-        actions = reconcile([Decl("a.b", 512, type=int)], {}, {})
+        actions = reconcile([Decl("a.b", 512)], {}, {})
         assert ("fill", "a.b") in _kinds(actions)
         assert ("register", "a.b") not in _kinds(actions)
 
@@ -98,24 +100,24 @@ class TestReconcile:
         skip = next(a for a in actions if a.kind == "skip")
         assert skip.old == 1024
         assert skip.value == 512
-        assert not [a for a in actions if a.kind in ("fill", "overwrite")]
+        assert not [a for a in actions if a.kind == "fill"]
 
-    def test_rule4_force_overwrites(self) -> None:
-        actions = reconcile([Decl("a.b", 512)], {"a.b": 1024}, {}, force_keys={"a.b"})
-        over = next(a for a in actions if a.kind == "overwrite")
-        assert over.old == 1024
-        assert over.value == 512
+    def test_rule4_has_no_overwrite_escape(self) -> None:
+        """运行期**没有**覆盖出口：值不一致永远只产出一条 ``skip``。
 
-    def test_force_is_per_key_not_a_global_switch(self) -> None:
-        """Force 逐项生效：同一次对账里，没点名的键仍然尊重文件（§18.6）。"""
-        decls = [Decl("a.b", 512), Decl("c.d", 1)]
-        facts = {"a.b": 1024, "c.d": 2}
-        actions = reconcile(decls, facts, {}, force_keys={"a.b"})
-        assert ("overwrite", "a.b") in _kinds(actions)
-        assert ("skip", "c.d") in _kinds(actions)
+        覆盖既存值是**人主动发起**的事（命令行的 ``build`` / ``sync``），
+        不属于代码的写路径 —— 代码只能补它没有的，不能改它已经有的。
+        """
+        actions = reconcile([Decl("a.b", 512), Decl("c.d", 1)], {"a.b": 1024, "c.d": 2}, {})
+        assert [k for k in _kinds(actions) if k[0] == "skip"] == [("skip", "a.b"), ("skip", "c.d")]
+        assert "overwrite" not in {a.kind for a in actions}
+
+    def test_reconcile_has_no_force_knob(self) -> None:
+        """``force_keys`` 已随 ``force`` 一起移除：这条路径上没有「点名覆盖」。"""
+        assert "force_keys" not in inspect.signature(reconcile).parameters
 
     def test_rule4_skip_still_updates_vocab_fingerprint(self) -> None:
-        """值不动，但词表里的默认值指纹要更新（§18.5 结论 1，归属权）。"""
+        """值不动，但词表里的默认值指纹要更新（只动词表、不动文件）。"""
         vocab = {"a.b": VocabEntry("a.b", default=512)}
         actions = reconcile([Decl("a.b", 2048)], {"a.b": 1024}, vocab)
         assert ("skip", "a.b") in _kinds(actions)
@@ -123,13 +125,13 @@ class TestReconcile:
         assert meta.value == 2048
 
     def test_rule3_update_meta_when_vocab_missing(self) -> None:
-        actions = reconcile([Decl("a.b", 512, type=int, doc="端口")], {"a.b": 512}, {})
+        actions = reconcile([Decl("a.b", 512, doc="端口")], {"a.b": 512}, {})
         assert _kinds(actions) == [("update_meta", "a.b")]
 
     def test_no_action_when_everything_matches(self) -> None:
         """全量对账的稳态：什么都不做，这是「写放大归零」的前提。"""
-        vocab = {"a.b": VocabEntry("a.b", type=int, doc="端口", default=512)}
-        actions = reconcile([Decl("a.b", 512, type=int, doc="端口")], {"a.b": 512}, vocab)
+        vocab = {"a.b": VocabEntry("a.b", doc="端口", default=512)}
+        actions = reconcile([Decl("a.b", 512, doc="端口")], {"a.b": 512}, vocab)
         assert actions == []
 
     def test_clean_and_fill_together(self) -> None:
@@ -163,9 +165,9 @@ class TestDirectiveKeys:
             "hub.default": "main",
         }
         decls = [
-            Decl("slot.max.byte.b", 512, type=int),
-            Decl("pack.max.byte", 2 * 1024**3, type=int),
-            Decl("hub.default", "main", type=str),
+            Decl("slot.max.byte.b", 512),
+            Decl("pack.max.byte", 2 * 1024**3),
+            Decl("hub.default", "main"),
         ]
         actions = reconcile(decls, facts, {})
         assert [a for a in actions if a.kind == "clean"] == []
@@ -174,13 +176,13 @@ class TestDirectiveKeys:
 
 
 # --------------------------------------------------------------------------- #
-# §18.7 声明集哈希
+# 声明集哈希
 # --------------------------------------------------------------------------- #
 
 
 class TestDeclarationHash:
     def test_stable(self) -> None:
-        decls = [Decl("a.b", 512, type=int, doc="x")]
+        decls = [Decl("a.b", 512, doc="x")]
         assert declaration_hash(decls) == declaration_hash(list(decls))
 
     def test_order_independent(self) -> None:

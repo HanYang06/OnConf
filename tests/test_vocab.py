@@ -9,36 +9,8 @@ import json
 import pytest
 
 from onconf._core import NO_VALUE, Decl, declaration_hash, read_value, reconcile
-from onconf._vocab import Vocabulary, type_from_json, type_to_json
+from onconf._vocab import Vocabulary
 from onconf.errors import KeyHasNoValueError
-
-
-class TestTypeMapping:
-    @pytest.mark.parametrize(
-        ("py", "js"),
-        [
-            (bool, "boolean"),
-            (int, "integer"),
-            (float, "number"),
-            (str, "string"),
-            (list, "array"),
-            (tuple, "array"),
-            (dict, "object"),
-            (type(None), "null"),
-            (None, None),
-        ],
-    )
-    def test_py_to_json(self, py: type | None, js: str | None) -> None:
-        assert type_to_json(py) == js
-
-    def test_bool_is_not_int(self) -> None:
-        """Bool 是 int 的子类，映射顺序错了会把 bool 写成 integer。"""
-        assert type_to_json(bool) == "boolean"
-
-    def test_json_to_py(self) -> None:
-        assert type_from_json("integer") is int
-        assert type_from_json("boolean") is bool
-        assert type_from_json(None) is None
 
 
 class TestTriState:
@@ -71,14 +43,13 @@ class TestSchemaRoundTrip:
         vocab = Vocabulary()
         vocab.register(Decl("only.registered", doc="只登记"))
         vocab.register(Decl("is.none", None))
-        vocab.register(Decl("has.default", 512, type=int, doc="端口"))
+        vocab.register(Decl("has.default", 512, doc="端口"))
 
         restored = Vocabulary.from_schema(vocab.to_schema())
 
         assert restored.get("only.registered").default is NO_VALUE  # type: ignore[union-attr]
         assert restored.get("is.none").default is None  # type: ignore[union-attr]
         assert restored.get("has.default").default == 512  # type: ignore[union-attr]
-        assert restored.get("has.default").type is int  # type: ignore[union-attr]
 
     def test_absent_default_key_vs_null_default(self) -> None:
         vocab = Vocabulary()
@@ -94,24 +65,31 @@ class TestSchemaRoundTrip:
         vocab.register(Decl("a.b", 1, doc="格长档位之一"))
         assert vocab.to_schema()["properties"]["a.b"]["description"] == "格长档位之一"
 
-    def test_tuple_type_is_preserved_via_extension(self) -> None:
-        """JSON Schema 没有 tuple，靠 x-onconf-py 无损保留。"""
+    def test_schema_carries_no_type_field(self) -> None:
+        """类型声明已移除：Schema 节点只剩 ``default`` / ``description``。"""
         vocab = Vocabulary()
-        vocab.register(Decl("a.b", (1, 2), type=tuple))
-        schema = vocab.to_schema()["properties"]["a.b"]
-        assert schema["type"] == "array"
-        assert schema["x-onconf-py"] == "tuple"
-        assert Vocabulary.from_schema(vocab.to_schema()).get("a.b").type is tuple  # type: ignore[union-attr]
+        vocab.register(Decl("a.b", 512, doc="端口"))
+        node = vocab.to_schema()["properties"]["a.b"]
+        assert set(node) == {"description", "default"}
+
+    def test_legacy_type_fields_are_ignored(self) -> None:
+        """旧词表里残留的 ``type`` / ``x-onconf-py`` 直接忽略，落盘时自然清掉。"""
+        legacy = {
+            "properties": {"a.b": {"type": "integer", "x-onconf-py": "int", "default": 512}}
+        }
+        vocab = Vocabulary.from_schema(legacy)
+        assert vocab.get("a.b").default == 512  # type: ignore[union-attr]
+        assert set(vocab.to_schema()["properties"]["a.b"]) == {"default"}
 
     def test_schema_is_json_serialisable(self) -> None:
         vocab = Vocabulary()
-        vocab.register(Decl("a.b", 512, type=int, doc="端口"))
+        vocab.register(Decl("a.b", 512, doc="端口"))
         restored = Vocabulary.from_schema(json.loads(json.dumps(vocab.to_schema())))
         assert restored.get("a.b").doc == "端口"  # type: ignore[union-attr]
         assert restored.get("a.b").default == 512  # type: ignore[union-attr]
 
     def test_hash_survives_round_trip(self) -> None:
-        decls = [Decl("a.b", 512, type=int)]
+        decls = [Decl("a.b", 512)]
         vocab = Vocabulary()
         vocab.apply(reconcile(decls, {}, {}), decls)
         restored = Vocabulary.from_schema(vocab.to_schema())
@@ -119,13 +97,13 @@ class TestSchemaRoundTrip:
 
 
 class TestHashShortCircuit:
-    """§18.7：对得上 ⇒ 整体跳过；对不上 ⇒ 走完整对账（不是报错）。"""
+    """声明集哈希：对得上 ⇒ 整体跳过；对不上 ⇒ 走完整对账（不是报错）。"""
 
     def test_first_run_is_dirty(self) -> None:
         assert not Vocabulary().matches([Decl("a.b", 512)])
 
     def test_after_commit_it_matches(self) -> None:
-        decls = [Decl("a.b", 512, type=int)]
+        decls = [Decl("a.b", 512)]
         vocab = Vocabulary()
         vocab.apply(reconcile(decls, {}, {}), decls)
         assert vocab.matches(decls)
@@ -146,7 +124,7 @@ class TestHashShortCircuit:
 
 class TestApply:
     def test_apply_registers_and_sets_hash(self) -> None:
-        decls = [Decl("a.b", 512, type=int, doc="端口")]
+        decls = [Decl("a.b", 512, doc="端口")]
         vocab = Vocabulary()
         vocab.apply(reconcile(decls, {}, {}), decls)
         assert vocab.get("a.b").default == 512  # type: ignore[union-attr]
@@ -159,7 +137,7 @@ class TestApply:
         assert "ghost" not in vocab
 
     def test_skip_does_not_touch_file_but_meta_is_updated(self) -> None:
-        """§18.5 结论 1：尊重文件，但词表里的默认值指纹要更新。"""
+        """尊重文件，但词表里的默认值指纹要更新（只动词表、不动文件）。"""
         vocab = Vocabulary()
         vocab.register(Decl("a.b", 512))
         actions = reconcile([Decl("a.b", 2048)], {"a.b": 1024}, vocab.as_dict())

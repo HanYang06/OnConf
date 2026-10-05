@@ -42,6 +42,9 @@ _WS = " \t"
 _DOC_MARKERS = ("---", "...")
 _PLAIN_KEY_OK = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
+#: 新建值文件时的**种子文本**：YAML 的空文件本身就是合法骨架。
+EMPTY_TEXT = ""
+
 
 class YamlFlatRequiredError(ValueError):
     """值文件里出现了 v1 不支持的构造（嵌套 / 块标量 / 跨行集合）。"""

@@ -25,7 +25,6 @@ from onconf.errors import (
     ConfError,
     KeyHasNoValueError,
     KeyNotRegisteredError,
-    TypeConflictError,
 )
 
 
@@ -72,7 +71,7 @@ class TestWriteRecords:
     ) -> None:
         """``fill`` 写一条 ``[Write]``，值真的变了再写一条 ``[Change] old → new``（§20.6）。"""
         engine = Engine(tmp_path)
-        engine("app.server.port", 512, type=int)
+        engine("app.server.port", 512)
 
         err = capsys.readouterr().err
         write = _first(err, "Write")
@@ -115,20 +114,19 @@ class TestWriteRecords:
         assert "new=2" in skip
         assert "reason=尊重文件" in skip
 
-    def test_force_is_logged_as_overwrite(
+    def test_a_differing_value_is_never_logged_as_a_change(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
+        """运行期没有覆盖出口：值不一致只记 ``op=skip``，**没有** ``[Change]``。"""
         engine = Engine(tmp_path)
         engine("k", 1)
         capsys.readouterr()
 
-        engine("k", 2, force=True)
+        engine("k", 2)
 
         err = capsys.readouterr().err
-        assert "op=overwrite" in err
-        change = _first(err, "Change")
-        assert "old=1" in change
-        assert "new=2" in change
+        assert "op=skip" in err
+        assert "[Change]" not in err
 
     def test_rule_one_is_logged_as_clean(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -231,17 +229,17 @@ class TestErrorRecords:
 
         assert "err=key-has-no-value" in capsys.readouterr().err
 
-    def test_a_type_conflict_is_logged_before_it_raises(
+    def test_a_backend_rejection_is_logged_before_it_raises(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        engine = Engine(tmp_path)
-        with pytest.raises(TypeConflictError):
-            engine("port", "8080", type=int)
+        """后端拒收一个值（TOML 没有 null）也要先留痕，再原样抛。"""
+        (tmp_path / "settings.toml").write_text("a = 1\n", encoding="utf-8")
+        engine = Engine(tmp_path, file_type="toml")
+        with pytest.raises(TypeError):
+            engine("port", None)
 
         err = capsys.readouterr().err
-        assert "err=type-conflict" in err
-        assert 'msg="want=int got=str"' in err
-        assert _HERE.search(err), "声明期失败也要带调用点"
+        assert "err=type-error" in err
 
     def test_a_lock_timeout_is_logged(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
@@ -327,7 +325,7 @@ class TestRendering:
     ) -> None:
         """写不进去的值（TOML 没有 null）也要留痕 —— 它抛的是 TypeError，不是 ConfError。"""
         (tmp_path / "settings.toml").write_text("", encoding="utf-8")
-        engine = Engine(tmp_path)
+        engine = Engine(tmp_path, file_type="toml")
         with pytest.raises(TypeError):
             engine("k", None)
 
@@ -340,7 +338,7 @@ class TestRendering:
     ) -> None:
         """文件坏了（TOML 表数组是 v1 明确拒绝的构造）也要留痕，异常照原样抛。"""
         (tmp_path / "settings.toml").write_text("[[servers]]\nport = 1\n", encoding="utf-8")
-        engine = Engine(tmp_path)
+        engine = Engine(tmp_path, file_type="toml")
         with pytest.raises(ValueError, match="表数组"):
             engine("app.port")
 
@@ -578,11 +576,11 @@ class TestBrokenSinks:
         def boom(_path: Path, _text: str, *, rotate: bool) -> None:  # noqa: ARG001 - 签名对齐
             raise OSError("磁盘满了")
 
-        engine = Engine(tmp_path, audit=True)
+        engine = Engine(tmp_path, file_type="toml", audit=True)
         monkeypatch.setattr(_audit, "_append_file", boom)
 
-        with pytest.raises(TypeConflictError):
-            engine("port", "8080", type=int)
+        with pytest.raises(TypeError):
+            engine("port", None)
         with pytest.raises(KeyNotRegisteredError):
             engine("nope")
 

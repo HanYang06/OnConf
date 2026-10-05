@@ -43,6 +43,9 @@ from ._textscan import balanced_on_one_line, value_span
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+#: 新建值文件时的**种子文本**：TOML 的空文件本身就是合法骨架。
+EMPTY_TEXT = ""
+
 #: 可打印字符的下界（0x20 是空格）；小于它的控制字符要转义
 _PRINTABLE_FROM = 0x20
 

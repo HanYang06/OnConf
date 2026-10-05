@@ -8,8 +8,13 @@
 * §17.7 读写靠参数结构判定，``None`` 是合法值
 * §18.1 写入 = 三集合全量对账（四条规则）
 * §18.2 读取 = 五步 + 两类错误
-* §18.3 类型推断 → 与声明比对 → 转换
-* §18.7 声明集哈希（脏检查，不是锁）
+
+引擎**不做类型推断、也不做向声明类型的转换**：值是载体原生的，原样进出
+（口径见 ``docs/design/file_support.md``）。词表也只有三样东西：键、说明、默认值。
+
+**写入只有"补缺"与"补元数据"两种动作**：对文件里已经存在的值一律只读
+（值不一致时产出 ``skip``，记一条"想改没改"）。覆盖既存值不属于运行期路径 ——
+它是人主动发起的命令行动作（``build`` / ``sync``），见 ``docs/design/init_config.md``。
 """
 
 from __future__ import annotations
@@ -17,13 +22,9 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from .errors import KeyHasNoValueError, KeyNotRegisteredError
-
-
-if TYPE_CHECKING:
-    from collections.abc import Container
 
 
 # --------------------------------------------------------------------------- #
@@ -73,7 +74,6 @@ class Decl:
 
     key: str
     value: Any = MISSING  # MISSING ⇒ 只登记不给值（词表里记 NO_VALUE）
-    type: type | None = None
     doc: str | None = None
     #: **审计用**的调用点（``app/config.py:12``）。它不参与对账，也不进声明集哈希 ——
     #: 换个调用位置不该让声明看起来「变了」，否则每次重构都会全量重写一遍。
@@ -82,10 +82,9 @@ class Decl:
 
 @dataclass(frozen=True)
 class VocabEntry:
-    """词表里的一条登记 —— **库自己的资产**（§18.6 归属权）。"""
+    """词表里的一条登记 —— **库自己的资产**（归属权见 ``docs/design/file_support.md``）。"""
 
     key: str
-    type: type | None = None
     doc: str | None = None
     default: Any = NO_VALUE  # NO_VALUE ⇒ 无默认值；None ⇒ 默认值就是 None
 
@@ -101,7 +100,7 @@ class ReadResult:
 class Action:
     """对账产出的一条动作（纯数据，可直接喂给审计日志）。"""
 
-    kind: str  # clean | fill | register | update_meta | skip | overwrite
+    kind: str  # clean | fill | register | update_meta | skip
     key: str
     value: Any = MISSING
     old: Any = MISSING
@@ -169,10 +168,10 @@ def _is_directive(key: str) -> bool:
 
 
 def _meta_stale(entry: VocabEntry | None, decl: Decl) -> bool:
-    """词表是否需要更新：类型、文档、或**默认值指纹**（§17.8）有变。"""
+    """词表是否需要更新：说明、或**默认值指纹**（§17.8）有变。"""
     if entry is None:
         return True
-    if entry.type != decl.type or entry.doc != decl.doc:
+    if entry.doc != decl.doc:
         return True
     want = NO_VALUE if decl.value is MISSING else decl.value
     return bool(entry.default != want)
@@ -183,15 +182,15 @@ def reconcile(
     facts: dict[str, Any],
     vocab: dict[str, VocabEntry],
     *,
-    force_keys: Container[str] = frozenset(),
     clean_unknown: bool = True,
 ) -> list[Action]:
     """把「代码声明的期望集」对到「事实集」上，产出动作清单。
 
     规则 1 清理未知数据 / 2 补充缺失数据 / 3 补充缺失参数 / 4 保持原有数据。
 
-    ``force_keys`` 是情形 4 的唯一例外，且**逐项生效、没有全局开关**（§18.6）：
-    只有列在里面的键才允许覆盖文件里已有的值。
+    情形 4（两边都有、值不一致）**没有例外**：以文件为准，产出一条 ``skip``。
+    运行期路径不改文件里已经存在的值 —— 覆盖是命令行的显式人工动作（``build`` /
+    ``sync``），代码只能补它没有的，不能改它已经有的（``docs/design/init_config.md``）。
 
     ``clean_unknown`` 为什么必须是个开关
     ------------------------------------
@@ -245,15 +244,9 @@ def reconcile(
 
         # 两边都有
         if decl.value is not MISSING and facts[key] != decl.value:
-            # 规则 4：值不一致 ⇒ 尊重文件
-            if key in force_keys:
-                actions.append(
-                    Action("overwrite", key, value=decl.value, old=facts[key], reason="force")
-                )
-            else:
-                actions.append(
-                    Action("skip", key, old=facts[key], value=decl.value, reason="尊重文件")
-                )
+            # 规则 4：值不一致 ⇒ 尊重文件。**运行期没有覆盖出口**：
+            # 想改已存在的值是人主动做的事，走命令行的 build / sync。
+            actions.append(Action("skip", key, old=facts[key], value=decl.value, reason="尊重文件"))
         if stale:
             # 规则 3：补充缺失参数（含默认值指纹更新 —— 只动词表，不动文件）
             actions.append(
@@ -269,12 +262,8 @@ def reconcile(
 
 
 # --------------------------------------------------------------------------- #
-# §18.7 声明集哈希
+# 声明集哈希
 # --------------------------------------------------------------------------- #
-
-
-def _type_name(t: type | None) -> str | None:
-    return None if t is None else f"{t.__module__}.{t.__qualname__}"
 
 
 def declaration_hash(decls: list[Decl]) -> str:
@@ -286,14 +275,11 @@ def declaration_hash(decls: list[Decl]) -> str:
     值用 ``["missing"]`` / ``["value", v]`` 两段式编码，不能写成
     ``None if v is MISSING else v`` —— 那会让「只登记」和「值就是 None」
     塌陷成同一个指纹，正是 §17.7 三态里最容易踩的那一脚。
+
+    载荷只有键、说明、值三样：词表不再记类型，类型也就不该进指纹。
     """
     payload = [
-        [
-            d.key,
-            _type_name(d.type),
-            d.doc,
-            ["missing"] if d.value is MISSING else ["value", d.value],
-        ]
+        [d.key, d.doc, ["missing"] if d.value is MISSING else ["value", d.value]]
         for d in sorted(decls, key=lambda d: d.key)
     ]
     blob = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=repr)

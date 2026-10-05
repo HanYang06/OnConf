@@ -94,7 +94,6 @@ from .errors import (
     ConfError,
     KeyHasNoValueError,
     KeyNotRegisteredError,
-    TypeConflictError,
 )
 
 
@@ -337,7 +336,6 @@ class Request:
     op: str
     key: str = ""
     decls: tuple[Decl, ...] = ()
-    forced: tuple[str, ...] = ()
     clean: bool = False
     #: **发起方**的 pid 与身份。审计记的是「谁发起的」而不是「谁执行的」（§20.3），
     #: 所以这两个字段跟着请求过线；声明自己的调用点则在 :attr:`Decl.at` 上。
@@ -361,7 +359,6 @@ _ERROR_KINDS: dict[str, type[ConfError]] = {
         LockTimeoutError,
         KeyNotRegisteredError,
         KeyHasNoValueError,
-        TypeConflictError,
         ConfError,
     )
 }

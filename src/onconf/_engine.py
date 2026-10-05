@@ -56,13 +56,14 @@ Windows 上不会把用户的 LF 文件偷偷改成 CRLF；已存在文件的权
 
 ::
 
-    <home>/settings.json          值文件（用户手改）
+    <home>/settings.json          值文件（用户手改）；后缀由 ``file_type`` 决定
     <home>/schema/settings.json   词表（**库自己的资产**，随便重写）
     <home>/schema/settings.lock   锁的握手点（空文件；库里自己的簿记）
     <home>/schema/settings.key    写者端点的认证码（0600；库里自己的簿记）
     <home>/audit.log              审计文件（append-only；``audit=True`` 才有）
 
-``<home>`` 由 ``home=`` 参数 / ``ONCONF_HOME`` 环境变量 / 当前目录依次决定。
+``<home>`` 由 ``home=`` 参数 / ``ONCONF_HOME`` 环境变量 / ``./conf`` 依次决定；
+文件名主干固定 ``settings``，后缀由 ``file_type`` 单值参数决定（空串 = JSON）。
 
 ## 日志与审计（§20 / §21）
 
@@ -105,7 +106,7 @@ from ._audit import (
 from ._core import MISSING, Action, Decl, read_value, reconcile
 from ._lock import exclusive
 from ._vocab import Vocabulary
-from .errors import ConfError, TypeConflictError
+from .errors import ConfError
 
 
 if TYPE_CHECKING:
@@ -182,9 +183,12 @@ def _atomic_write_text(path: Path, text: str, *, newline: str) -> None:
     _fsync_directory(path.parent)
 
 
-#: 后端模块必须提供同一组函数：
-#: ``loads`` / ``iter_members`` / ``find`` / ``set_value`` /
+#: 后端模块必须提供同一组函数与常量：
+#: ``EMPTY_TEXT`` / ``loads`` / ``iter_members`` / ``find`` / ``set_value`` /
 #: ``append_key`` / ``delete_key`` / ``render``
+#:
+#: ``EMPTY_TEXT`` 是**新建值文件时的种子**：它得让 ``append_key`` 能插进第一个键，
+#: 所以 JSON 是 ``"{}"``，另外三种后端的空文本本身就是合法骨架。
 _BACKENDS = {
     ".json": _json_backend,
     ".yaml": _yaml_backend,
@@ -198,33 +202,37 @@ _BACKENDS = {
 #: （TOML 那边另有 Taplo 的 ``#:schema`` 注释指令，留待后续。）
 _POINTER_CAPABLE = frozenset({".json", ".yaml", ".yml"})
 
-_VALUES_CANDIDATES = (
-    "settings.yaml",
-    "settings.yml",
-    "settings.json",
-    "settings.toml",
-    "settings.env",
-)
+#: ``file_type`` 的合法取值 → 值文件后缀。**空串是默认值，等价于 ``"json"``** ——
+#: 「本质上以 JSON 为主」这条定位就落在这一行（见 ``docs/design/file_support.md``）。
+_FILE_TYPES = {
+    "": ".json",
+    "json": ".json",
+    "yaml": ".yaml",
+    "yml": ".yml",
+    "toml": ".toml",
+    "env": ".env",
+}
 
 
 def default_home() -> Path:
-    """按约定发现配置目录：显式参数 → 环境变量 → 当前目录。"""
-    return Path(os.environ.get(HOME_ENV) or ".").resolve()
+    """按约定发现配置目录：显式参数 → 环境变量 → ``./conf``。"""
+    return Path(os.environ.get(HOME_ENV) or "conf").resolve()
 
 
-def _pick_values_file(home: Path) -> Path:
-    for name in _VALUES_CANDIDATES:
-        candidate = home / name
-        if candidate.exists():
-            return candidate
-    return home / "settings.json"
+def _values_path(home: Path, file_type: str) -> Path:
+    """值文件路径 = ``<home>/settings<ext>``，后缀由 ``file_type`` 单值参数决定。
 
-
-def _type_matches(value: object, declared: type) -> bool:
-    """声明期一致性校验用。``bool`` 是 ``int`` 的子类，要单独挡掉。"""
-    if declared is int and isinstance(value, bool):
-        return False
-    return isinstance(value, declared)
+    ``file_type`` 一次只有一个类型，「用哪个文件」因此是**显式声明**的，
+    不再靠「按存在性从候选名里挑第一个」——那是把决定权交给磁盘上恰好有什么。
+    """
+    try:
+        suffix = _FILE_TYPES[file_type]
+    except KeyError:
+        raise ConfError(
+            f"不认识的 file_type：{file_type!r}；合法取值：{sorted(_FILE_TYPES)}"
+            "（空串等价于 'json'）"
+        ) from None
+    return home / f"{VALUES_STEM}{suffix}"
 
 
 def _owner_module() -> ModuleType:
@@ -248,6 +256,7 @@ class Engine:
         self,
         home: str | os.PathLike[str] | None = None,
         *,
+        file_type: str = "",
         audit: bool = False,
         flush_window: float = DEFAULT_FLUSH_WINDOW,
         lock_timeout: float = 10.0,
@@ -255,7 +264,9 @@ class Engine:
         identity: str = "",
     ) -> None:
         self.home = Path(home).resolve() if home is not None else default_home()
-        self.values_path = _pick_values_file(self.home)
+        #: 值文件类型（单值）。空串 = JSON。改了它等于换一个值文件，必须重启。
+        self.file_type = file_type
+        self.values_path = _values_path(self.home, file_type)
         self.schema_path = self.home / SCHEMA_DIR / f"{self.values_path.stem}.json"
         self.lock_path = self.home / SCHEMA_DIR / f"{self.values_path.stem}{LOCK_SUFFIX}"
         self.audit = audit
@@ -277,7 +288,6 @@ class Engine:
 
         self._decls: dict[str, Decl] = {}
         self._pending: dict[str, Decl] = {}
-        self._forced: set[str] = set()
         self._window_started: float | None = None
         self._vocab = Vocabulary()
         self._facts: dict[str, Any] = {}
@@ -298,34 +308,27 @@ class Engine:
 
     # ------------------------------------------------------------------ 两个面
 
-    def __call__(
-        self,
-        key: str,
-        value: Any = MISSING,
-        *,
-        doc: str | None = None,
-        type: type | None = None,  # noqa: A002 - 参数名就是 API 的一部分
-        force: bool = False,
-    ) -> Any:
-        """判别式（§17.7 + §15.1）。
+    def __call__(self, key: str, value: Any = MISSING, doc: str | None = None) -> Any:
+        """判别式（§17.7 + §15.1）：**只看 ``value`` 位填没填**。
 
-        两个位置在文档里曾经打架过，这里把口径钉死：
+        写法与模式一一对应，不做任何推断：
 
-        * ``conf(key)`` —— **什么声明元数据都没带** ⇒ 读；
-        * ``conf(key, value)`` / ``conf(key, doc=…)`` / ``conf(key, type=…)``
-          ⇒ 声明。后两者的 value 位是空的，即**只登记不给值**（「必填键」），
-          紧接着按读的规则取值 —— 没配就报错，这正是「启动即校验必填项」的用法。
+        * ``conf(key)`` —— 读；
+        * ``conf(key, value)`` / ``conf(key, value, doc)`` —— 声明 + 写；
+        * ``conf(key, doc=…)`` —— 只登记（空结构），随即按读的规则取值。
 
-        也就是说，判据不是「value 位空没空」，而是**这一行到底在不在声明**。
+        ``None`` / ``""`` / ``0`` 都是**填了**，``MISSING`` 是唯一哨兵。
+        ``doc`` 是第三个位置参数，也是唯一的登记元数据 —— 判据里不再出现第二个
+        参数，参数面自此**封闭**：以后新增参数不需要动判据。
         """
         if not isinstance(key, str):
             raise TypeError(
                 f"键必须是字符串，拿到 {key.__class__.__name__}（{key!r}）。"
                 "如果是 conf(conf(…)) 这种间接寻址，说明内层取到的值不是键名。"
             )
-        if value is MISSING and doc is None and type is None:
+        if value is MISSING and doc is None:
             return self.read(key)
-        return self.declare(key, value, doc=doc, type=type, force=force)
+        return self.declare(key, value, doc=doc)
 
     def read(self, key: str) -> Any:
         """读一个配置项。**先把待写交出去**，否则可能读不到自己刚声明的事实。"""
@@ -350,49 +353,30 @@ class Engine:
         self._collect_remote(reply)
         return reply.value
 
-    def declare(
-        self,
-        key: str,
-        value: Any,
-        *,
-        doc: str | None = None,
-        type: type | None = None,  # noqa: A002 - 参数名就是 API 的一部分
-        force: bool = False,
-    ) -> Any:
+    def declare(self, key: str, value: Any = MISSING, doc: str | None = None) -> Any:
         """声明 / 写一个配置项。**返回当前生效值**（值文件优先，不是默认值）。
 
-        ``type=`` 只做**声明期一致性校验**：它回答「你给的默认值和声明的类型对不对」，
-        **不参与读取期转换**——引擎对值是透明的（值原样进出）。
+        ``value`` 位空着（``MISSING``）⇒ **只登记不给值**：词表里记一条「有键无值」，
+        随后按读的规则取值 —— 没配就抛 ``KeyHasNoValueError``。这正是「启动即校验
+        必填项」的用法。
+
+        ``doc`` 给了就写进词表；文件里**已有不同值**时尊重文件（产出一条 ``skip``，
+        一个字节都不写）。运行期没有覆盖出口：覆盖既存值是人主动发起的事，
+        归命令行的 ``build`` / ``sync``（见 ``docs/design/init_config.md``）。
         """
         at = call_site()
         self._ensure_started()
-        if value is not MISSING and type is not None and not _type_matches(value, type):
-            conflict = TypeConflictError(
-                f"{key!r} 的默认值 {value!r} 不符合声明的类型 {type.__name__}"
-            )
-            # 走 _log_failure：它写记录时会顺手收口，而且审计自己写不出去时**不会**盖住
-            # 这个 TypeConflictError —— 调用方要诊断的是类型冲突，不是审计文件。
-            self._log_failure(
-                conflict,
-                item=key,
-                at=at,
-                message=f"want={type.__name__} got={value.__class__.__name__}",
-            )
-            raise conflict
-
         self._load_audited(item=key)
-        decl = Decl(key=key, value=value, type=type, doc=doc, at=at)
+        decl = Decl(key=key, value=value, doc=doc, at=at)
         self._pending[key] = decl
         self._decls[key] = decl
-        if force:
-            self._forced.add(key)
 
         if self.flush_window <= 0 or self._window_expired():
             self._commit_local(clean=False)
         elif self._window_started is None:
             self._window_started = time.monotonic()
 
-        return self._effective(key, decl, force=force)
+        return self._effective(key, decl)
 
     # ------------------------------------------------------------------ 提交点
 
@@ -443,9 +427,7 @@ class Engine:
     def _send_batch(self, *, clean: bool) -> None:
         """把攒着的声明交给写者。交出去清空的是**缓冲区**，不是声明本身。"""
         decls = tuple(self._pending.values())
-        forced = tuple(self._forced)
         self._pending.clear()
-        self._forced.clear()
         if not decls and not clean:
             return
         owner = _owner_module()
@@ -454,7 +436,6 @@ class Engine:
                 owner.Request(
                     op=owner.OP_COMMIT,
                     decls=decls,
-                    forced=forced,
                     clean=clean,
                     pid=os.getpid(),
                     identity=self.identity or None,
@@ -551,7 +532,7 @@ class Engine:
             if request.op == owner.OP_READ:
                 value = self._read_local(request.key)
             elif request.op == owner.OP_COMMIT:
-                self._merge(request.decls, request.forced, clean=request.clean)
+                self._merge(request.decls, clean=request.clean)
             else:
                 raise ConfError(f"不认识的请求：{request.op!r}")
         finally:
@@ -645,7 +626,7 @@ class Engine:
             self._log_failure(exc, item=item)
             raise
 
-    def _merge(self, decls: Iterable[Decl], forced: Iterable[str], *, clean: bool) -> None:
+    def _merge(self, decls: Iterable[Decl], *, clean: bool) -> None:
         """把别人交来的声明并进自己的声明集，然后提交。
 
         **这就是专职写者多买到的东西**：它的 ``_decls`` 是**所有进程**声明的并集，
@@ -657,7 +638,6 @@ class Engine:
             # 也要进 ``_pending``：``_commit_pending`` 在「没有待写且不清理」时直接
             # 早退，只填 ``_decls`` 的话这批声明根本提交不出去。
             self._pending[decl.key] = decl
-        self._forced.update(forced)
         self._commit_pending(clean=clean)
 
     def _window_expired(self) -> bool:
@@ -694,10 +674,8 @@ class Engine:
                     list(self._decls.values()),
                     self._facts,
                     self._vocab.as_dict(),
-                    force_keys=frozenset(self._forced),
                     clean_unknown=clean,
                 )
-                self._forced.clear()
                 if actions:
                     self._commit(actions)
                 records = self._action_records(actions, batch)
@@ -749,7 +727,7 @@ class Engine:
                         reason=action.reason,
                     )
                 )
-            if action.kind in ("fill", "overwrite", "clean"):
+            if action.kind in ("fill", "clean"):
                 records.append(
                     self._audit.changed(
                         item=action.key,
@@ -766,13 +744,13 @@ class Engine:
         )
         return records
 
-    def _effective(self, key: str, decl: Decl, *, force: bool) -> Any:
+    def _effective(self, key: str, decl: Decl) -> Any:
         """``declare`` 该返回什么：**当前生效值**（值文件优先）。
 
         这条修的是 Cairn 的 D5：声明返回默认值、取值返回文件值，会让同一键的相邻
         两行拿到不同结果。现在两者都以事实为准。
         """
-        if not force and key in self._facts:
+        if key in self._facts:
             return self._facts[key]
         if decl.value is MISSING:
             # 只登记不给值 ⇒ 登记得先算数（所以先交出去），再按读的规则取值。
@@ -832,12 +810,13 @@ class Engine:
     def _commit(self, actions: Iterable[Action]) -> None:
         """把对账动作落到两个文件上。"""
         creating = self._text is None
-        original = self._text if self._text is not None else "{}"
+        # 新建文件时从后端给的**种子**起步：JSON 要 ``"{}"``，另外三种后端空文本即可。
+        original: str = self._text if self._text is not None else self.backend.EMPTY_TEXT
         # 指针先补、动作后落 —— 反过来的话，等落完动作文件已经不是空对象了。
         text = self._ensure_schema_pointer(original)
 
         for action in actions:
-            if action.kind in ("fill", "overwrite"):
+            if action.kind == "fill":
                 if self.backend.find(text, action.key) is None:
                     text = self.backend.append_key(text, action.key, action.value)
                 else:
@@ -852,7 +831,8 @@ class Engine:
             _atomic_write_text(self.values_path, text, newline=self._values_newline)
             self._text = text
 
-        # 词表是**库自己的资产**（§18.6），所以整篇重写是合法的，不需要外科手术
+        # 词表是**库自己的资产**（归属权见 docs/design/file_support.md），
+        # 所以整篇重写是合法的，不需要外科手术
         self._vocab.apply(actions, list(self._decls.values()))
         _atomic_write_text(
             self.schema_path,

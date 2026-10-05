@@ -21,9 +21,5 @@ class KeyHasNoValueError(ConfError):
     """配置不合理：词表里有登记，但事实里没有值。责任在部署（漏配）。"""
 
 
-class TypeConflictError(ConfError):
-    """类型不一致，且无法转换到声明的类型。"""
-
-
 class UnknownEngineParamError(ConfError, TypeError):
     """透传的引擎参数里有未定义的键（§15.4 规则 1：不许静默失效）。"""

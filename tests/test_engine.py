@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import subprocess
 import sys
@@ -19,13 +20,13 @@ import pytest
 from onconf import (
     AutoConf,
     ConfError,
+    EngineParams,
     KeyHasNoValueError,
     KeyNotRegisteredError,
-    TypeConflictError,
     _reset,
     conf,
 )
-from onconf._engine import SCHEMA_POINTER, Engine
+from onconf._engine import SCHEMA_POINTER, Engine, default_home
 from onconf._lock import LockTimeoutError, exclusive
 
 
@@ -96,14 +97,18 @@ class TestDeclareAndRead:
         fresh = Engine(engine.home)
         assert fresh("a.b", 1) == 42
 
-    def test_force_overwrites_that_one_key(self, engine: Engine) -> None:
+    def test_a_differing_value_is_never_overwritten(self, engine: Engine) -> None:
+        """运行期**没有覆盖出口**：值不一致 ⇒ 值文件逐字不动。
+
+        覆盖既存值是人主动发起的事（命令行的 ``build`` / ``sync``），
+        不属于代码的写路径。
+        """
         engine("a.b", 1)
-        engine.values_path.write_text(
-            json.dumps({"$schema": SCHEMA_POINTER, "a.b": 42}, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        before = engine.values_path.read_bytes()
+
         fresh = Engine(engine.home)
-        assert fresh("a.b", 1, force=True) == 1
+        assert fresh("a.b", 42) == 1
+        assert engine.values_path.read_bytes() == before
 
 
 # --------------------------------------------------------------------------- #
@@ -129,25 +134,25 @@ class TestArtifacts:
         assert engine.schema_path.parent.name == "schema"
         assert engine.schema_path.name == "settings.json"
 
-    def test_user_comments_in_yaml_survive_a_rewrite(self, tmp_path: Path) -> None:
-        """YAML 值文件：改一个键，用户手写的注释逐字保留（§27.3）。"""
+    def test_user_comments_survive_a_new_key(self, tmp_path: Path) -> None:
+        """YAML 值文件：补一个新键，用户手写的注释逐字保留（§27.3）。"""
         values = tmp_path / "settings.yaml"
         values.write_text(
             "# 我手写的注释\na.b: 1   # 行尾注释\nc.d: 2\n",
             encoding="utf-8",
         )
-        engine = Engine(tmp_path)
-        engine("a.b", 99, force=True)
+        Engine(tmp_path, file_type="yaml")("e.f", 99)
 
         text = values.read_text(encoding="utf-8")
         assert "# 我手写的注释" in text
-        assert "a.b: 99   # 行尾注释" in text
+        assert "a.b: 1   # 行尾注释" in text
         assert "c.d: 2" in text
+        assert "e.f: 99" in text
 
     def test_appending_a_key_keeps_existing_comments(self, tmp_path: Path) -> None:
         values = tmp_path / "settings.yaml"
         values.write_text("# 头注释\na.b: 1   # 行尾\n", encoding="utf-8")
-        Engine(tmp_path)("c.d", 2)
+        Engine(tmp_path, file_type="yaml")("c.d", 2)
 
         text = values.read_text(encoding="utf-8")
         assert "# 头注释" in text
@@ -201,7 +206,7 @@ class TestSchemaPointer:
         values = tmp_path / "settings.yaml"
         values.write_text("# 注释\npack.max.byte: 1\n", encoding="utf-8")
 
-        Engine(tmp_path)("hub.default", "main")
+        Engine(tmp_path, file_type="yaml")("hub.default", "main")
 
         text = values.read_text(encoding="utf-8")
         assert "$schema" in text
@@ -213,9 +218,9 @@ class TestSchemaPointer:
         values = tmp_path / "settings.yaml"
         values.write_text("# 注释\npack.max.byte: 1\n", encoding="utf-8")
 
-        Engine(tmp_path)("hub.default", "main")
+        Engine(tmp_path, file_type="yaml")("hub.default", "main")
         once = values.read_text(encoding="utf-8")
-        Engine(tmp_path)("index.max.byte", 2)
+        Engine(tmp_path, file_type="yaml")("index.max.byte", 2)
         twice = values.read_text(encoding="utf-8")
 
         assert twice.count("$schema") == 1
@@ -235,15 +240,15 @@ class TestCleanIsDeferredToTheCommitPoint:
         assert data["a.b"] == 1
         assert data["c.d"] == 2
 
-    def test_existing_user_keys_survive_incremental_declares(self, tmp_path: Path) -> None:
+    def test_existing_user_values_are_never_rewritten(self, tmp_path: Path) -> None:
+        """值不一致 ⇒ 尊重文件：整篇值文件逐字不变（含注释、键序、行尾）。"""
         values = tmp_path / "settings.yaml"
-        values.write_text("# 我手写的\na.b: 1   # 行尾注释\nc.d: 2\n", encoding="utf-8")
-        Engine(tmp_path)("a.b", 99, force=True)
+        original = "$schema: schema/settings.json\n# 我手写的\na.b: 1   # 行尾注释\nc.d: 2\n"
+        values.write_text(original, encoding="utf-8")
 
-        text = values.read_text(encoding="utf-8")
-        assert "# 我手写的" in text
-        assert "a.b: 99   # 行尾注释" in text
-        assert "c.d: 2" in text
+        Engine(tmp_path, file_type="yaml")("a.b", 99)
+
+        assert values.read_text(encoding="utf-8") == original
 
     def test_sync_cleans_what_the_declaration_set_does_not_know(self, engine: Engine) -> None:
         engine("a.b", 1)
@@ -268,29 +273,178 @@ class TestCleanIsDeferredToTheCommitPoint:
 
 
 # --------------------------------------------------------------------------- #
-# ``type=`` 的职责：只做声明期校验
+# 已摘除的参数：``type=`` / ``force=`` / ``**engine``
 # --------------------------------------------------------------------------- #
 
 
-class TestDeclaredType:
-    def test_mismatched_default_is_rejected_at_declare_time(self, engine: Engine) -> None:
-        with pytest.raises(TypeConflictError, match="不符合声明的类型"):
-            engine("a.b", "512", type=int)
+class TestRemovedParameters:
+    """参数面收敛的回归：摘掉的参数传进来必须当场 ``TypeError``，不许静默降级。
 
-    def test_bool_is_not_accepted_as_int(self, engine: Engine) -> None:
-        with pytest.raises(TypeConflictError):
-            engine("a.b", True, type=int)  # noqa: FBT003 - 被测的就是「布尔当真值传」
+    旧行为里 ``conf(key, force=True)`` 会被当成**读** —— 调用方以为在覆盖，
+    实际什么都没发生。``**engine`` 同理，让使用口也能配置引擎。
+    """
 
-    def test_type_is_not_used_to_convert_on_read(self, engine: Engine) -> None:
-        """透明原则：值原样进出，引擎不做读取期转换。"""
-        engine("a.b", 512, type=int)
-        assert engine("a.b") == 512
+    def test_type_is_gone(self, engine: Engine) -> None:
+        with pytest.raises(TypeError, match="type"):
+            engine("a.b", 512, type=int)  # type: ignore[call-arg]
+
+    def test_force_is_gone(self, engine: Engine) -> None:
+        with pytest.raises(TypeError, match="force"):
+            engine("a.b", 512, force=True)  # type: ignore[call-arg]
+
+    def test_engine_params_are_gone_from_the_usage_face(self, tmp_path: Path) -> None:
+        """使用口不得配置引擎：``conf(…, home=…)`` 是 ``TypeError``。"""
+        AutoConf(home=str(tmp_path))
+        with pytest.raises(TypeError, match="home"):
+            conf("a.b", 1, home=str(tmp_path / "other"))  # type: ignore[call-arg]
+
+    def test_values_are_not_converted_on_read(self, engine: Engine) -> None:
+        """透明原则：写进去什么类型，读回来还是什么类型。"""
+        engine("a.b", 512)
+        engine("c.d", "512")
         assert isinstance(engine("a.b"), int)
+        assert isinstance(engine("c.d"), str)
 
-    def test_type_lands_in_the_vocabulary(self, engine: Engine) -> None:
-        engine("a.b", 512, type=int)
-        schema = json.loads(engine.schema_path.read_text(encoding="utf-8"))
-        assert schema["properties"]["a.b"]["type"] == "integer"
+    def test_engine_params_match_the_constructor(self) -> None:
+        """``EngineParams`` 的注解与 ``Engine.__init__`` 的形参逐一对应。"""
+        ctor = set(inspect.signature(Engine.__init__).parameters) - {"self"}
+        assert set(EngineParams.__annotations__) == ctor
+
+    def test_lock_timeout_is_reachable_from_the_public_surface(self, tmp_path: Path) -> None:
+        """``lock_timeout`` 以前对公开 API 完全不可达（``EngineParams`` 里没有它）。"""
+        engine = AutoConf(home=str(tmp_path), lock_timeout=30.0)
+        assert engine.lock_timeout == 30.0
+
+
+# --------------------------------------------------------------------------- #
+# 值文件的选定：``file_type`` 显式声明，不再按存在性挑
+# --------------------------------------------------------------------------- #
+
+
+class TestValueFileSelection:
+    def test_default_is_json(self, tmp_path: Path) -> None:
+        """默认（空串）就是 JSON —— 「本质上以 JSON 为主」这条定位的落点。"""
+        assert Engine(tmp_path).values_path.name == "settings.json"
+
+    def test_empty_string_equals_json(self, tmp_path: Path) -> None:
+        assert Engine(tmp_path, file_type="").values_path == Engine(
+            tmp_path, file_type="json"
+        ).values_path
+
+    def test_file_type_decides_the_suffix(self, tmp_path: Path) -> None:
+        for file_type, name in (
+            ("json", "settings.json"),
+            ("yaml", "settings.yaml"),
+            ("yml", "settings.yml"),
+            ("toml", "settings.toml"),
+            ("env", "settings.env"),
+        ):
+            assert Engine(tmp_path, file_type=file_type).values_path.name == name
+
+    def test_a_brand_new_file_uses_the_backend_seed(self, tmp_path: Path) -> None:
+        """新建值文件必须从**后端给的种子**起步，四种后端都要能落第一个键。
+
+        这条是回归：种子以前写死成 ``"{}"``，TOML / YAML 后端会把它当内容解析而炸掉。
+        以前「用哪个文件」按存在性挑，非 JSON 文件必然已经存在，所以那条路踩不到。
+        """
+        for file_type, key, value in (
+            ("json", "a.b", 1),
+            ("yaml", "a.b", 1),
+            ("toml", "a.b", 1),
+            ("env", "A_B", "1"),
+        ):
+            home = tmp_path / file_type
+            Engine(home, file_type=file_type)(key, value)
+            assert (home / f"settings.{file_type}").exists()
+            assert Engine(home, file_type=file_type)(key) == value
+
+    def test_unknown_file_type_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfError, match="不认识的 file_type"):
+            Engine(tmp_path, file_type="ini")
+
+    def test_existence_no_longer_decides(self, tmp_path: Path) -> None:
+        """目录里只有 ``settings.yaml`` 也**不会**被自动选中 —— 选定是显式的。"""
+        (tmp_path / "settings.yaml").write_text("a.b: 1\n", encoding="utf-8")
+        engine = Engine(tmp_path)
+        assert engine.values_path.name == "settings.json"
+        with pytest.raises(KeyNotRegisteredError):
+            engine("a.b")
+
+
+# --------------------------------------------------------------------------- #
+# 使用口的三种模式：五种写法逐个对应
+# --------------------------------------------------------------------------- #
+
+
+class TestThreeModes:
+    """ISSUE-001 的验收：五种写法与模式一一对应，一个都不能走岔。"""
+
+    @pytest.fixture(autouse=True)
+    def _home(self, tmp_path: Path) -> None:
+        AutoConf(home=str(tmp_path))
+
+    def test_mode3_read(self) -> None:
+        conf("a.b", 1)
+        assert conf("a.b") == 1
+
+    def test_mode1_declare_and_write(self) -> None:
+        assert conf("a.b", 1) == 1
+
+    def test_mode1_with_positional_doc(self, tmp_path: Path) -> None:
+        """第三个位置参数就是 ``doc`` —— 写法贴合矩阵，且说明进了词表。"""
+        assert conf("a.b", 1, "服务端口") == 1
+        schema = json.loads((tmp_path / "schema" / "settings.json").read_text(encoding="utf-8"))
+        assert schema["properties"]["a.b"]["description"] == "服务端口"
+
+    def test_mode1_with_keyword_doc(self) -> None:
+        assert conf("a.b", 1, doc="服务端口") == 1
+
+    def test_mode2_register_only(self) -> None:
+        """``conf(key, doc=…)`` 的 value 位是空的 ⇒ 只登记，随即取值 ⇒ 没配就报错。"""
+        with pytest.raises(KeyHasNoValueError):
+            conf("a.required", doc="必填键")
+
+    def test_mode2_returns_the_value_when_the_file_has_one(self) -> None:
+        conf("a.b", 1)
+        assert conf("a.b", doc="说明") == 1
+
+    def test_mode1_returns_the_file_value_not_the_default(self) -> None:
+        """值文件优先：声明 1 但文件里是 42 ⇒ 返回 42。"""
+        conf("a.b", 1)
+        engine = AutoConf()
+        engine.values_path.write_text(
+            json.dumps({"$schema": SCHEMA_POINTER, "a.b": 42}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        assert conf("a.b", 1) == 42
+
+
+# --------------------------------------------------------------------------- #
+# ``home`` 的缺省：``./conf``
+# --------------------------------------------------------------------------- #
+
+
+class TestHomeDefault:
+    def test_default_home_is_conf_under_the_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("ONCONF_HOME", raising=False)
+        monkeypatch.chdir(tmp_path)
+        assert default_home() == (tmp_path / "conf").resolve()
+
+    def test_home_env_wins_over_the_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ONCONF_HOME", str(tmp_path / "elsewhere"))
+        assert default_home() == (tmp_path / "elsewhere").resolve()
+
+    def test_engine_without_home_lands_in_dot_conf(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("ONCONF_HOME", raising=False)
+        monkeypatch.chdir(tmp_path)
+        Engine()("a.b", 1)
+        assert (tmp_path / "conf" / "settings.json").exists()
 
 
 # --------------------------------------------------------------------------- #
@@ -333,23 +487,23 @@ class TestModuleLevelFaces:
 
 
 class TestEnvValuesFile:
-    def test_env_file_is_picked_up(self, tmp_path: Path) -> None:
+    def test_env_file_is_used_when_declared(self, tmp_path: Path) -> None:
         (tmp_path / "settings.env").write_text(
             "# 手写注释\nexport A_B=1\nC_D=two\n", encoding="utf-8"
         )
-        engine = Engine(tmp_path)
+        engine = Engine(tmp_path, file_type="env")
         assert engine.values_path.name == "settings.env"
         assert engine("C_D") == "two"
 
     def test_string_backend_refuses_non_string_values(self, tmp_path: Path) -> None:
         (tmp_path / "settings.env").write_text("A_B=1\n", encoding="utf-8")
-        engine = Engine(tmp_path)
+        engine = Engine(tmp_path, file_type="env")
         with pytest.raises(TypeError, match="只能存字符串"):
             engine("PORT", 8080)
 
     def test_string_values_round_trip(self, tmp_path: Path) -> None:
         (tmp_path / "settings.env").write_text("A_B=1\n", encoding="utf-8")
-        engine = Engine(tmp_path)
+        engine = Engine(tmp_path, file_type="env")
         assert engine("PORT", "8080") == "8080"
         assert isinstance(engine("PORT"), str)
 
@@ -357,22 +511,23 @@ class TestEnvValuesFile:
         """``.env`` 放不下成员，硬塞只会让文件变成语法错误。"""
         values = tmp_path / "settings.env"
         values.write_text("A_B=1\n", encoding="utf-8")
-        Engine(tmp_path)("C_D", "two")
+        Engine(tmp_path, file_type="env")("C_D", "two")
 
         text = values.read_text(encoding="utf-8")
         assert "$schema" not in text
         assert "A_B=1" in text
         assert "C_D=two" in text
 
-    def test_comments_survive_a_rewrite(self, tmp_path: Path) -> None:
+    def test_comments_survive_a_new_key(self, tmp_path: Path) -> None:
         values = tmp_path / "settings.env"
         values.write_text("# 头注释\nexport A_B=1\nC_D=two\n", encoding="utf-8")
-        Engine(tmp_path)("A_B", "9", force=True)
+        Engine(tmp_path, file_type="env")("E_F", "9")
 
         text = values.read_text(encoding="utf-8")
         assert "# 头注释" in text
-        assert "export A_B=9" in text
+        assert "export A_B=1" in text
         assert "C_D=two" in text
+        assert "E_F=9" in text
 
 
 # --------------------------------------------------------------------------- #
@@ -381,48 +536,49 @@ class TestEnvValuesFile:
 
 
 class TestTomlValuesFile:
-    def test_toml_file_is_picked_up(self, tmp_path: Path) -> None:
+    def test_toml_file_is_used_when_declared(self, tmp_path: Path) -> None:
         (tmp_path / "settings.toml").write_text(
             "# 手写注释\n\n[gc]\nauto.byte = 0   # 行尾注释\n", encoding="utf-8"
         )
-        engine = Engine(tmp_path)
+        engine = Engine(tmp_path, file_type="toml")
         assert engine.values_path.name == "settings.toml"
         assert engine("gc.auto.byte") == 0
 
     def test_table_header_is_normalised_to_a_dotted_key(self, tmp_path: Path) -> None:
         """对上层完全透明：它只看得见点分键（§28.4）。"""
         (tmp_path / "settings.toml").write_text("[pack.max]\nbyte = 512\n", encoding="utf-8")
-        assert Engine(tmp_path)("pack.max.byte") == 512
+        assert Engine(tmp_path, file_type="toml")("pack.max.byte") == 512
 
     def test_new_key_lands_in_the_matching_section(self, tmp_path: Path) -> None:
         values = tmp_path / "settings.toml"
         values.write_text("[gc]\nauto.byte = 0\n", encoding="utf-8")
-        Engine(tmp_path)("gc.threshold", 1024)
+        Engine(tmp_path, file_type="toml")("gc.threshold", 1024)
 
         text = values.read_text(encoding="utf-8")
         assert text.index("[gc]") < text.index("threshold = 1024")
         assert "threshold = 1024" in text
 
-    def test_comments_survive_a_rewrite(self, tmp_path: Path) -> None:
+    def test_comments_survive_a_new_key(self, tmp_path: Path) -> None:
         values = tmp_path / "settings.toml"
         values.write_text("# 头注释\n\ngc.auto.byte = 0   # 行尾注释\n", encoding="utf-8")
-        Engine(tmp_path)("gc.auto.byte", 4096, force=True)
+        Engine(tmp_path, file_type="toml")("gc.manual", 4096)
 
         text = values.read_text(encoding="utf-8")
         assert "# 头注释" in text
-        assert "gc.auto.byte = 4096   # 行尾注释" in text
+        assert "gc.auto.byte = 0   # 行尾注释" in text
+        assert "manual = 4096" in text
 
     def test_none_cannot_be_written(self, tmp_path: Path) -> None:
         """TOML 没有 null。"""
         (tmp_path / "settings.toml").write_text("a = 1\n", encoding="utf-8")
-        engine = Engine(tmp_path)
+        engine = Engine(tmp_path, file_type="toml")
         with pytest.raises(TypeError, match="没有 null"):
             engine("b", None)
 
     def test_no_schema_pointer_is_forced_into_a_toml_file(self, tmp_path: Path) -> None:
         values = tmp_path / "settings.toml"
         values.write_text("a = 1\n", encoding="utf-8")
-        Engine(tmp_path)("b", 2)
+        Engine(tmp_path, file_type="toml")("b", 2)
 
         text = values.read_text(encoding="utf-8")
         assert "$schema" not in text
