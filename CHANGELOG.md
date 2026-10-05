@@ -60,6 +60,13 @@
 
 ### Docs
 
+- 路线图的「未实现」段按**批次**重排（下一批 / 未来 / 不计划 / 已定不动），并把批次写进
+  [`docs/design/log.md`](docs/design/log.md)、[`docs/design/init_config.md`](docs/design/init_config.md)、
+  [`docs/design/file_support.md`](docs/design/file_support.md)：**下一批** = 日志两通道与
+  `audit` 口径（D06）、运行期规则 1 的移除；**未来** = 落盘形式与加密/轮转（D06/D07）、
+  `.env` 结构开关（2.2）、其余命令；**已定不动** = `$schema` 指针按载体能力、不新增参数。
+- README 一对与 [`docs/api/index.md`](docs/api/index.md) 补**主 / 辅后端**标注
+  （JSON 是主后端：缺省值、能力最完整、`$schema` 指针的落点；YAML / TOML / `.env` 为可选后端）。
 - 新增「使用范式」一节（README 一对、[`docs/getting-started.md`](docs/getting-started.md)、
   [`docs/design/init_config.md`](docs/design/init_config.md) §8）：**声明处必须字面量** ——
   键、值、说明都写在调用点上；读取不受限（常量、拼接都行）。定性是**合法但不合理**

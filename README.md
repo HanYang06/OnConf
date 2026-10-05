@@ -46,8 +46,11 @@ A configuration engine for programs that keep their settings in **plain files th
   and the runtime never overwrites a value the file already has.
 - **Surgical write-back.** When the engine changes one key, every byte it did not need to
   touch stays exactly where it was — comments, indentation, key order, blank lines.
-- **One flat key space, many backends.** `app.server.port` addresses the same logical key
-  whether it lives in JSON, YAML, TOML or a `.env` file.
+- **One flat key space, JSON first.** `app.server.port` addresses the same logical key
+  whether it lives in JSON, YAML, TOML or a `.env` file. **JSON is the primary value format**
+  — it is the default `file_type`, the most capable one, and the one the `$schema` pointer
+  (editor completion) is built around; YAML / TOML / `.env` are **optional backends**, not
+  peers of the default.
 - **A vocabulary next to your values.** The engine maintains a JSON Schema describing
   which keys exist, so your editor can autocomplete and validate the config file.
 - **No separate process, no daemon, no network.** It is a library that runs in *your* process. The
@@ -220,10 +223,10 @@ whatever key was registered.
 
 | Area | Status |
 |---|---|
-| JSON value backend — surgical write-back | ✅ |
-| YAML value backend — comments, anchors, key order preserved | ✅ |
-| `.env` value backend — string-only, no inline comments, no key renaming | ✅ |
-| TOML value backend — table headers normalized to dotted keys | ✅ |
+| **JSON value backend — the primary format** (default `file_type`) — surgical write-back | ✅ |
+| YAML value backend — **optional**; comments, anchors, key order preserved | ✅ |
+| `.env` value backend — **optional**; string-only, no inline comments, no key renaming | ✅ |
+| TOML value backend — **optional**; table headers normalized to dotted keys | ✅ |
 | Vocabulary (key space) — persisted, JSON Schema round-trip, hash short-circuit. It records exactly three things per key: the key, the description, the default | ✅ |
 | Value-file selection — `file_name` (default `settings`) plus `file_type` (single-valued, default `"json"`) pick `<home>/<file_name>.<ext>`; choosing by "first name that exists" is gone | ✅ |
 | **Multi-file** — `no_one_file=True` makes a key's `<path>:` prefix address `<home>/<path>.<ext>` (e.g. `conf("app/conf/net:net.id.post", 8080)` → `<home>/app/conf/net.json`). Keys without a prefix still land in the default file. One vocabulary, one lock, one writer per `(home, file_name)`; every embedded path goes through the containment check | ✅ |
