@@ -5,8 +5,8 @@
 # 标签再决定这条变更落进哪个分类。
 #
 # 约定：
-#   - PR 标题（squash 后即提交标题）必须是合法的 Conventional Commits，
-#     subject 允许中文，例如「fix(core): 指令键豁免对账」；
+#   - **PR 标题**必须是合法的 Conventional Commits（发布说明取的是 PR 标题与标签，
+#     不是 main 上的提交信息）：subject 允许中文，例如「fix(core): 指令键豁免对账」；
 #   - 破坏性变更在类型后加 `!`，例如「feat(core)!: 移除旧的对账开关」。
 
 # ⚠️ 版本号的**权威来源是 `pyproject.toml`**（发版走 `uv version`，见 CONTRIBUTING §4.4）。

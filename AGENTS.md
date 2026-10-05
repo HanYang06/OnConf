@@ -138,7 +138,7 @@ docstring，中间不空行：
 
 ```text
 src/onconf/
-  __init__.py        # 对外仅两个面：AutoConf(**engine) 与 conf(key, value=..., **engine)
+  __init__.py        # 对外仅两个面：AutoConf(**engine) 与 conf(key, value=…, doc=…)
   _engine.py         # 引擎装配、目录约定、回写
   _core.py           # 对账：三集合算法
   _vocab.py          # 词表 + JSON Schema
@@ -167,3 +167,8 @@ CodeQL 只在「推 `main`」和「针对 `main` 的 PR」上跑 —— 直推�
 （`GH013 … Code scanning is waiting for results from CodeQL`，实测踩过）。改动一律走
 「推分支 → 开 PR → 等 CI / CodeQL → 合并」；`.pre-commit-config.yaml` 里没有
 `no-commit-to-branch`，那只是本地钩子的取舍，**不代表允许直推**。
+
+**合并方式固定为 merge commit**：仓库设置里 squash 与 rebase 都已关闭，`gh pr merge`
+只可能走 `--merge`。不要用 `git merge --ff-only` / `git rebase` 自己把分支推平 ——
+`merge commit` 是「这个 PR 从分支进来」这条事实的唯一载体，推平了历史就看不见分支状态。
+口令：`gh pr merge <n> --merge --delete-branch`。
