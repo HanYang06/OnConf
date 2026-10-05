@@ -21,8 +21,8 @@ site_dir: site
 use_directory_urls: true
 strict: true
 
-# 重新设计工作区（docs/issues/）不是站点内容：它只在本地存在（被 .gitignore 排除），
-# 但 mkdocs 会扫 docs/ 下所有 .md —— 不排除的话，strict 会因「页面不在 nav 里」而失败。
+# docs/issues/ 是即将删除的旧决策工作区（嵌套仓库，未跟踪）。删除动作落地前先排除它，
+# 否则 strict 会因它内部的悬空链接而失败。
 exclude_docs: |
   issues/
 
@@ -108,6 +108,7 @@ nav:
   - 首页: index.md
   - 快速开始: getting-started.md
   - 路线图: roadmap.md
+  - 2.0 设计决策: roadmap/2.0-roadmap.md
   - API 参考:
       - API 总览: api/index.md
   - 架构:
