@@ -1,15 +1,15 @@
 # SPDX-FileCopyrightText: 2026 HanYang06
 # SPDX-License-Identifier: Apache-2.0
-"""词表：**库自己的资产**（§18.6 归属权）。
+"""词表：**库自己的资产**（归属权见 ``docs/design/file_support.md``）。
 
 三条设计约束：
 
 1. **三态**（§17.7）：未登记 / 已登记无值 / 值为 ``None``。
    JSON 里用「`default` 键缺失」表示无值，「`default: null`」表示值就是 ``None``。
    这两者语义完全不同，塌陷掉就是 §17 里那个最阴的 bug。
-2. **对齐 JSON Schema**（§12.4）：白拿 IDE 补全与现成工具链。
-   Python 独有类型（如 ``tuple``）用 ``x-onconf-py`` 扩展无损保留。
-3. **顶层带声明集哈希**（§18.7）：脏检查的指纹，对得上就整体跳过写入。
+2. **只记三样**：键、说明、默认值。类型不再记 —— 值的类型由载体决定，
+   引擎不推断也不转换（见 ``docs/design/file_support.md``）。
+3. **顶层带声明集哈希**：脏检查的指纹，对得上就整体跳过写入。
 """
 
 from __future__ import annotations
@@ -33,50 +33,6 @@ if TYPE_CHECKING:
 
 SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema"
 HASH_KEY = "x-onconf-hash"
-PY_TYPE_KEY = "x-onconf-py"
-
-# bool 必须排在 int 前面（bool 是 int 的子类）
-_PY_TO_JSON: tuple[tuple[type, str], ...] = (
-    (bool, "boolean"),
-    (int, "integer"),
-    (float, "number"),
-    (str, "string"),
-    (list, "array"),
-    (tuple, "array"),
-    (dict, "object"),
-    (type(None), "null"),
-)
-
-_JSON_TO_PY: dict[str, type] = {
-    "boolean": bool,
-    "integer": int,
-    "number": float,
-    "string": str,
-    "array": list,
-    "object": dict,
-    "null": type(None),
-}
-
-_BY_NAME: dict[str, type] = {t.__name__: t for t, _ in _PY_TO_JSON}
-
-
-def type_to_json(t: type | None) -> str | None:
-    """Python 类型 → JSON Schema 的 ``type`` 名。"""
-    if t is None:
-        return None
-    for py, js in _PY_TO_JSON:
-        if t is py:
-            return js
-    return "string"  # 未知类型降级成 string，并靠 x-onconf-py 保住原样
-
-
-def type_from_json(name: str | None, py_hint: str | None = None) -> type | None:
-    """JSON Schema 的 ``type`` 名 → Python 类型，优先采信 ``x-onconf-py``。"""
-    if py_hint and py_hint in _BY_NAME:
-        return _BY_NAME[py_hint]
-    if name is None:
-        return None
-    return _JSON_TO_PY.get(name)
 
 
 @dataclass
@@ -113,7 +69,6 @@ class Vocabulary:
         """把一次声明写进词表。``decl.value is MISSING`` ⇒ 记 ``NO_VALUE``。"""
         entry = VocabEntry(
             key=decl.key,
-            type=decl.type,
             doc=decl.doc,
             default=NO_VALUE if decl.value is MISSING else decl.value,
         )
@@ -126,8 +81,8 @@ class Vocabulary:
     def apply(self, actions: Iterable[Action], decls: list[Decl]) -> None:
         """把对账动作落到词表上，并刷新哈希 —— 这是「提交」的落点。
 
-        注意：``skip`` / ``overwrite`` 只影响**配置文件**，词表侧的更新由
-        独立的 ``update_meta`` 动作承担（§18.5 结论 1：动词表，不动文件）。
+        注意：``skip`` 只影响**配置文件**（尊重文件，不改），词表侧的更新由
+        独立的 ``update_meta`` 动作承担（动词表，不动文件）。
         """
         by_key = {d.key: d for d in decls}
         for action in actions:
@@ -153,11 +108,6 @@ class Vocabulary:
         for key in self.keys():
             entry = self.entries[key]
             node: dict[str, Any] = {}
-            js_type = type_to_json(entry.type)
-            if js_type is not None:
-                node["type"] = js_type
-                if _JSON_TO_PY.get(js_type) is not entry.type and entry.type is not None:
-                    node[PY_TYPE_KEY] = entry.type.__name__
             if entry.doc is not None:
                 node["description"] = entry.doc
             if entry.default is not NO_VALUE:
@@ -175,11 +125,15 @@ class Vocabulary:
 
     @classmethod
     def from_schema(cls, data: dict[str, Any]) -> Vocabulary:
+        """从落盘的 JSON Schema 还原词表。
+
+        旧文件里可能还留着 ``type`` / ``x-onconf-py``（类型声明已移除）—— 直接忽略；
+        下一次落盘时 :meth:`to_schema` 不再写它们，于是文件自然收敛到新形态。
+        """
         entries: dict[str, VocabEntry] = {}
         for key, node in (data.get("properties") or {}).items():
             entries[key] = VocabEntry(
                 key=key,
-                type=type_from_json(node.get("type"), node.get(PY_TYPE_KEY)),
                 doc=node.get("description"),
                 # 关键：键「缺失」⇒ NO_VALUE；键在（哪怕值是 null）⇒ 就是那个值。
                 # dict.get 的哨兵默认值正好给出这个语义。

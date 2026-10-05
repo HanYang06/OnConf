@@ -4,12 +4,14 @@
 
 对外只有两个面（§15.2）::
 
-    AutoConf(**engine)      配置**引擎自己**：配置目录、日志去向、审计开关、身份
-    conf(key, value=...)    干所有的活：读 / 写 / 登记
+    AutoConf(**engine)            配置**引擎自己**：配置目录、值文件类型、日志去向、审计、身份
+    conf(key, value=…, doc=…)     干所有的活：读 / 写 / 登记
 
-``conf`` 的 op 靠**参数结构**推断，不是参数（§17.7）：``value`` 位空着就是读，
-填了（哪怕填 ``None``）就是写。``AutoConf`` 的额外参数经 ``EngineParams``
-透传 —— 它既是类型提示，也是运行时校验的依据（§15.4）。
+``conf`` 的模式靠**参数结构**推断，不是参数（§17.7）：``value`` 位空着就是读，
+填了（哪怕填 ``None``）就是写；``value`` 空着而 ``doc`` 给出，就是「只登记不给值」。
+
+使用口**不得配置引擎** —— 引擎参数只走 ``AutoConf``，经 ``EngineParams`` 校验：
+它既是类型提示，也是运行时校验的依据（§15.4）。
 """
 
 from __future__ import annotations
@@ -23,7 +25,6 @@ from .errors import (
     ConfError,
     KeyHasNoValueError,
     KeyNotRegisteredError,
-    TypeConflictError,
     UnknownEngineParamError,
 )
 
@@ -35,7 +36,6 @@ __all__ = [
     "EngineParams",
     "KeyHasNoValueError",
     "KeyNotRegisteredError",
-    "TypeConflictError",
     "UnknownEngineParamError",
     "conf",
 ]
@@ -46,11 +46,15 @@ class EngineParams(TypedDict, total=False):
 
     参数清单、默认值文档、运行时校验全部从这一个类型派生，
     所以它的注解必须完整且准确：写漏一个，``help`` 里就没有。
+
+    这些全是**引导层**参数：决定引擎怎么装配，运行中不可改。
     """
 
     home: str
+    file_type: str
     audit: bool
     flush_window: float
+    lock_timeout: float
     log: str
     identity: str
 
@@ -88,10 +92,13 @@ def _check_engine_params(params: dict[str, Any]) -> None:
 
 
 def AutoConf(**engine: Unpack[EngineParams]) -> Engine:  # noqa: N802 - 公开 API 就是这个名字
-    """配置引擎自己。走约定时可完全不调它。
+    """配置引擎自己。走约定时可完全不调它；无参数调用 = 把单例**取回来**。
 
-    v1 限制：引擎一旦起来就**不能就地改配置**（§15.3 的「口子」仍待实现）。
-    无参数调用只是把它取回来。
+    **引导层不可运行中改**：``home`` / ``file_type`` / ``lock_timeout`` 这些参数
+    决定引擎怎么装配，改了等于改代码（§15.3 的「单例可变」定性作废）。引擎一旦
+    起来再带参数调用会抛 ``ConfError`` —— 要换配置请在第一次调用之前设置。
+
+    值层不受这条限制：值每次都从文件重新读。
     """
     global _engine  # noqa: PLW0603 - 单例的创建与取回
     _check_engine_params(dict(engine))
@@ -100,37 +107,30 @@ def AutoConf(**engine: Unpack[EngineParams]) -> Engine:  # noqa: N802 - 公开 A
         _engine = Engine(**engine)
     elif engine:
         raise ConfError(
-            "引擎已经启动，v1 还不支持运行中改引擎配置；要换配置目录请在第一次调用之前设置。"
+            "引擎已经启动：引导层参数（配置目录 / 值文件类型 / 日志去向 / 审计 / 身份 / "
+            "锁超时）不可运行中改，改了等于改代码。请在第一次调用之前设置。"
         )
     return _engine
 
 
-def conf(
-    key: str,
-    value: Any = MISSING,
-    *,
-    doc: str | None = None,
-    type: type | None = None,  # noqa: A002 - 参数名就是 API 的一部分（§15.1）
-    force: bool = False,
-    **engine: Unpack[EngineParams],
-) -> Any:
-    """读 / 写 / 登记一个配置项。
+def conf(key: str, value: Any = MISSING, doc: str | None = None) -> Any:
+    """读 / 写 / 登记一个配置项 —— **三种模式，与写法一一对应**。
 
     * ``conf(key)``                     读；读不到就报错（键名错 / 部署漏配分两种）
     * ``conf(key, value)``              声明 + 写；**返回当前生效值**（值文件优先）
-    * ``conf(key, value, doc="…")``     同上，并登记说明进词表
+    * ``conf(key, value, doc)``         同上，并登记说明进词表
     * ``conf(key, doc="…")``            只登记不给值（必填键）⇒ 立刻取值，没配就报错
 
-    判据不是「value 位空没空」，而是**这一行在不在声明**：任何 ``doc=`` / ``type=``
-    的出现都让这一行变成声明。
+    判据**只看 ``value`` 位填没填**：``None`` / ``""`` / ``0`` 都是填了，
+    ``MISSING`` 是唯一哨兵。``doc`` 是第三个位置参数，也是唯一的登记元数据 ——
+    参数面自此封闭，以后新增参数不需要动判据。
 
-    ``type=`` 只做**声明期一致性校验**，不参与读取期转换：引擎对值是透明的。
-    ``force=`` 逐项覆盖文件里已有的值，没有全局开关。
+    文件里已有不同值时**尊重文件**（只记一条 ``skip``）：运行期不覆盖既存值。
+    覆盖是人主动发起的事，归命令行的 ``build`` / ``sync``，见
+    ``docs/design/init_config.md``。
     """
-    target = AutoConf(**engine) if engine else _engine
-    if target is None:
-        target = AutoConf()
-    return target(key, value, doc=doc, type=type, force=force)
+    target = _engine if _engine is not None else AutoConf()
+    return target(key, value, doc)
 
 
 def main() -> None:

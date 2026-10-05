@@ -34,6 +34,9 @@ if TYPE_CHECKING:
 
 _WS = " \t"
 
+#: 新建值文件时的**种子文本**：``.env`` 的空文件本身就是合法骨架。
+EMPTY_TEXT = ""
+
 #: ``[空白][export ][键][空白]=[空白][值]``
 _LINE = re.compile(
     r"^(?P<prefix>[ \t]*(?:export[ \t]+)?)"
