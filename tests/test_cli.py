@@ -104,6 +104,21 @@ class TestScan:
         assert scan.decls == []
         assert len(scan.problems) == 2
 
+    def test_a_variable_key_is_out_of_scope(self, tmp_path: Path) -> None:
+        """``APP_POST = "app.post"; conf(APP_POST, 8080)`` 会有人这么写 —— 但**不在支持范围内**。
+
+        这条用例把口径钉死：不解读、也不去猜，一律进问题清单。命令行只认字面量，
+        因为它的价值来自「扫全部代码 = 与代码天然同步」，而不是来自替表达式求值。
+        """
+        _write(
+            tmp_path,
+            'from onconf import conf\nAPP_POST = "app.post"\nconf(APP_POST, 8080)\n',
+        )
+        scan = scan_project(tmp_path)
+        assert scan.decls == []
+        assert len(scan.problems) == 1
+        assert "不是字面量" in scan.problems[0]
+
     def test_duplicate_declarations_last_one_wins(self, tmp_path: Path) -> None:
         _write(
             tmp_path,
