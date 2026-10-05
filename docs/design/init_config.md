@@ -1,8 +1,10 @@
 # 初始化配置
 
 > **本页替换** DESIGN 的这几处：§9.1（把「隐式约定」当作换取「轻」的取舍 —— 该定性作废）、
+> §11.1（API 面收敛为 2 个：`conf` 的四个参数与 `AutoConf` 的职责，见 §1/§3）、
 > §15.1–§15.5（`op` 推断、`conf` 的 `**kwargs` 透传、单例可变的「必需品」定性）、
 > §17.5（`conf` 只暴露四个参数）、§17.6（程序想持久化一个值怎么办）、
+> §17.7（读写由参数结构判定 —— 判据的最终形态见 §4）、
 > §18.1 情形 4 的 `force` 例外、§29.2（`conf(key, doc=…)` 算读还是登记）。
 > 旧稿在本页对应的设计全部落地后被删除；在那之前，**冲突时以本页为准**。
 
@@ -12,7 +14,7 @@
 
 | 面 | 职责 |
 |---|---|
-| `AutoConf(**engine)` | 配置**引擎自己**：配置目录、值文件类型、日志去向、审计、身份、锁超时 |
+| `AutoConf(**engine)` | 配置**引擎自己**：配置目录、值文件名与类型、多文件开关、日志去向、审计、身份、锁超时 |
 | `conf(key, value=…, doc=…)` | 干所有的活：读 / 写 / 登记 |
 
 ```python
@@ -32,7 +34,7 @@ print(conf("app.server.port"))     # 读
 
 | 层 | 内容 | 能不能运行中改 |
 |---|---|---|
-| **引导层** | `home` / `file_type` / `log` / `audit` / `identity` / `flush_window` / `lock_timeout` | **不能**。改了等于改代码，必须重启 |
+| **引导层** | `home` / `file_name` / `file_type` / `no_one_file` / `log` / `audit` / `identity` / `flush_window` / `lock_timeout` | **不能**。改了等于改代码，必须重启 |
 | **值层** | 值文件里的一切 | 随便改 —— 值每次从文件重新读 |
 
 引擎起来之后带参数再调 `AutoConf(...)` 会抛 `ConfError`：
@@ -61,7 +63,9 @@ conf("a.b", 1)
 | 参数 | 默认 | 说明 |
 |---|---|---|
 | `home` | `./conf` | 配置目录。显式参数优先，`ONCONF_HOME` 环境变量次之 |
-| `file_type` | `""` | 值文件类型，**单值**。空串等价于 `"json"`，见[文件支持](file_support.md) |
+| `file_name` | `settings` | 值文件名主干，**纯文件名**（过包含性校验）。见[文件支持](file_support.md) |
+| `file_type` | `"json"` | 值文件类型，**单值**、缺省是字面的 `"json"`；`""` 不是合法取值。见[文件支持](file_support.md) |
+| `no_one_file` | `False` | 多文件：键的 `<路径>:` 前缀寻址 `<home>/<路径>.<ext>`；没有前缀的键仍落默认文件 |
 | `log` | `"stderr"` | 强制日志的去向（`"stderr"` / `"stdout"` / 文件路径） |
 | `audit` | `False` | 是否再追加一份 `<home>/audit.log` |
 | `identity` | `""` | 写进每行记录的可选 `服务@主机` 标记 |
@@ -143,28 +147,49 @@ conf("app.port", 9090)   # 文件里已经是 8080（有人手改过）
 | 路径 | 发起方 | 做什么 |
 |---|---|---|
 | 导入即执行（本库） | 程序 | 只补缺 + 补元数据 |
-| `onconf build` | 人 | 加载并执行声明代码，把值收敛到与声明一致；不删任何键 |
-| `onconf sync` | 人 | 离线、单次、全量执行，收敛**并删除**未声明的键 |
+| `onconf build` | 人 | **完整重建**：按声明集重写值文件（值 = 声明里的默认值）与词表；`--path DIR` 把整份产物写到别处，原目录一个字节不动。因为会丢手改内容，**建议先备份** |
+| `onconf sync` | 人 | **温和收敛**：只补缺 + 更新词表 + 删除声明集里没有的键；**不覆盖已存在的值**。`--no-clean` 关掉删除，只做增量构建 |
 
 判据不是「能不能覆盖」，而是「**谁发起**」：程序发起只补缺，人发起才可以收敛。
 
-> `build` / `sync` 属命令行体系（ISSUE-031），**当前尚未实现**；键的清理移出
-> 运行期是 ISSUE-035，也尚未落地 —— 在那之前，`sync()` / 进程退出仍会清理
-> 未声明的键。本页只描述目标口径。
+### 命令行
+
+```
+onconf build [--home DIR] [--file-name NAME] [--file-type TYPE] [--no-one-file]
+             [--path DIR] [--dry-run] [--json]
+onconf sync  [--home DIR] [--file-name NAME] [--file-type TYPE] [--no-one-file]
+             [--no-clean] [--dry-run] [--json]
+```
+
+声明**不靠执行代码**得到：使用口只有一个函数，所以命令行在项目里静态扫描
+`conf(...)` 调用、按参数形态解读即可（`key` / `key,value` / `key,value,doc` /
+`key,doc=…` / `key,value=…`）。非字面量实参扫不动，会逐条列出；此时 `sync`
+**拒绝删除任何键**（规则 1 只在期望集完整时才允许执行的直接推论）。
+
+`--dry-run` 一个字节都不写。扫描范围默认为当前项目（固定跳过 `.git` / `.venv` /
+缓存目录等），`pyproject.toml` / `.gitignore` 的收敛留待后续版本。
+
+> 其余七条命令（`check` / `format` / `diff` / `read` / `get` / `set` / `add`）
+> 属 D08 / D09，**尚未实现**。键的清理移出运行期是 ISSUE-035，也尚未落地 ——
+> 在那之前，运行期的 `sync()` / 进程退出仍会清理未声明的键。
 
 ## 7. 目录约定
 
 ```text
-<home>/settings.json          值文件（用户手改）；后缀由 file_type 决定
-<home>/schema/settings.json   词表（**库自己的资产**，随便重写）
-<home>/schema/settings.lock   锁的握手点（空文件；库自己的簿记）
-<home>/schema/settings.key    写者端点的认证码（0600；库自己的簿记）
+<home>/<file_name>.json       值文件（用户手改）；名字与类型分别由 file_name / file_type 决定
+<home>/app/conf/net.json      多文件模式：键 `app/conf/net:…` 的落点（no_one_file=True）
+<home>/schema/<file_name>.json  词表（**库自己的资产**，随便重写；多文件下也只有这一份）
+<home>/schema/<file_name>.lock  锁的握手点（空文件；库自己的簿记）
+<home>/schema/<file_name>.key   写者端点的认证码（0600；库自己的簿记）
 <home>/audit.log              审计文件（append-only；audit=True 才有）
 ```
 
 - `home` 缺省从「当前目录」改成 **`./conf`**，与 DESIGN §9.1 的字面一致；
   `ONCONF_HOME` 仍然可以把它指到任何地方。
-- 文件名主干固定 `settings`；后缀由 `file_type` 决定，不再「按存在性挑第一个」。
+- 文件名主干由 `file_name` 给（缺省 `settings`，纯文件名），后缀由 `file_type` 给
+  （缺省 `"json"`）；两者都改了就是换一套值文件与簿记，必须重启。
+- 每个值文件的 `$schema` 指针按自己的层级算出相对路径（`app/conf/net.json` 写
+  `../../schema/settings.json`）。
 
 ## 8. 还没落地的部分
 
@@ -172,7 +197,7 @@ conf("app.port", 9090)   # 文件里已经是 8080（有人手改过）
 
 | 事项 | 归属 |
 |---|---|
-| `build` / `sync` 两条命令行 | ISSUE-031（命令行体系） |
+| 其余七条命令行（`check` / `format` / `diff` / `read` / `get` / `set` / `add`） | ISSUE-031（命令行体系） |
 | 运行期不再清理未声明的键 | ISSUE-035（规则 1 移出运行期） |
 | 日志两通道（文件强制 / 终端可选）、审计路径独立参数 | ISSUE-005 |
-| 多文件（键内嵌路径）与包含性校验 | ISSUE-008 / ISSUE-024 |
+| `.env` 的 `dict` / `list` 开关 | ISSUE-002 §5 / ISSUE-028（预计 2.2） |

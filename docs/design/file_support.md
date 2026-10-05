@@ -7,36 +7,57 @@
 > 只有编号、没有正文）。
 > 旧稿在本页对应的设计全部落地后被删除；在那之前，**冲突时以本页为准**。
 
-## 1. 值从哪个文件来：`file_type`
+## 1. 值从哪个文件来：`file_name` + `file_type`
 
-引擎一次只用一个值文件。**用哪个文件是显式声明的**：
+引擎一次只用一个类型。**用哪个文件是显式声明的**：
 
 ```text
-目录      <home>                  ← 参数（缺省 ./conf）
-文件名称  settings                ← 固定，不由参数给
-文件类型  file_type = ""          ← 参数：单值，空串等价于 "json"
-文件路径  <home>/settings.<ext>   ← 由上面三者派生
+目录      <home>                       ← 参数（缺省 ./conf）
+文件名称  file_name = "settings"       ← 参数：单值，纯文件名
+文件类型  file_type  = "json"          ← 参数：单值，取值与后缀一一对应
+文件路径  <home>/<file_name><ext>      ← 由上面三者派生
 ```
 
-| `file_type` | 实际文件 | 后端 |
-|---|---|---|
-| `""`（缺省）、`"json"` | `settings.json` | JSON |
-| `"yaml"` | `settings.yaml` | YAML |
-| `"yml"` | `settings.yml` | YAML |
-| `"toml"` | `settings.toml` | TOML |
-| `"env"` | `settings.env` | `.env` |
+| `file_name` | `file_type` | 实际文件 | 后端 |
+|---|---|---|---|
+| `"settings"`（缺省） | `"json"`（缺省） | `settings.json` | JSON |
+| 任意纯文件名 | `"json"` / `"yaml"` / `"yml"` / `"toml"` / `"env"` | `<file_name>.<ext>` | 对应后端 |
 
 ```python
-AutoConf(home="./conf")                  # → ./conf/settings.json
-AutoConf(home="./conf", file_type="toml")  # → ./conf/settings.toml
+AutoConf(home="./conf")                              # → ./conf/settings.json
+AutoConf(home="./conf", file_name="app")             # → ./conf/app.json
+AutoConf(home="./conf", file_name="app", file_type="toml")  # → ./conf/app.toml
 ```
 
-- **空串与 `"json"` 完全等价**：写不写它都一样，默认值总是有的。
-- 取值非法抛 `ConfError`，消息里列出全部合法取值。
+- **缺省值是字面的 `"json"`**：默认值只有一个来源，不靠空串隐含语义；`""` 不是合法取值
+  （D01 §5：`file_type` 的缺省与「本质上以 JSON 为主」绑定）。
+- 取名或取值不合法都当场抛 `ConfError`；`file_type` 的消息里列出全部合法取值。
+- `file_name` 必须是**纯文件名**：过包含性校验，见 §1.1 与[路径安全](../security/threat-model.md)的 T1。
 - 目录里恰好有别的类型文件**不会**被选中。「按存在性从候选名里挑第一个」已退役 ——
   那是把「哪个文件生效」交给磁盘上恰好有什么，属于隐式约定。
 
-一次只有一个类型：**不支持同时使用多个类型的配置文件**。
+### 1.1 多文件：`no_one_file`
+
+`no_one_file=True`（缺省 `False`）打开键内嵌路径：键里**第一个** `:` 的左边是相对路径、
+右边是文件内的键名。
+
+```python
+AutoConf(home="./conf", no_one_file=True)
+conf("app/conf/net:net.id.post", 8080)   # → ./conf/app/conf/net.json 里的 net.id.post
+conf("plain.key", 1)                     # 没有 ':' ⇒ 仍落到 ./conf/settings.json
+```
+
+| 项 | 取值 |
+|---|---|
+| 没有 `:` 的键 | 落到默认文件 `<home>/<file_name><ext>` —— 单文件与多文件可以混用 |
+| 词表 | **只有一份**：`<home>/schema/<file_name>.json`；每个值文件的 `$schema` 指针按自己的层级算相对路径 |
+| 锁与写者 | 仍然每个 `<home>` + `<file_name>` 一个 |
+| 归引擎管的文件 | **默认文件 + 当前声明集引用到的路径段**；磁盘上其它值文件一个字节都不动（也不会被规则 1 清理） |
+| 路径安全 | 路径段必须过包含性校验：相对、无 `\\`、无 `.` / `..` / 空段、非绝对、解析后仍在 `<home>` 之内 |
+| 多文件关闭 | `:` 不参与任何解析，整个字符串就是一个普通键 —— 与多文件开启前行为完全一致 |
+
+命名空间形式（`file_names = []`）留待后续版本；**同一个键在不同文件里同名不冲突**，
+因为词表记的是全键（含路径段）。
 
 ### 新建文件时从「种子」起步
 
@@ -93,13 +114,15 @@ conf("app.tags")   # .env 后端 → "['a', 'b']"（如果开了结构开关）
 | TOML | 可选，1.0 起 | 表头归一到点分键；没有 `null`；放不下 `$schema` 成员 |
 | `.env` | 可选，1.0 起（**字符串标量**） | 不做类型推断、不认行内注释、不做键名映射；放不下 `$schema` 成员 |
 | `.env` 的 `dict` / `list` | **计划中，预计 2.2** | 由 `env_file_dict` / `env_file_list` 两个布尔开关显式开启，默认关；开启后写入压成字符串、读取尝试解回、解不回就返回字符串 |
-| 多文件（键内嵌路径） | 计划中，版本待定 | `conf("app/conf/net:net.id.post")`；与包含性校验必须同时做 |
+| 多文件（键内嵌路径） | **已实现**（`no_one_file`） | `conf("app/conf/net:net.id.post")`；与包含性校验同批落地，见 §1.1 |
+| 命名空间形式（`file_names = []`） | 计划中，版本待定 | 多文件之上再按命名空间分组；当前只有「路径段」一种分组 |
 
 > 「预计 2.2」是排期意向，不是承诺；落地时以 [路线图](../roadmap.md) 的状态行为准。
 
 ## 6. 词表
 
-词表是**库自己的资产**，与任何一份代码无关地持久化在 `<home>/schema/settings.json`。
+词表是**库自己的资产**，与任何一份代码无关地持久化在 `<home>/schema/<file_name>.json`
+（缺省即 `<home>/schema/settings.json`；多文件模式下**仍然只有这一份**）。
 它只记三样东西：
 
 | 字段 | 含义 |
@@ -170,6 +193,7 @@ conf("PORT", 8080)   # TypeError：.env 只能存字符串；要存非字符串�
 | 事项 | 归属 |
 |---|---|
 | `.env` 的 `dict` / `list` 开关与编解码格式 | ISSUE-002 §5 / ISSUE-028 / ISSUE-026（预计 2.2） |
-| 多文件与包含性校验 | ISSUE-008 / ISSUE-024 |
+| 命名空间形式 `file_names = []` | 多文件的后续演进（当前是键内嵌路径） |
 | `format` 只覆盖 JSON | ISSUE-045 |
 | 词表按格式导出（当前只产出一份 JSON Schema） | 路线图「未实现」段 |
+| 命令行其余七条命令（`check` / `format` / `diff` / `read` / `get` / `set` / `add`） | D08 / D09 |

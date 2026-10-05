@@ -13,6 +13,15 @@
 
 ### Changed
 
+- **`EngineParams` 新增 `file_name` / `no_one_file`，`file_type` 的缺省值改为字面 `"json"`**
+  （破坏性）：值文件路径变成 `<home>/<file_name><ext>`，两者都经**包含性校验**
+  （纯文件名、无分隔符、无 `..`、非绝对、解析后仍在 `<home>` 之内）。空串不再是
+  `file_type` 的合法取值 —— 默认值只有一个来源。
+- **多文件寻址**：`no_one_file=True` 后，键里第一个 `:` 的左边是相对路径、右边是文件内
+  键名（`conf("app/conf/net:net.id.post", 8080)` → `<home>/app/conf/net.json`）；没有前缀
+  的键仍落默认文件。词表只有一份，每个值文件的 `$schema` 指针按自己的层级算相对路径；
+  未被声明引用的值文件不会被加载、也不会被清理。多文件**关闭**时 `:` 不参与解析，
+  行为与之前完全一致。
 - **使用口 `conf` 收敛为三种模式**（破坏性）：签名变成 `conf(key, value=MISSING, doc=None)`，
   判据只看 `value` 位填没填。`doc` 从 keyword-only 变成第三个**位置**参数；参数面自此封闭。
 - **`type=` 移除**（破坏性）：值类型不再声明、不再校验、不再进词表，`TypeConflictError`
@@ -23,27 +32,46 @@
   `Action("overwrite")`、`reconcile(force_keys=…)` 与 IPC 请求里的 `forced` 字段一并移除。
 - **`conf(..., **engine)` 摘除**（破坏性）：使用口不得配置引擎，`conf(..., home=…)` 现在是
   `TypeError`。「一个配置口、一个使用口」不再依赖「引擎是否已经起来」这一时序条件。
-- **值文件选定改为 `file_type` 参数**：单值，缺省 `""` 等价于 `"json"`，决定
-  `<home>/settings.<ext>` 的后缀。「按存在性从候选名里挑第一个」的隐式行为退役。
+- **值文件选定改为 `file_name` + `file_type`**：「按存在性从候选名里挑第一个」的隐式行为退役。
 - **`home` 的缺省从「当前目录」改为 `./conf`**。
 - 修复：新建**非 JSON** 值文件时，引擎用写死的 `"{}"` 当种子，TOML / YAML 后端会把它当内容
   解析而报错。现在每种后端各自提供 `EMPTY_TEXT` 种子（JSON 是 `{}`，其余三种是空文本）。
 
 ### Added
 
+- **命令行 `onconf build` / `onconf sync`**（D08 §1 的头两条命令）：声明靠**静态扫描项目里的
+  `conf(...)` 调用**得到（`ast.parse`，不 import、不执行用户代码），按 `key` / `value` / `doc`
+  的参数形态解读。`build` 按声明完整重建值文件与词表（`--path` 把整份重建写到新目录）；
+  `sync` 补缺并删除声明里没有的键（`--no-clean` 只补缺）。两者都支持 `--dry-run`（一个字节
+  都不写）与 `--json`；扫不动的调用会被逐条列出，此时 `sync` **拒绝删除任何键**。
+  控制台入口从「只打印配置目录」的占位改为 `onconf._cli:main`。
+- 新增 `src/onconf/_paths.py`：外部字符串 → 路径的**唯一入口**（五条包含性规则）。
 - `EngineParams` 补上 `lock_timeout` —— 它以前对公开 API 完全不可达（传了会抛
   `UnknownEngineParamError`）。
-- `EngineParams` 补上 `file_type`；`EngineParams` 的注解与 `Engine.__init__` 的形参
-  一一对应，有回归守着。
+- `EngineParams` 补上 `file_name` / `file_type` / `no_one_file`；`EngineParams` 的注解与
+  `Engine.__init__` 的形参一一对应，有回归守着。
+
+### Fixed
+
+- 清掉三处已被移除机制的陈旧引用：`_core.read_value` docstring 里的「声明期 `type=` 校验」、
+  `_audit` 模块 docstring 的 `op=overwrite`、`Engine._log_failure` 那个只为「类型冲突」而存在
+  且无人使用的 `message` 形参。
+- 命令行扫描对齐 CPython：带 UTF-8 BOM 的源文件不再被当成语法错误（改用 `utf-8-sig` 读取）。
 
 ### Docs
 
 - 新增设计文档 [`docs/design/init_config.md`](docs/design/init_config.md)（初始化配置：
   两个面、引导层与值层、三种模式、运行期写路径）与
   [`docs/design/file_support.md`](docs/design/file_support.md)（值文件选定、返回值口径、
-  四个后端、词表、外科手术式回写）。两者开始**逐节替换**旧稿 `DESIGN.md`。
-- README 一对、`docs/api/index.md`、`docs/roadmap.md` 同步；路线图新增
-  「值文件类型的支持计划」（`.env` 的 `dict` / `list` 预计 2.2）。
+  四个后端、词表、外科手术式回写）。两者开始**逐节替换**旧稿 `DESIGN.md`，
+  并补齐 §11.1 / §17.7 / §18.1 情形 4 的认领。
+- 威胁模型 **T1 由「白名单 → 不适用」改为「包含性校验」**，新增 **T13**（命令行静态扫描与
+  删除动作）；不变量表与边界判定表同步。
+- README 一对、`docs/api/index.md`、`docs/design/*`、`docs/roadmap.md` 同步；路线图把多文件与
+  `build` / `sync` 从「未实现」移到「已实现」，`.env` 的 `dict` / `list` 仍预计 2.2。
+- 修掉三页用户文档里的陈旧陈述（`docs/index.md`、`docs/getting-started.md`、
+  `docs/architecture/index.md`）：`type=` / `TypeConflictError` / 按存在性挑值文件 /
+  `__all__` 符号数 / `op=overwrite` / 词表记类型。
 
 ## [1.0.0] - 2026-10-04
 
