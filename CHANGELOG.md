@@ -60,6 +60,12 @@
 
 ### Docs
 
+- 新增「使用范式」一节（README 一对、[`docs/getting-started.md`](docs/getting-started.md)、
+  [`docs/design/init_config.md`](docs/design/init_config.md) §8）：**声明处必须字面量** ——
+  键、值、说明都写在调用点上；读取不受限（常量、拼接都行）。定性是**合法但不合理**
+  （error 的分界是「不合法」，这一条只到 warning），因此**不设门禁**，只写清代价：
+  命令行看不见它（`sync` 因此拒绝删除任何键）、静态复核与未来的 `check` 覆盖不到它、
+  声明点不再自证。
 - 新增设计文档 [`docs/design/init_config.md`](docs/design/init_config.md)（初始化配置：
   两个面、引导层与值层、三种模式、运行期写路径）与
   [`docs/design/file_support.md`](docs/design/file_support.md)（值文件选定、返回值口径、

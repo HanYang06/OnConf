@@ -51,6 +51,29 @@ print(conf("app.server.port"))  # 读
 3. 引擎对值是**透明的**：文件里写 `"8080"` 读回来就是字符串，要整数请自己
    `int(conf("app.server.port"))`。类型声明（`type=`）已整体取消，引擎不推断也不转换。
 
+## 声明要写字面量
+
+带上 `value` 的调用就是**规格**，所以键、值、说明都写成字面量：
+
+```python
+conf("app.server.port", 8080, "服务端口")   # ✅
+conf("slot.max.byte.b", 512, "格长档位之一")  # ✅
+```
+
+```python
+APP_PORT = "app.server.port"
+conf(APP_PORT, 8080)          # ❌ 合法，但声明处不是字面量
+for key, value in TABLE:
+    conf(key, value)          # ❌ 同一件事，多绕了一层
+```
+
+**读取不受限**：`conf("app.server.port")` 与 `conf(APP_PORT)` 都行，常量写错了会当场报错。
+
+这是**约定而不是强制检查**（合法但不合理），代价自己衡量：这样写的声明，命令行的
+`onconf build` / `onconf sync` 看不见（`sync` 会把那个键当成「代码没声明」，并因此拒绝
+删除任何键），`grep` 与未来的 `check` 也看不见。完整口径见
+[初始化配置](design/init_config.md) §8。
+
 ## 配置目录约定
 
 配置目录 `<home>` 的确定顺序（实现见

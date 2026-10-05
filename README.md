@@ -165,17 +165,56 @@ Notes on semantics that surprise people:
   value raises `KeyHasNoValueError`.
 - **The runtime never overwrites a value that is already in the file.** If the file says `8080`
   and your code declares `9090`, the file is left byte-for-byte alone and an `op=skip` record is
-  logged — the call still returns the effective value `8080`. Overwriting is a human decision,
-  so it belongs to the CLI (`onconf build` / `onconf sync`, not implemented yet).
+  logged — the call still returns the effective value `8080`. Overwriting is a human decision:
+  `onconf sync` will not touch an existing value either, and `onconf build` rebuilds the file
+  from the declarations instead.
 - Only two things are ever written at runtime: **keys that are missing** and **vocabulary
   metadata**.
-- The engine config has two layers: the **bootstrap layer** (`home`, `file_type`, `log`,
-  `audit`, `identity`, `flush_window`, `lock_timeout`) cannot be changed once the engine is
-  running — that would amount to editing your code; the **value layer** may change at any time,
-  because values are re-read from the file.
+- The engine config has two layers: the **bootstrap layer** (`home`, `file_name`, `file_type`,
+  `no_one_file`, `log`, `audit`, `identity`, `flush_window`, `lock_timeout`) cannot be changed
+  once the engine is running — that would amount to editing your code; the **value layer** may
+  change at any time, because values are re-read from the file.
 - The commit point is **immediate by default** (`atexit` triggers a final `sync()`). A batching
   window is opt-in via `flush_window`; with it on, disk is touched at four commit points —
   window expiry, a read, `sync()`, and process exit.
+
+## How to declare: **literals at the declaration site**
+
+The calls that carry a `value` *are* the specification, so spell the key, the value and the
+description as literals:
+
+```python
+conf("app.post", 8080, "server port")                  # yes
+conf("slot.max.byte.b", 512, "one of the two tiers")   # yes
+```
+
+```python
+APP_POST = "app.post"
+conf(APP_POST, 8080)                 # no — legal Python, but the declaration is not a literal
+for key, default in TIERS:
+    conf(key, default)               # no — same thing, one indirection further
+conf(build_key(), 8080)              # no
+```
+
+Reads are **not** restricted: `conf("app.post")` and `conf(APP_POST)` are both fine — a read
+creates no persistent state, and a wrong constant fails loudly right there with
+`KeyNotRegisteredError`.
+
+**This is a convention, not an enforced rule** — it is legal Python but a bad fit here, and the
+library will not police your code. What a hidden declaration costs you:
+
+- **The CLI cannot see it.** `onconf build` / `onconf sync` find declarations by reading
+  `conf(...)` arguments, so `sync` treats the key as *not declared*; while such calls exist it
+  **refuses to delete anything** rather than guess (use `--no-clean` to keep going).
+- **Static review loses it.** `grep app.post` no longer finds the declaration, and no tool that
+  reads the call site can — including the `check` command we plan to add (which will emit a
+  warning, never an error).
+- **The site stops explaining itself.** Computed values and descriptions (`X if cond else Y`,
+  f-strings) are invisible where you look; the loop/dict forms go further and leave "which keys
+  do we even have?" unanswerable from the code.
+
+Editor completion inside the value file is unaffected — the vocabulary is built at runtime from
+whatever key was registered.
 
 ## Currently implemented
 
