@@ -3,7 +3,8 @@
 本页范围：**能力的权威清单**——哪些已经能用、哪些还在路上、哪些当前完全不可用。
 
 ⏳ 正文待补：等设计定稿后补齐。本页只列状态与依据，不写实现方案；
-方案层面的内容见[设计稿](design/DESIGN.md)（未定稿草案）。
+方案层面的内容见[设计文档索引](design/index.md)（`init_config.md` / `file_support.md`
+正在逐节替换旧稿 `DESIGN.md`）。
 
 !!! info "数字口径"
 
@@ -19,11 +20,13 @@
 | YAML 值后端 | 注释、缩进、键序逐字保留 | `src/onconf/_yaml_backend.py` |
 | `.env` 值后端 | 纯字符串后端：只接受字符串值，不做键名映射，不认行内注释 | `src/onconf/_env_backend.py` |
 | TOML 值后端 | 表头归一成点分键 | `src/onconf/_toml_backend.py` |
-| 词表 | 三态持久化 + JSON Schema 往返 + 哈希短路 | `src/onconf/_vocab.py` |
-| 引擎装配 | `conf` / `AutoConf` 两个面接通，声明到读回端到端可用 | `src/onconf/_engine.py` |
+| 值文件选定 | `file_type` 单值参数决定 `<home>/settings.<ext>` 的后缀；缺省 `""` 等于 JSON。「按存在性挑第一个」已退役 | `Engine._values_path` |
+| 词表 | 三态持久化 + JSON Schema 往返 + 哈希短路；每键只记**键 / 说明 / 默认值**三样（类型声明已移除） | `src/onconf/_vocab.py` |
+| 引擎装配 | `conf` / `AutoConf` 两个面接通，三种模式（读 / 声明 + 写 / 只登记）各自对应一种写法 | `src/onconf/_engine.py` |
+| 引导层与值层分开 | 引导层参数（`home` / `file_type` / `log` / `audit` / `identity` / `flush_window` / `lock_timeout`）只能在第一次调用之前声明；值层每次从文件重读 | `__init__.AutoConf` |
 | 用值当键 | 间接寻址，`conf(conf("app.key_name"))` | `_core.py` + `_engine.py` |
 | `$schema` 指针 | 每次落盘都保证值文件里有指向词表的指针（放不下成员的后端除外） | `_engine.Engine._ensure_schema_pointer` |
-| 异常族 | `ConfError` 与五个子类（读取错误按责任方分成两类；`LockTimeoutError` 定义在 `_lock.py`）；另有三个**读期**的 `ValueError` 子类（`EnvSyntaxError` / `YamlFlatRequiredError` / `TomlFlatRequiredError`，定义在各后端），**不是** `ConfError` 子类 | `src/onconf/errors.py` |
+| 异常族 | `ConfError` 与四个子类（`KeyNotRegisteredError` / `KeyHasNoValueError` / `UnknownEngineParamError` / `LockTimeoutError`；读取错误按责任方分成两类，`LockTimeoutError` 定义在 `_lock.py`）；另有三个**读期**的 `ValueError` 子类（`EnvSyntaxError` / `YamlFlatRequiredError` / `TomlFlatRequiredError`，定义在各后端），**不是** `ConfError` 子类 | `src/onconf/errors.py` |
 | 提交点 | 每次 `conf(key, value)` 当场对账落盘；`atexit` 触发 `Engine.sync()`；`flush_window > 0` 时改为四个提交点（窗口到期 / 一次读 / `sync()` / 进程退出） | `__init__._sync_at_exit` |
 | 跨进程排他锁 | 操作系统级锁（Windows `msvcrt.locking`、其它 `fcntl.flock`），进程崩溃由 OS 释放；超时抛 `LockTimeoutError` | `src/onconf/_lock.py` |
 | 锁内按需重读 | 指纹（`mtime` + 大小）**同时**看值文件与词表，避免把别人刚登记的键挤掉 | `Engine._reload_if_changed` |
@@ -36,9 +39,24 @@
 | 事项 | 现状 |
 |---|---|
 | 声明集哈希的整体短路 | 声明集哈希**已经算出来并写进词表**（`x-onconf-hash`），但引擎还没用它做「整体跳过」，当前靠词表逐项 diff 达到等效效果（设计稿 §29.3 也是这么记的） |
-| 运行中改引擎配置 | v1 只允许在第一次调用之前设置 `home` / `log` / `audit` / `identity` / `flush_window`；引擎起来后再带参数调用 `AutoConf(...)` 会抛 `ConfError` |
 | 项目重命名 | **已定案并完成**：展示名 `OnConf`，仓库 / PyPI / import / CLI 统一 `onconf`。含两处磁盘与环境变量层面的变更：词表字段 `x-onconf-hash`、`ONCONF_HOME` |
 | 文档与 M5 收口 | `1.0.0` 已于 2026-10-04 发布（PyPI 上发布名 `OnConf`）；README、文档站与 CHANGELOG 都已同步到 1.0；**剩余的硬缺口只有命令行** —— `onconf` 入口仍是占位 |
+| 设计文档的逐步替换 | `docs/design/` 下新开 `init_config.md` / `file_support.md` / `log.md`，逐节替换旧稿 `DESIGN.md`；全部替换完成后旧稿删除 |
+
+## 值文件类型的支持计划
+
+「本质上以 JSON 为主」：JSON 是缺省值，也是能力最完整的一份；其余后端是**可选后端**，
+不是并列默认。下面按**后端 × 能力**列状态与预计版本 —— 表里的版本号是**排期意向**，
+不是承诺，落地时以本节的状态列为准（见[文件支持](design/file_support.md)）。
+
+| 后端 | 标量读写 | `dict` / `list` | 备注 |
+|---|---|---|---|
+| JSON | ✅ 1.0（主后端） | ✅ 1.0 | 能放 `$schema` 成员；编辑器补全的落点 |
+| YAML | ✅ 1.0 | ✅ 1.0 | 注释、锚点、键序原样保留；能放 `$schema` 成员 |
+| TOML | ✅ 1.0 | ✅ 1.0（表/数组） | 表头归一成点分键；没有 `null`；放不下 `$schema` 成员 |
+| `.env` | ✅ 1.0 | ⏳ 预计 **2.2** | 1.0 是**纯字符串**后端；`dict` / `list` 由 `env_file_dict` / `env_file_list` 两个布尔开关显式开启（默认都关），开启后写入压成字符串、读取尝试解回、解不回就返回字符串 |
+| 多文件（键内嵌路径） | — | — | 未排期；`conf("app/conf/net:net.id.post")`，必须与路径包含性校验同时做 |
+| 系统环境变量当配置源 | — | — | 未排期；`ONCONF_HOME` 目前只用来定位配置目录 |
 
 ## 未实现（当前不可用）
 
@@ -47,11 +65,13 @@
 | 未实现的能力 | 归属里程碑 |
 |---|---|
 | WAL（预写日志） | **判定不做**（§32.7）：攒批窗口负责合并突发写、声明可从代码重新推导、专职写者负责串行、读改写 + 原子替换负责顺序 —— WAL 要买的四件事都有别的来源 |
-| 短命进程之间的规则 1（清理未知键） | **待定的设计问题**（§32.4）：写者的声明集不是持久状态，写者一换人基准就重置。倾向把规则 1 限定在「单写者且长命」的前提下 —— 多进程 + 短命进程下没有任何一个进程知道完整期望集 |
+| 运行期的规则 1（清理未知键） | **已裁定移出运行期**，交给 `onconf sync`（ISSUE-035），但尚未实现。写者的声明集不是持久状态，写者一换人基准就重置（§32.4） |
+| 覆盖文件里已有的值 | **已裁定归命令行**（`build` / `sync`）：覆盖是人的决定，不是运行期的事。在命令行落地之前，运行期只补缺、不改已有 |
 | 前缀分片锁 | —（当前是每个配置目录一把锁） |
-| 把系统环境变量当作配置源（`ONCONF_HOME` 目前只用来定位配置目录） | — |
 | 按格式导出词表（当前只产出 JSON Schema 一份） | — |
 | 真正的命令行（`onconf` 入口目前只打印配置目录） | M5 |
+| `.env` 的 `dict` / `list` 值 | 预计 2.2（见上一节） |
+| 多文件与路径包含性校验 | 未排期（见上一节） |
 
 ## 与 M1–M5 里程碑的对应
 
