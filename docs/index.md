@@ -10,7 +10,8 @@
 
 **已发布到 PyPI**，发布名 [`OnConf`](https://pypi.org/project/OnConf/)。当前版本 `1.0.0`，
 首个稳定版：公开 API 与磁盘格式从 1.0 起遵循语义化版本，只在**主版本号**变更时才做
-破坏性变更；真正的命令行尚未实现（以[路线图](roadmap.md)为准）。
+破坏性变更；命令行已交付头两条（`build` / `sync`），其余七条尚未实现
+（以[2.0.x 路线图](roadmap/2.0.x/roadmap.md)为准）。
 
 定位句的两个半句现在**都有机制支撑**：「不丢一个字节」由外科手术式回写保证；
 「不丢一次更新」由**专职写者**保证 —— 谁先抢绑到配置目录的端点，谁就是唯一的读写者，
@@ -27,11 +28,11 @@
 |---|---|
 | 版本 | `1.0.0`（2026-10-04 发布，PyPI 上是 [`OnConf`](https://pypi.org/project/OnConf/)） |
 | 开发状态 | 稳定（classifier `Development Status :: 5 - Production/Stable`） |
-| 公开 API | `AutoConf` / `conf` 两个面，`__all__` 共 9 个符号 |
-| 值后端 | JSON、YAML、TOML、`.env`（字符串后端） |
+| 公开 API | `AutoConf` / `conf` 两个面，`__all__` 共 8 个符号 |
+| 值后端 | JSON（缺省）、YAML、TOML、`.env`（字符串后端）；多文件由 `no_one_file` 开启 |
 | 提交点 | 每次 `conf(key, value)` 当场对账并落盘；进程退出时 `atexit` 触发 `Engine.sync()` |
-| 日志与审计 | 强制日志（`log=` 选去向，**不可关闭**）+ 可选 append-only 审计文件（`audit=True` → `<home>/audit.log`）；见[设计稿 §20 / §21](design/DESIGN.md) |
-| 测试 | 见[路线图](roadmap.md)的状态小节 |
+| 日志与审计 | 强制日志（`log=` 选去向，**不可关闭**）+ 可选 append-only 审计文件（`audit=True` → `<home>/audit.log`）；见[审计日志](design/log.md) |
+| 测试 | 见[路线图](roadmap/index.md) |
 
 ## 已实现的能力
 
@@ -40,12 +41,17 @@
 - **`.env` 值后端**：纯字符串后端，不做键名映射，不认行内注释（`#` 出现在值里时就是值的一部分）。
 - **TOML 值后端**：表头归一成点分键。
 - **词表**：三态持久化 + JSON Schema 往返 + 哈希短路，落在 `<home>/schema/` 下。
-- **引擎装配**：`conf` / `AutoConf` 两个面端到端接通，声明到读回可用。
+- **引擎装配**：`conf` / `AutoConf` 两个面端到端接通，三种模式（读 / 声明 + 写 / 只登记）
+  各自对应一种写法。
+- **多文件**：`no_one_file=True` 后键的 `<路径>:` 前缀寻址 `<home>/<路径>.<ext>`；一份词表、
+  一把锁、每个 `(home, file_name)` 一个写者。值文件名（`file_name`）与内嵌路径都过包含性校验。
+- **命令行**：`onconf build`（按声明完整重建）与 `onconf sync`（补缺 + 删未声明的键），
+  声明靠静态扫描 `conf(...)` 调用得到；其余七条命令尚未实现。
 - **用值当键**：支持 `conf(conf("app.key_name"))` 这类间接寻址。
 - **`$schema` 指针**：每次落盘都保证值文件里有指向词表的指针（**能吃下成员的后端**才写；
   `.env` 与 TOML 放不下成员，跳过）。
 - **专职写者**：谁先抢绑到配置目录的端点，谁就是唯一的读写者；其余进程经
-  `multiprocessing.connection` 发请求。**抢绑本身就是选举**，不涉及锁文件（[设计稿 §32](design/DESIGN.md)）。
+  `multiprocessing.connection` 发请求。**抢绑本身就是选举**，不涉及锁文件。
 - **跨进程排他锁**：操作系统级锁（Windows `msvcrt.locking`、其它 `fcntl.flock`），进程崩溃由 OS 释放；拿不到锁抛 `LockTimeoutError` —— 专职写者不在时由它兜底。
 - **锁内按需重读**：指纹（`mtime` + 大小）同时看值文件与词表，别人刚登记的键不会被挤掉。
 - **原子写**：同目录临时文件 → `fsync` → `os.replace`（POSIX 再加父目录 `fsync`），行尾与权限位原样保留。
@@ -55,13 +61,13 @@
   写全量、读按事务去重（`n=`），写记录带调用点与 pid；`audit=True` 再落一份
   append-only 的 `<home>/audit.log`（`0600`、按大小轮转）。终端用**显示宽度**对齐。
 - **异常族**：`ConfError` 连同 `KeyNotRegisteredError` / `KeyHasNoValueError` /
-  `TypeConflictError` / `UnknownEngineParamError`；另有 `LockTimeoutError`（在 `_lock.py`，
+  `UnknownEngineParamError`；另有 `LockTimeoutError`（在 `_lock.py`，
   也是 `ConfError` 的子类）与三个**读期**的 `ValueError` 子类
   （`EnvSyntaxError` / `YamlFlatRequiredError` / `TomlFlatRequiredError`，
   `except ConfError` 接不住它们）。见[快速开始](getting-started.md)的常见问题。
 
-尚未实现的能力（把系统环境变量当作配置源、真正的命令行）**当前不可用**，
-一份完整清单见[路线图](roadmap.md)。
+尚未实现的能力（把系统环境变量当作配置源、除 `build` / `sync` 之外的七条命令行）
+**当前不可用**，一份完整清单见[2.0.x 路线图](roadmap/2.0.x/roadmap.md)。
 
 ## 最小示例
 
@@ -94,6 +100,7 @@ conf/
 ## 下一步
 
 - [快速开始](getting-started.md) —— 环境要求、安装、目录约定、异常怎么区分。
-- [路线图](roadmap.md) —— 已实现 / 进行中 / 未实现，以及与 M1–M5 里程碑的对应。
-- [设计稿索引](design/index.md) —— `docs/design/DESIGN.md` 是**未定稿**的设计草案。
+- [路线图](roadmap/index.md) —— [1.0.x](roadmap/1.0.x/roadmap.md) 交付了什么、
+  [2.0.x](roadmap/2.0.x/roadmap.md) 收什么；每条都带状态与设计文稿引用。
+- [设计稿索引](design/index.md) —— 初始化配置 / 文件支持 / 审计日志三份设计口径。
 - [API 参考](api/index.md) —— 由源码 docstring 直接生成。

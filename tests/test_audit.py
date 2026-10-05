@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 HanYang06
 # SPDX-License-Identifier: Apache-2.0
-"""日志与审计：格式、读去重、审计文件、调用点、显示宽度对齐（DESIGN §20 / §21）。
+"""日志与审计：格式、读去重、审计文件、调用点、显示宽度对齐。
 
 这一层是**体验层**，所以测的是用户真正看得见的东西：终端上那几行长什么样、
 审计文件里能不能无损地查回来、失败有没有留痕。
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 _engine = import_module("onconf._engine")
 
 
-#: 审计文件里的完整时间戳：审计要跨天查（§20.6）
+#: 审计文件里的完整时间戳：审计要跨天查
 _FULL_DATE = re.compile(r"\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\]")
 #: 这个测试文件自己的调用点
 _HERE = re.compile(r"at=.*test_audit\.py:\d+")
@@ -69,7 +69,7 @@ class TestWriteRecords:
     def test_a_declaration_logs_a_write_and_a_change(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """``fill`` 写一条 ``[Write]``，值真的变了再写一条 ``[Change] old → new``（§20.6）。"""
+        """``fill`` 写一条 ``[Write]``，值真的变了再写一条 ``[Change] old → new``。"""
         engine = Engine(tmp_path)
         engine("app.server.port", 512)
 
@@ -88,7 +88,7 @@ class TestWriteRecords:
     def test_a_satisfied_declaration_is_logged_as_noop(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """声明跑了但文件已经是对的 ⇒ ``op=noop``（§13.8：用户得看得见声明生效没有）。"""
+        """声明跑了但文件已经是对的 ⇒ ``op=noop``。"""
         engine = Engine(tmp_path)
         engine("k", 1)
         capsys.readouterr()
@@ -100,7 +100,7 @@ class TestWriteRecords:
     def test_a_respected_file_is_logged_as_skip(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """值不一致但尊重文件 ⇒ ``op=skip`` 且 old / new 都在（§20.2 缺的第二样）。"""
+        """值不一致但尊重文件 ⇒ ``op=skip`` 且 old / new 都在。"""
         engine = Engine(tmp_path)
         engine("k", 1)
         capsys.readouterr()
@@ -172,7 +172,7 @@ class TestReadRecords:
     def test_a_value_that_only_lives_in_the_vocabulary(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """事实里没有、词表里有默认值 ⇒ ``origin=vocab``（§20.2 缺的第二样）。"""
+        """事实里没有、词表里有默认值 ⇒ ``origin=vocab``。"""
         home = tmp_path / "conf"
         seed = Engine(home)
         seed("k", 512)
@@ -190,7 +190,7 @@ class TestReadRecords:
     def test_repeated_reads_are_aggregated(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """**同事务同键去重**：循环里读一万次只留一行 ``n=10000``（§20.1）。"""
+        """**同事务同键去重**：循环里读一万次只留一行 ``n=10000``。"""
         engine = Engine(tmp_path)
         engine("k", 1)
         capsys.readouterr()
@@ -205,7 +205,7 @@ class TestReadRecords:
 
 
 # --------------------------------------------------------------------------- #
-# 失败必须留痕（§20.2 第 4 项）
+# 失败必须留痕
 # --------------------------------------------------------------------------- #
 
 
@@ -265,7 +265,7 @@ class TestErrorRecords:
 
 class TestRendering:
     def test_display_width_counts_cjk_as_two(self) -> None:
-        """``len("配置")`` 是 2，显示宽度是 4（§21.3）。"""
+        """``len("配置")`` 是 2，显示宽度是 4。"""
         assert cell_len("配置") == 4
         assert cell_len("ab") == 2
         assert cell_len("e\u0301") == 1, "组合字符不占列"
@@ -280,7 +280,7 @@ class TestRendering:
     def test_columns_are_aligned_within_a_batch(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """弹性制表位：同一批里 ``file=`` 落在同一个显示列上（§21.1 / §21.2）。"""
+        """弹性制表位：同一批里 ``file=`` 落在同一个显示列上。"""
         engine = Engine(tmp_path, flush_window=60.0)
         engine("a.very.long.key.name", 1)
         engine("b", 2)
@@ -294,7 +294,7 @@ class TestRendering:
     def test_long_values_are_clipped_on_the_terminal_but_never_in_the_file(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """截断只发生在终端渲染层，文件那一份必须无损（§21.5 约束 1）。"""
+        """截断只发生在终端渲染层，文件那一份必须无损。"""
         home = tmp_path / "conf"
         long_value = "x" * 300
         engine = Engine(home, audit=True)
@@ -354,7 +354,7 @@ class TestSinks:
     def test_the_log_cannot_be_closed_only_redirected(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """没有 ``audit`` 也得有日志 —— 关掉它不是「少看几行」（§20.1）。"""
+        """没有 ``audit`` 也得有日志 —— 关掉它不是「少看几行」。"""
         engine = Engine(tmp_path)
         engine("k", 1)
 
@@ -524,7 +524,7 @@ class TestAccounting:
             writer.close()
 
     def test_remote_reads_are_not_mirrored_twice(self, tmp_path: Path) -> None:
-        """两次远端读只在写者收口时补一次，而且两边数字一致（§20.1）。"""
+        """两次远端读只在写者收口时补一次，而且两边数字一致。"""
         home = tmp_path / "conf"
         client_log = tmp_path / "client.log"
         writer = Engine(home, log=tmp_path / "writer.log", audit=True)
@@ -596,7 +596,7 @@ class TestBrokenSinks:
     def test_a_disk_error_is_logged(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """盘满 / 没权限是 ``OSError``，不是 ConfError —— 一样要留痕（§20.2 第 4 项）。"""
+        """盘满 / 没权限是 ``OSError``，不是 ConfError —— 一样要留痕。"""
 
         def boom(*_args: object, **_kwargs: object) -> None:
             raise OSError("磁盘满了")
@@ -720,7 +720,7 @@ class TestProcessStructure:
     ) -> None:
         """端点整条路不通时，日志要说明「没连上、就地干」，而不是假装连上了。"""
         monkeypatch.setattr(_owner, "connect", lambda _home, **_kw: None)
-        monkeypatch.setattr(_owner, "claim", lambda _home: None)
+        monkeypatch.setattr(_owner, "claim", lambda *_a, **_kw: None)
 
         engine = Engine(tmp_path)
         engine("k", 1)

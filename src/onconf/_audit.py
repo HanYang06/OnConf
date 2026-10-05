@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: 2026 HanYang06
 # SPDX-License-Identifier: Apache-2.0
-"""强制日志与审计（DESIGN §20 / §21）。
+"""强制日志与审计。
 
 ## 一条记录，两种渲染
 
-记录本身只有一种，**渲染分成两种**（§21.5 约束 3）：
+记录本身只有一种，**渲染分成两种**：
 
 * **终端**（``log="stderr"`` / ``"stdout"``）：``HH:MM:SS.mmm`` + **弹性制表位对齐**，
   长文本列截断成 ``…``；
@@ -15,24 +15,23 @@
 
 ## 七个级别：把进程结构也记下来
 
-配置事实四个（§20.5 原本用单字母，实现期改成完整词 —— 一眼看得懂比少敲几个字母重要）：
+配置事实四个：
 
 ``[Read]`` 读 / ``[Write]`` 写（含 ``op=``）/ ``[Change]`` 值真的变了（``old → new``）/
 ``[Error]`` 失败。
 
-进程结构三个（§20 的「日志即调用日志」，把 IPC 那一层摊开）：
+进程结构三个：
 
 ``[Start]`` 引擎起来了（pid / ``id=`` / 值文件）/ ``[Link]`` 和写者的关系定下来了
 （``op=bind`` 我成了写者 / ``op=connect`` 连上了写者 / ``op=fallback`` 端点不通、就地执行）/
 ``[Send]`` 一次请求真的交给了写者（``op=read`` / ``op=commit``，commit 的 ``data=`` 是本批声明数）。
 
-* **写与进程结构全量、永不聚合**：每条对账动作一行，``op`` 取 fill / overwrite / clean /
-  register / update_meta / skip / noop（§20.2 的 ``skip`` 尤其重要：值不一致但尊重
-  文件、**想改没改**，不记它用户会以为声明没生效）；
-* **读按事务去重聚合**：同一事务内重复读同一个键合并成一行 ``n=<次数>``（§20.1）。
+* **写与进程结构全量、永不聚合**：每条对账动作一行，``op`` 取 fill / clean /
+  register / update_meta / skip / noop；
+* **读按事务去重聚合**：同一事务内重复读同一个键合并成一行 ``n=<次数>``。
   循环里 ``conf("x")`` 一万次只会留下一行；
 * 读的记录**不立即输出**，而是攒在事务里等下一个提交点（写提交 / ``flush()`` /
-  ``sync()`` / 进程退出）—— 这正是 §21.2 说的「批次本来就存在，批次内对齐因此免费」。
+  ``sync()`` / 进程退出）—— 这正是「批次本来就存在，批次内对齐因此免费」。
   代价要写明：纯读的程序在退出前看不到自己的日志行。``[Start]`` / ``[Link]`` / ``[Send]``
   各自立即输出（它们描述的是「此刻进程在干什么」，攒着就失去意义了）。
 
@@ -40,7 +39,7 @@
 
 **谁真正动了配置目录，谁记账。** 经 IPC 的请求由写者执行，所以由写者记 ——
 但记录里的 ``pid`` / ``id=``（身份）/ ``at=``（调用点）仍然是**发起方**的：
-调用点在客户端抓（写时一帧 ``sys._getframe``，§20.3），随声明一起过线。
+调用点在客户端抓（写时一帧 ``sys._getframe``，），随声明一起过线。
 
 客户端补的是执行点**真正输出出去的**记录（写 / 变更 / 被这次提交收口的读），
 所以每个进程都看得见自己发起的操作；失败则两边各记一条（执行点 + 发起方）。
@@ -80,7 +79,7 @@ if TYPE_CHECKING:
     from typing import TextIO
 
 
-#: 四个**配置事实**级别。§20.5 原本定的是单字母 ``[R]/[W]/[C]/[E]``，实现期改成完整词：
+#: 四个**配置事实**级别（用完整词：一眼看得懂比少敲几个字母重要）：
 #: 一眼看得懂比少敲几个字母重要，``grep '^\[Write\]'`` 一样精确。
 LEVEL_READ = "Read"
 LEVEL_WRITE = "Write"
@@ -102,16 +101,16 @@ AUDIT_MAX_BYTES = 1 << 20
 TERMINAL_STDERR = "stderr"
 TERMINAL_STDOUT = "stdout"
 
-#: 弹性制表位的列间距（显示宽度，§21.1）
+#: 弹性制表位的列间距（显示宽度，）
 _GUTTER = 2
 
-#: 终端渲染里「长文本列」的上限（显示宽度）。文件那一份永不截断（§21.5 约束 1）
+#: 终端渲染里「长文本列」的上限（显示宽度）。文件那一份永不截断
 _MAX_CELL = 48
 
-#: 可以截断的列（键名、文件名、时间、事务号**不截断**，§21.5 约束 2）
+#: 可以截断的列（键名、文件名、时间、事务号**不截断**）
 _CLIPPABLE = ("data=", "old=", "new=", "msg=", "reason=")
 
-#: ANSI 颜色码是**零宽**的，算宽度前必须先剥掉（§21.3）
+#: ANSI 颜色码是**零宽**的，算宽度前必须先剥掉
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 #: 抓调用点时最多往上找几帧，避免病态栈把热路径拖慢
@@ -122,7 +121,7 @@ _PACKAGE_PREFIX = os.path.normcase(str(_PACKAGE_DIR)) + os.sep
 
 
 # --------------------------------------------------------------------------- #
-# 显示宽度：必须用显示宽度，不能用 len()（§21.3）
+# 显示宽度：必须用显示宽度，不能用 len()
 # --------------------------------------------------------------------------- #
 
 
@@ -167,7 +166,7 @@ def _truncate(text: str, limit: int) -> str:
 
 @dataclass(frozen=True)
 class Origin:
-    """一条记录的**发起方**：pid + 可选身份（§20.3）。"""
+    """一条记录的**发起方**：pid + 可选身份。"""
 
     pid: int = 0
     identity: str = ""
@@ -233,7 +232,7 @@ def error_kind(exc: BaseException) -> str:
 
 
 def call_site(max_frames: int = _MAX_FRAMES) -> str:
-    """抓**调用点**（``app/config.py:12``，§20.3）。
+    """抓**调用点**（``app/config.py:12``，）。
 
     抓一帧比 ``inspect.stack()`` 便宜两个数量级（约 1 µs vs 几百 µs）。
     这里自动跳过本包内部的帧，所以「经 ``conf()`` 调用」与「直接调 ``Engine``」
@@ -259,7 +258,7 @@ def call_site(max_frames: int = _MAX_FRAMES) -> str:
 
 
 def _stamp(*, full_date: bool) -> str:
-    """时间戳：终端 ``HH:MM:SS.mmm``，文件带完整日期（审计要跨天查，§20.6）。"""
+    """时间戳：终端 ``HH:MM:SS.mmm``，文件带完整日期（审计要跨天查，）。"""
     now = time.time()
     milliseconds = int(now * 1000) % 1000
     pattern = "%Y-%m-%dT%H:%M:%S" if full_date else "%H:%M:%S"
@@ -311,7 +310,7 @@ def _head_cells(record: Record, *, full_date: bool) -> list[str]:
 def _value_cells(record: Record) -> list[str]:
     """值那一组：``[C]`` 永远写 old / new（缺席记 ``-``），其余按有没有写。"""
     if record.level == LEVEL_CHANGE:
-        # ``[C]`` 的要点就是「从什么变成什么」（§20.6）。
+        # ``[C]`` 的要点就是「从什么变成什么」。
         return [f"old={_fmt(record.old)}", f"new={_fmt(record.new)}"]
     cells: list[str] = []
     if record.data is not MISSING:
@@ -349,7 +348,7 @@ def _cells(record: Record, *, full_date: bool) -> list[str]:
 
 
 def _aligned(rows: list[list[str]], widths: list[int]) -> str:
-    """弹性制表位的落地：列宽 = 该批最宽的那一格，且**只增不减**（§21.2）。"""
+    """弹性制表位的落地：列宽 = 该批最宽的那一格，且**只增不减**。"""
     for cells in rows:
         for index, cell in enumerate(cells[:-1]):
             while len(widths) <= index:
@@ -369,7 +368,7 @@ def _aligned(rows: list[list[str]], widths: list[int]) -> str:
 
 
 def _render_compact(records: Sequence[Record], *, full_date: bool) -> str:
-    """文件形态：``key=value`` 紧凑、不补空格、**永不截断**（§21.5 约束 1）。"""
+    """文件形态：``key=value`` 紧凑、不补空格、**永不截断**。"""
     return "".join(" ".join(_cells(record, full_date=full_date)) + "\n" for record in records)
 
 
@@ -390,7 +389,7 @@ def _render_terminal(records: Sequence[Record], widths: list[int]) -> str:
 
 
 def _rotate_if_needed(path: Path) -> None:
-    """审计文件超过阈值就按时间戳轮转。**只追加、不重写**（§20.4）。"""
+    """审计文件超过阈值就按时间戳轮转。**只追加、不重写**。"""
     try:
         if path.stat().st_size < AUDIT_MAX_BYTES:
             return
@@ -490,7 +489,7 @@ class AuditLog:
         reason: str = "",
         at: str = "",
     ) -> Record:
-        """记一条对账动作。**写全量，不聚合**（§20.1）。"""
+        """记一条对账动作。**写全量，不聚合**。"""
         return self._record(
             Record(
                 level=LEVEL_WRITE,
@@ -508,7 +507,7 @@ class AuditLog:
         )
 
     def changed(self, *, item: str, file: str, old: Any, new: Any, at: str = "") -> Record:
-        """记一次**真正的值变化**：``old → new``（§20.2 缺的第一样东西）。"""
+        """记一次**真正的值变化**：``old → new``。"""
         return self._record(
             Record(
                 level=LEVEL_CHANGE, txn=None, pid=0, item=item, file=file, old=old, new=new, at=at
@@ -516,7 +515,7 @@ class AuditLog:
         )
 
     def failed(self, *, item: str, file: str, err: str, message: str = "", at: str = "") -> Record:
-        """记一次失败。**失败必须留痕**，否则审计只记录成功的历史（§20.2）。"""
+        """记一次失败。**失败必须留痕**，否则审计只记录成功的历史。"""
         return self._record(
             Record(
                 level=LEVEL_ERROR,
@@ -576,7 +575,7 @@ class AuditLog:
 
         **只有真正输出出去的记录才算进操作作用域**。读的记录会攒在事务里等下一个提交点，
         所以「这一次读」不该把它当成自己的产出回传给发起方 —— 否则发起方的日志会先看到
-        ``n=1`` 再看到 ``n=2``，跟审计文件里那一行对不上（§20.1）。
+        ``n=1`` 再看到 ``n=2``，跟审计文件里那一行对不上。
 
         审计文件写失败**没有重试**：缓冲已经清空，这一批只留在终端那一份里。
         """

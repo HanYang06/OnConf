@@ -7,12 +7,21 @@
 
 本文件自 v0.1.0 起**人工维护**；v0.1.0 的历史条目由真实 git 提交整理
 （`git log --oneline --no-merges`，整理范围至 `988d5df`），每一条都对应一个真实提交，
-不是事后补写的愿景。尚未发布的能力与进度见 [docs/roadmap.md](docs/roadmap.md)。
+不是事后补写的愿景。尚未发布的能力与进度见[路线图](docs/roadmap/index.md)。
 
 ## [Unreleased]
 
 ### Changed
 
+- **`EngineParams` 新增 `file_name` / `no_one_file`，`file_type` 的缺省值改为字面 `"json"`**
+  （破坏性）：值文件路径变成 `<home>/<file_name><ext>`，两者都经**包含性校验**
+  （纯文件名、无分隔符、无 `..`、非绝对、解析后仍在 `<home>` 之内）。空串不再是
+  `file_type` 的合法取值 —— 默认值只有一个来源。
+- **多文件寻址**：`no_one_file=True` 后，键里第一个 `:` 的左边是相对路径、右边是文件内
+  键名（`conf("app/conf/net:net.id.post", 8080)` → `<home>/app/conf/net.json`）；没有前缀
+  的键仍落默认文件。词表只有一份，每个值文件的 `$schema` 指针按自己的层级算相对路径；
+  未被声明引用的值文件不会被加载、也不会被清理。多文件**关闭**时 `:` 不参与解析，
+  行为与之前完全一致。
 - **使用口 `conf` 收敛为三种模式**（破坏性）：签名变成 `conf(key, value=MISSING, doc=None)`，
   判据只看 `value` 位填没填。`doc` 从 keyword-only 变成第三个**位置**参数；参数面自此封闭。
 - **`type=` 移除**（破坏性）：值类型不再声明、不再校验、不再进词表，`TypeConflictError`
@@ -23,27 +32,74 @@
   `Action("overwrite")`、`reconcile(force_keys=…)` 与 IPC 请求里的 `forced` 字段一并移除。
 - **`conf(..., **engine)` 摘除**（破坏性）：使用口不得配置引擎，`conf(..., home=…)` 现在是
   `TypeError`。「一个配置口、一个使用口」不再依赖「引擎是否已经起来」这一时序条件。
-- **值文件选定改为 `file_type` 参数**：单值，缺省 `""` 等价于 `"json"`，决定
-  `<home>/settings.<ext>` 的后缀。「按存在性从候选名里挑第一个」的隐式行为退役。
+- **值文件选定改为 `file_name` + `file_type`**：「按存在性从候选名里挑第一个」的隐式行为退役。
 - **`home` 的缺省从「当前目录」改为 `./conf`**。
 - 修复：新建**非 JSON** 值文件时，引擎用写死的 `"{}"` 当种子，TOML / YAML 后端会把它当内容
   解析而报错。现在每种后端各自提供 `EMPTY_TEXT` 种子（JSON 是 `{}`，其余三种是空文本）。
 
 ### Added
 
+- **命令行 `onconf build` / `onconf sync`**（[路线图 §4](docs/roadmap/2.0.x/roadmap.md) 的头两条命令）：声明靠**静态扫描项目里的
+  `conf(...)` 调用**得到（`ast.parse`，不 import、不执行用户代码），按 `key` / `value` / `doc`
+  的参数形态解读。`build` 按声明完整重建值文件与词表（`--path` 把整份重建写到新目录）；
+  `sync` 补缺并删除声明里没有的键（`--no-clean` 只补缺）。两者都支持 `--dry-run`（一个字节
+  都不写）与 `--json`；扫不动的调用会被逐条列出，此时 `sync` **拒绝删除任何键**。
+  控制台入口从「只打印配置目录」的占位改为 `onconf._cli:main`。
+- 新增 `src/onconf/_paths.py`：外部字符串 → 路径的**唯一入口**（五条包含性规则）。
 - `EngineParams` 补上 `lock_timeout` —— 它以前对公开 API 完全不可达（传了会抛
   `UnknownEngineParamError`）。
-- `EngineParams` 补上 `file_type`；`EngineParams` 的注解与 `Engine.__init__` 的形参
-  一一对应，有回归守着。
+- `EngineParams` 补上 `file_name` / `file_type` / `no_one_file`；`EngineParams` 的注解与
+  `Engine.__init__` 的形参一一对应，有回归守着。
+
+### Fixed
+
+- 清掉三处已被移除机制的陈旧引用：`_core.read_value` docstring 里的「声明期 `type=` 校验」、
+  `_audit` 模块 docstring 的 `op=overwrite`、`Engine._log_failure` 那个只为「类型冲突」而存在
+  且无人使用的 `message` 形参。
+- 命令行扫描对齐 CPython：带 UTF-8 BOM 的源文件不再被当成语法错误（改用 `utf-8-sig` 读取）。
 
 ### Docs
 
+- 路线图的「未实现」段按**批次**重排（下一批 / 未来 / 不计划 / 已定不动），并把批次写进
+  [`docs/design/log.md`](docs/design/log.md)、[`docs/design/init_config.md`](docs/design/init_config.md)、
+  [`docs/design/file_support.md`](docs/design/file_support.md)：**下一批** = 日志两通道与
+  `audit` 口径（[路线图 §3](docs/roadmap/2.0.x/roadmap.md)）、运行期规则 1 的移除；
+  **未来** = 落盘形式与加密/轮转（[路线图 §5](docs/roadmap/2.0.x/roadmap.md)）、
+  `.env` 结构开关（2.2）、其余命令；**已定不动** = `$schema` 指针按载体能力、不新增参数。
+- README 一对与 [`docs/api/index.md`](docs/api/index.md) 补**主 / 辅后端**标注
+  （JSON 是主后端：缺省值、能力最完整、`$schema` 指针的落点；YAML / TOML / `.env` 为可选后端）。
+- 新增「使用范式」一节（README 一对、[`docs/getting-started.md`](docs/getting-started.md)、
+  [`docs/design/init_config.md`](docs/design/init_config.md) §8）：**声明处必须字面量** ——
+  键、值、说明都写在调用点上；读取不受限（常量、拼接都行）。定性是**合法但不合理**
+  （error 的分界是「不合法」，这一条只到 warning），因此**不设门禁**，只写清代价：
+  命令行看不见它（`sync` 因此拒绝删除任何键）、静态复核与未来的 `check` 覆盖不到它、
+  声明点不再自证。
 - 新增设计文档 [`docs/design/init_config.md`](docs/design/init_config.md)（初始化配置：
   两个面、引导层与值层、三种模式、运行期写路径）与
   [`docs/design/file_support.md`](docs/design/file_support.md)（值文件选定、返回值口径、
-  四个后端、词表、外科手术式回写）。两者开始**逐节替换**旧稿 `DESIGN.md`。
-- README 一对、`docs/api/index.md`、`docs/roadmap.md` 同步；路线图新增
-  「值文件类型的支持计划」（`.env` 的 `dict` / `list` 预计 2.2）。
+  四个后端、词表、外科手术式回写）。两者开始**逐节替换**旧稿 `DESIGN.md`，
+  并补齐 §11.1 / §17.7 / §18.1 情形 4 的认领。
+- 威胁模型 **T1 由「白名单 → 不适用」改为「包含性校验」**，新增 **T13**（命令行静态扫描与
+  删除动作）；不变量表与边界判定表同步。
+- README 一对、`docs/api/index.md`、`docs/design/*`、[路线图](docs/roadmap/2.0.x/roadmap.md)
+  同步；路线图把多文件与
+  `build` / `sync` 从「未实现」移到「已实现」，`.env` 的 `dict` / `list` 仍预计 2.2。
+- 修掉三页用户文档里的陈旧陈述（`docs/index.md`、`docs/getting-started.md`、
+  `docs/architecture/index.md`）：`type=` / `TypeConflictError` / 按存在性挑值文件 /
+  `__all__` 符号数 / `op=overwrite` / 词表记类型。
+- **路线图重做**：[`docs/roadmap/`](docs/roadmap/index.md) 按版本分开 ——
+  [1.0.x](docs/roadmap/1.0.x/roadmap.md) 记 v1.0.0 实际交付的能力、
+  [2.0.x](docs/roadmap/2.0.x/roadmap.md) 记下一版收什么；每条固定「标题 / 正文 / 状态 /
+  引用设计文稿」四段，不用表格。旧的 `docs/roadmap.md` 与嵌套的 `docs/issues/` 删除，
+  文档里指向它们的 D0N / ISSUE-NNN 引用一并清掉；`mkdocs.yml` 导航同步；
+  README 一对补一条版本口径 —— **1.0 与 2.0 都是破坏性变更版本，后续以 2.0 为准**。
+- **文档口径统一为「只写现代」**：正文里不再出现「以前是…、改成了…、为什么改」这类
+  变更叙述，作废 / 已替换 / 曾考虑之类的标记一并去掉（沿革看 git 与本文件）；
+  `CONTRIBUTING.md` §8 与 `AGENTS.md` §6 记下这条约定；威胁模型的「修订记录」一节删除。
+- **旧设计稿 `docs/design/DESIGN.md` 退役删除**：现役口径就是
+  [设计稿索引](docs/design/index.md) 下的三份。源码与测试里指向它的节号引用全部清掉
+  （不留悬空编号），`AGENTS.md` §3.4 改成「引用现役设计稿的文件名 + 小节」；
+  `mkdocs.yml` 导航、codespell / markdownlint 的排除项、PR 与 issue 模板同步。
 
 ## [1.0.0] - 2026-10-04
 
@@ -154,7 +210,7 @@ classifier 仍是 `Development Status :: 2 - Pre-Alpha`，页面正文也还写�
 
 - 「跨进程规则 1」（清理未知键）只在写者**长命**时成立：写者的声明集不是持久状态，写者
   一换人基准就重置。进程起一个退一个的用法仍不安全 —— 相关取舍见 DESIGN §32.4 与
-  [docs/roadmap.md](docs/roadmap.md)。
+  [路线图](docs/roadmap/index.md)。
 - 写者进程内**自己**的调用与它的应答线程没有共用同一把锁：文件一致性由 OS 锁兜着，
   但其中一边可能等满 `lock_timeout`，引擎内存态在那个窗口里可竞争。没有回归测试守护，
   见[威胁模型](docs/security/threat-model.md) T4 的残余风险与 DESIGN §32.8 的「已知边界」。
@@ -197,4 +253,4 @@ classifier 仍是 `Development Status :: 2 - Pre-Alpha`，页面正文也还写�
 `v0.1.0` **从未打过 tag、也从未发布**，所以它只能按提交区间比对（`3ef3f4f...d166050`）；
 `v1.0.0` 的对比基准因此也退回同一个起点。详见 `CONTRIBUTING.md` §4.4 的版本闸门。
 
-未发布能力见 [docs/roadmap.md](docs/roadmap.md)。
+未发布能力见 [2.0.x 路线图](docs/roadmap/2.0.x/roadmap.md)。

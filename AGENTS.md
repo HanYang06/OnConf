@@ -84,12 +84,11 @@ docstring，中间不空行：
   `RUF001/002/003`（中文标点判为 ambiguous-unicode）与 `D400/D415`、`EM101/102`、
   `TRY003`、`ANN401`、`PLR0913` 是**有意豁免**的，不要"顺手修好"。
 
-### 3.4 代码里的 `§` 引用
+### 3.4 代码里的设计引用
 
-源码中约 76 处注释/文档串引用设计草案的节号（如 `（§32.4）`、`DESIGN §15.4`），
-指向 [docs/design/DESIGN.md](docs/design/DESIGN.md)（1136 行中文，**意图的权威**，
-不是状态的权威）。新增/改动涉及设计取舍的逻辑时，沿用这个引用习惯；
-**改动 DESIGN.md 必须在 PR 里单独说明理由**。
+注释与文档串里**不写裸节号**。涉及设计取舍时，引用现役设计稿的文件名 + 小节
+（如 `init_config.md §4`、`file_support.md §7`、`log.md`）或路线图小节（如 `路线图 §2.7`）；
+文档里没有对应记载就不写引用，别留悬空编号。
 
 ## 4. 测试
 
@@ -128,6 +127,8 @@ docstring，中间不空行：
 ## 6. 文档同步（用户可见变更的硬要求）
 
 - 行为变了、`docs/` 没变 ⇒ PR 视为**未完成**；
+- **文档只写现代口径**：不写「以前是什么、改成了什么、为什么改」的变更叙述，也不留作废 /
+  已替换之类的标记；沿革看 git 与 `CHANGELOG.md`；
 - `README.md`（英文）与 `README.zh-CN.md`（中文）是**一对，改一份必须同步另一份**；
 - `README.md` 的「Currently implemented」与「Roadmap」表是**状态声明**，交付新能力或
   关闭/打开限制时同步更新；安全不变量变更还要同步
@@ -145,7 +146,7 @@ src/onconf/
   _textscan.py       # 各后端共用的字节级扫描
   _lock.py           # 跨进程 OS 锁（兜底路径；LockTimeoutError 定义在这里）
   _owner.py          # 专职写者：端点选举、IPC、写循环
-  _audit.py          # 强制日志 + append-only 审计（DESIGN §20 / §21）
+  _audit.py          # 强制日志 + append-only 审计
   _json_backend.py / _yaml_backend.py / _env_backend.py / _toml_backend.py
   errors.py          # 错误分类（EnvSyntaxError 等是 ValueError 子类，不是 ConfError）
 tests/               # 每模块一个文件 + test_security_invariants.py

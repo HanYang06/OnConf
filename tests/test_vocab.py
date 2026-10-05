@@ -14,7 +14,7 @@ from onconf.errors import KeyHasNoValueError
 
 
 class TestTriState:
-    """§17.7：未登记 / 已登记无值 / 值为 None —— 三态不许塌陷。"""
+    """未登记 / 已登记无值 / 值为 None —— 三态不许塌陷。"""
 
     def test_no_value_is_not_none(self) -> None:
         vocab = Vocabulary()

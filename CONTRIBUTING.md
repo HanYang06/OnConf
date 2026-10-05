@@ -451,11 +451,14 @@ $schema 这类以 $ 开头的指令键不参与「清理未知数据」，
 ## 8. 文档要求
 
 - **用户可见的行为变化必须同步 `docs/`**。代码改了、文档没改，PR 视为未完成；
+- **文档只写现代口径**：正文里不出现「以前是什么、改成了什么、为什么改」这类变更叙述，
+  也不保留作废 / 已替换 / 曾考虑之类的标记。沿革一律留给 git 与
+  [`CHANGELOG.md`](CHANGELOG.md)，文档读起来只有当下成立的形态；
 - 文档语言**以中文为主**；README 是两份：[`README.md`](README.md)（英文）与
   [`README.zh-CN.md`](README.zh-CN.md)（中文），**改一份必须同步改另一份**；
-- 设计层面的取舍记录在 [`docs/design/DESIGN.md`](docs/design/DESIGN.md)：
-  它是设计草案与决策记录，**改动它请在 PR 里单独说明理由**，
-  不要把它当成随手可改的说明文档；
+- 设计口径在 [`docs/design/`](docs/design/index.md)（`init_config.md` / `file_support.md` /
+  `log.md`），冲突时以这几份为准；取舍没写进设计稿时，写进对应版本的
+  [路线图](docs/roadmap/index.md)；
 - 文档站是 MkDocs Material，本地预览：
 
   ```bash

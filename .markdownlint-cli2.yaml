@@ -67,6 +67,3 @@ ignores:
   # CODE_OF_CONDUCT.md 是 Contributor Covenant 2.1 官方简体中文译本的逐字引用。
   # 为它改排版等于让译本偏离官方文本，所以不改它，而是排除它。
   - "CODE_OF_CONDUCT.md"
-  # 设计稿是持续演进的内部文档（1875 行、含 ❓ 待拍板项），
-  # 不为 lint 规则让步 —— 否则每次讨论都要顺手改一遍排版。
-  - "docs/design/DESIGN.md"

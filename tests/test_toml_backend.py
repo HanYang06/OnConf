@@ -43,7 +43,7 @@ def assert_only_span_changed(old: str, new: str, start: int, end: int, replaceme
 
 class TestLoads:
     def test_table_header_becomes_a_dotted_key(self) -> None:
-        """``[gc]`` + ``auto.byte = 0`` ⇒ 键 ``gc.auto.byte``（§28.4）。"""
+        """``[gc]`` + ``auto.byte = 0`` ⇒ 键 ``gc.auto.byte``。"""
         data = loads(REAL)
         assert data["gc.auto.byte"] == 0
         assert "gc" not in data

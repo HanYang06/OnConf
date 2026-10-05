@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """YAML 值后端：读出 + **外科手术式回写**。
 
-YAML 比 JSON 更要紧，因为**注释只活在 YAML 里**（§27.3）。
+YAML 比 JSON 更要紧，因为**注释只活在 YAML 里**。
 ``safe_load`` + ``safe_dump`` 会毁掉：注释、锚点 / 别名、多文档、标签、键序——
 所以这里**没有「全量重 dump」这个选项**，只有文本级替换。
 
