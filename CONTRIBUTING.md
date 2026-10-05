@@ -365,9 +365,15 @@ $schema 这类以 $ 开头的指令键不参与「清理未知数据」，
    检查档位里还包含 **gitleaks**（密钥泄漏扫描）与 **actionlint**（工作流语法检查），
    依赖更新由 **Dependabot** 负责。
 
-6. 至少一位维护者 review 通过后合并。合并方式由维护者选择（优先保持线性历史）；
-   使用 squash 合并时，**最终标题必须是一条合法的 Conventional Commit**，
-   因为它会直接进入 release notes 的生成输入。
+6. 至少一位维护者 review 通过后合并。**合并方式只有一种：merge commit**
+   （GitHub 上的 “Create a merge commit”）；仓库设置里 squash 与 rebase 都已关闭，
+   所以平台层面选不错。理由是**历史要看得见分支**：merge commit 在提交图上留下
+   「这个 PR 是从分支进来的」这条事实，`git log --first-parent` 因此是一条干净的
+   PR 级时间线；squash 与 rebase 都会把分支抹平，事后分不清一次改动是走 PR 进来的
+   还是直接推上去的。**不要**用 `git merge --ff-only` 或 `git rebase` 自己把分支推平
+   再推 main（服务端 ruleset 也会拒绝直推）。
+   PR 标题仍须是一条合法的 Conventional Commit —— release-drafter 是按 **PR 标题 +
+   标签**生成发布说明的，与提交图长什么样无关。
 
 ---
 
