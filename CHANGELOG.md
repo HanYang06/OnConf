@@ -11,6 +11,40 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **使用口 `conf` 收敛为三种模式**（破坏性）：签名变成 `conf(key, value=MISSING, doc=None)`，
+  判据只看 `value` 位填没填。`doc` 从 keyword-only 变成第三个**位置**参数；参数面自此封闭。
+- **`type=` 移除**（破坏性）：值类型不再声明、不再校验、不再进词表，`TypeConflictError`
+  一并作废；JSON Schema 不再输出 `type` 与 `x-onconf-py`。要转换请在调用点显式
+  `int(conf("PORT"))`。
+- **`force=` 移除，运行期不再覆盖已存在的值**（破坏性）：文件里的值与声明不一致时尊重文件，
+  只记一条 `op=skip`，值文件逐字不动。覆盖既存值是人的决定，归命令行的 `build` / `sync`。
+  `Action("overwrite")`、`reconcile(force_keys=…)` 与 IPC 请求里的 `forced` 字段一并移除。
+- **`conf(..., **engine)` 摘除**（破坏性）：使用口不得配置引擎，`conf(..., home=…)` 现在是
+  `TypeError`。「一个配置口、一个使用口」不再依赖「引擎是否已经起来」这一时序条件。
+- **值文件选定改为 `file_type` 参数**：单值，缺省 `""` 等价于 `"json"`，决定
+  `<home>/settings.<ext>` 的后缀。「按存在性从候选名里挑第一个」的隐式行为退役。
+- **`home` 的缺省从「当前目录」改为 `./conf`**。
+- 修复：新建**非 JSON** 值文件时，引擎用写死的 `"{}"` 当种子，TOML / YAML 后端会把它当内容
+  解析而报错。现在每种后端各自提供 `EMPTY_TEXT` 种子（JSON 是 `{}`，其余三种是空文本）。
+
+### Added
+
+- `EngineParams` 补上 `lock_timeout` —— 它以前对公开 API 完全不可达（传了会抛
+  `UnknownEngineParamError`）。
+- `EngineParams` 补上 `file_type`；`EngineParams` 的注解与 `Engine.__init__` 的形参
+  一一对应，有回归守着。
+
+### Docs
+
+- 新增设计文档 [`docs/design/init_config.md`](docs/design/init_config.md)（初始化配置：
+  两个面、引导层与值层、三种模式、运行期写路径）与
+  [`docs/design/file_support.md`](docs/design/file_support.md)（值文件选定、返回值口径、
+  四个后端、词表、外科手术式回写）。两者开始**逐节替换**旧稿 `DESIGN.md`。
+- README 一对、`docs/api/index.md`、`docs/roadmap.md` 同步；路线图新增
+  「值文件类型的支持计划」（`.env` 的 `dict` / `list` 预计 2.2）。
+
 ## [1.0.0] - 2026-10-04
 
 首个稳定版，也是首个发布到 PyPI 的版本（发布名 `OnConf`）。相对 0.1.0 的工作区状态，这一版

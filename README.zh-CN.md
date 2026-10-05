@@ -38,8 +38,8 @@
 
 一个配置引擎，面向那些把设置放在**人能直接阅读、也能随手手改的普通文件**里的程序。
 
-- **代码里声明，文件说了算。** 你在 Python 里声明键与类型；磁盘上的文件是唯一事实来源。
-  代码不是权威。
+- **代码里声明，文件说了算。** 你在 Python 里声明键（以及可选的说明）；磁盘上的文件是唯一
+  事实来源。代码不是权威，运行期也绝不覆盖文件里已有的值。
 - **外科手术式回写。** 引擎改一个键时，它不需要碰的每一个字节都停在原处——
   注释、缩进、键序、空行。
 - **一个扁平键空间，多个后端。** `app.server.port` 指向同一个逻辑键，
@@ -120,27 +120,40 @@ $ uv run python -c "from onconf import conf; print(conf('app.server.port', 8080)
 
 | 面 | 职责 |
 |---|---|
-| `AutoConf(**engine)` | 配置**引擎自己**：`home`（配置目录）、`log`（强制日志的去向：`"stderr"` 默认 / `"stdout"` / 一个文件路径）、`audit`（再把每行追加进 `<home>/audit.log`）、`identity`（可选的 `服务@主机` 标记，写进每一行）、`flush_window`（攒批窗口，`0` = 当场落盘）。可省略——不调用它也能按约定工作。 |
-| `conf(key, value=..., *, doc=..., type=..., force=..., **engine)` | 干所有的活：读、写、登记。 |
+| `AutoConf(**engine)` | 配置**引擎自己**：`home`（配置目录，缺省 `./conf`）、`file_type`（用哪个值文件，单值，`""` 等于 JSON）、`log`（强制日志的去向：`"stderr"` 默认 / `"stdout"` / 一个文件路径）、`audit`（再把每行追加进 `<home>/audit.log`）、`identity`（可选的 `服务@主机` 标记，写进每一行）、`flush_window`（攒批窗口，`0` = 当场落盘）、`lock_timeout`。可省略——不调用它也能按约定工作。 |
+| `conf(key, value=..., doc=...)` | 干所有的活：读、写、登记。 |
 
-`conf` 从**调用形态**推断这次要做什么，而不是靠一个 `op` 参数：
+`conf` 的模式**只看调用形态**，判据只有一句：**`value` 位填没填**。
 
 ```python
-conf("app.port")  # 读；键没有值就报错
-conf("app.port", 9090)  # 声明 + 写；返回当前生效值
-conf("app.port", doc="服务端口")  # 只登记一个键、不给值（必填键）
-conf("app.port", 9090, force=True)  # 覆盖文件里已有的值
+conf("app.port")                    # 读；键没有值就报错
+conf("app.port", 9090)              # 声明 + 写；返回当前生效值
+conf("app.port", 9090, "服务端口")   # 同上，并把说明登记进词表
+conf("app.port", doc="服务端口")     # 只登记一个键、不给值（必填键）
 ```
+
+四条硬口径：
+
+- **`None` / `""` / `0` 都算填了**；`MISSING` 是唯一哨兵。
+- 第 2 位置恒属 `value`，所以 `conf(key, x)` 永远是写；「只登记」只能由 `doc=` 关键字触发。
+- `doc` 是第三个**位置**参数，也是唯一的登记元数据。判据里不再出现第二个参数，
+  参数面自此**封闭**：以后新增参数不需要动判据。
+- 使用口**不能配置引擎**：`conf(..., home=…)` 是 `TypeError`。
 
 几条容易踩的语义：
 
-- `type=` **只做声明期一致性校验**。引擎对值是透明的，读取期从不转换。
-  想从 `.env` 里拿到 `int`？写 `int(conf("PORT"))`——显式，而且在调用点看得见。
-- 读一个从未声明过的键抛 `KeyNotRegisteredError`；声明过但没值的键抛
-  `KeyHasNoValueError`；值与自己声明的类型冲突抛 `TypeConflictError`。
+- **类型声明已取消，引擎也从不转换值。** `.env` 给你的就是 `"8080"`；
+  想要 `int` 就在调用点写 `int(conf("PORT"))`——显式，而且在哪儿转换一眼可见。
+- 读一个从未声明过的键抛 `KeyNotRegisteredError`；声明过但没值的键抛 `KeyHasNoValueError`。
+- **运行期绝不覆盖文件里已有的值。** 文件里是 `8080`、代码声明 `9090`，
+  文件一个字节都不动，日志里记一条 `op=skip`，返回值仍是当前生效的 `8080`。
+  覆盖是人的决定，归命令行（`onconf build` / `onconf sync`，尚未实现）。
+- 运行期只写两样东西：**缺失的键**与**词表元数据**。
+- 引擎配置分两层：**引导层**（`home` / `file_type` / `log` / `audit` / `identity` /
+  `flush_window` / `lock_timeout`）起来之后不能改——改了等于改代码；**值层**随时可改，
+  因为值每次都从文件重新读。
 - 提交点**默认是立即的**（`atexit` 触发最后一次 `sync()`）。攒批窗口需显式开启（`flush_window`）；
   开启后落盘发生在四个提交点：窗口到期 / 一次读 / `sync()` / 进程退出。
-- 引擎是单例：起来之后不能就地改配置。
 
 ## 当前已实现
 
@@ -150,7 +163,8 @@ conf("app.port", 9090, force=True)  # 覆盖文件里已有的值
 | YAML 值后端 —— 注释、锚点、键序逐字保留 | ✅ |
 | `.env` 值后端 —— 纯字符串，不认行内注释，不做键名映射 | ✅ |
 | TOML 值后端 —— 表头归一成点分键 | ✅ |
-| 词表（键空间）—— 持久化 + JSON Schema 往返 + 哈希短路 | ✅ |
+| 词表（键空间）—— 持久化 + JSON Schema 往返 + 哈希短路。每个键只记三样：键、说明、默认值 | ✅ |
+| 值文件选定 —— `file_type`（单值，`""` = JSON）决定 `<home>/settings.<ext>` 的后缀；「按存在性挑第一个」已退役 | ✅ |
 | 引擎装配 —— `conf` / `AutoConf` 端到端 | ✅ |
 | 跨进程排他锁 —— **操作系统**级锁（Windows `msvcrt.locking`、其它 `fcntl.flock`），进程崩溃也由 OS 释放；等 10 秒拿不到抛 `LockTimeoutError` | ✅ |
 | 锁内按需重读 —— 指纹（`mtime` + 大小）同时看值文件与词表，别人刚登记的键不会被挤掉 | ✅ |
@@ -158,7 +172,7 @@ conf("app.port", 9090, force=True)  # 覆盖文件里已有的值
 | **原子写** —— 同目录临时文件 → `fsync` → `os.replace`，POSIX 再加父目录 `fsync`；行尾与权限位原样保留，新建文件是 `0600` | ✅ |
 | 可选攒批窗口 —— `flush_window`（默认 `0`，当场落盘），窗口挂在**客户端**侧，所以每个引擎的窗口归自己 | ✅ |
 | 用值当键（间接寻址）+ 每次落盘都保证 `$schema` 指针（仅 JSON / YAML —— `.env` 与 `.toml` 放不下成员，会直接跳过） | ✅ |
-| 异常族 —— `ConfError` 作基类，含 `KeyNotRegisteredError`、`KeyHasNoValueError`、`TypeConflictError`、`UnknownEngineParamError` 与 `LockTimeoutError`（定义在 `_lock.py` 而非 `errors.py`；等 10 秒拿不到锁时抛）。`EnvSyntaxError`、`YamlFlatRequiredError`、`TomlFlatRequiredError` 是 `ValueError` 子类，**不会**被 `except ConfError` 捕获 | ✅ |
+| 异常族 —— `ConfError` 作基类，含 `KeyNotRegisteredError`、`KeyHasNoValueError`、`UnknownEngineParamError` 与 `LockTimeoutError`（定义在 `_lock.py` 而非 `errors.py`；等 10 秒拿不到锁时抛）。`EnvSyntaxError`、`YamlFlatRequiredError`、`TomlFlatRequiredError` 是 `ValueError` 子类，**不会**被 `except ConfError` 捕获 | ✅ |
 | **日志与审计** —— 强制 `[Read]` / `[Write]` / `[Change]` / `[Error]` 事件流，外加进程结构三行 `[Start]` / `[Link]` / `[Send]`：去向可改、**不可关闭**；写全量（含 `op=skip`「想改没改」与 `op=noop`「本批声明已满足」），读按事务去重（`n=1000`）；每条写记录带调用点（`at=app/config.py:12`）、pid 与可选 `identity=`；终端列宽是**显示宽度**的弹性制表位（中文不偏列），文件形态保持紧凑且永不截断；`audit=True` 追加写 `<home>/audit.log`（`0600`、只追加、按大小轮转）。见 DESIGN §20 / §21 | ✅ |
 | 测试 —— 每个模块一个测试文件，外加安全不变量 | ✅ 本地全绿；CI 在 ubuntu / windows / macos 上跑 |
 
@@ -170,14 +184,18 @@ conf("app.port", 9090, force=True)  # 覆盖文件里已有的值
 |---|---|
 | WAL（预写日志）—— **判定不做**：攒批窗口负责合并突发写、声明可从代码重新推导、专职写者负责串行、读改写 + 原子替换负责顺序（DESIGN §32.7） | 不计划 |
 | C 加速器（未来）—— 做成 **extra**，不另开包名：`pip install onconf[c]` | — |
-| **短命进程**之间的规则 1（清理未知键）—— 写者的声明集不是持久状态，写者一换人基准就重置（DESIGN §32.4） | 待定的设计问题 |
+| 运行期的规则 1（清理未知键）—— 移出运行期、交给 `onconf sync` 已经定了（ISSUE-035），但尚未实现；写者的声明集不是持久状态，写者一换人基准就重置（DESIGN §32.4） | 随命令行 |
+| 覆盖文件里已有的值 —— 归命令行（`onconf build` / `onconf sync`），因为那是人的决定，不是运行期的事 | 随命令行 |
 | 前缀分片锁 —— 当前是每个配置目录一把锁 | — |
 | 把系统环境变量当作配置**来源**（`ONCONF_HOME` 只用来定位配置目录） | — |
 | 按格式导出词表 | — |
-| 真正的命令行（`onconf` 目前只打印配置目录就退出） | M5 |
+| `.env` 的 `dict` / `list` 值 —— 由 `env_file_dict` / `env_file_list` 两个布尔开关开启（默认都关）；标量仍是字符串 | 2.2（计划） |
+| 多文件配置 —— 键里内嵌文件路径（`conf("app/conf/net:net.id.post")`）；必须与路径包含性校验同时做 | 未排期 |
+| 真正的命令行 —— `build` / `sync` 把值收敛到与声明一致（`sync` 还删未声明的键） | M5 |
 
-完整清单见 [`docs/roadmap.md`](docs/roadmap.md)；设计稿见
-[`docs/design/DESIGN.md`](docs/design/DESIGN.md)（中文，未定稿）。
+完整清单见 [`docs/roadmap.md`](docs/roadmap.md)。设计文档在 [`docs/design/`](docs/design/index.md)：
+[`init_config.md`](docs/design/init_config.md) 与 [`file_support.md`](docs/design/file_support.md)
+正在逐步替换 [`DESIGN.md`](docs/design/DESIGN.md)，旧稿随之一节一节退役。
 
 ## 质量门槛
 
@@ -226,6 +244,7 @@ CodeQL、依赖审查与 OpenSSF Scorecard。
 | **审计行原样记值** | `data=` / `old=` / `new=` 里就是真实值。`audit=True` 会把它写进 `<home>/audit.log`（只追加、`0600`）—— 配置里全是密钥时打开它就是主动暴露（威胁模型 T12） |
 | **审计跟着执行点走** | 客户端把请求交给专职写者，写者写审计文件、并往**它自己**的日志去向输出；客户端只补执行点**这一次真正输出出去的**记录。远端失败时发起方自己也会记一条 `[Error]`，但远端的**读**要等写者的下一个提交点 —— 所以它不一定出现在客户端自己的日志里，权威流是审计文件 |
 | **审计文件假定「一个写者」** | 同一配置目录上第二个引擎也开 `audit=True` 时，它会把**自己本地的**记录追加进同一个 `<home>/audit.log`，而 `txn` 是按进程编号的 —— 文件里可能出现两个同号的批次，轮转也不再是单写者。客户端进程请别开 `audit`（默认就是关的） |
+| **代码改不了已经存在的值** | 文件里的值与代码声明的不一致时，运行期尊重文件（记一条 `op=skip`）并返回文件里的值。要改是**人**的决定 —— 那是命令行的 `build` / `sync`（尚未实现）。在那之前请手改文件，或把那个键删掉重来 |
 | **写者进程内自己的调用没和应答线程共用一把锁** | 写者自己线程上的 `conf()` 会和客户端请求并行：文件一致性由 OS 锁兜着（其中一边可能等满 `lock_timeout`），但引擎内存态在那个窗口里是可竞争的。这条没有回归测试守护（威胁模型 T4） |
 
 完整分析（逐条威胁 + 代码依据）：[`docs/security/threat-model.md`](docs/security/threat-model.md)。
@@ -249,7 +268,9 @@ src/onconf/
   errors.py          # 异常族
 tests/               # 每个模块一个测试文件 + 安全不变量
 docs/                # 文档站源码（中文）
-  design/DESIGN.md   # 设计稿 —— 对「意图」权威，对「现状」不权威
+  design/init_config.md   # 两个面、引导层与值层、三种模式
+  design/file_support.md  # 值文件选定、返回类型、后端、词表
+  design/DESIGN.md        # 旧设计稿 —— 正在被逐节替换
 ```
 
 模块会随后端增加而变多，以 `src/onconf/` 本身为准。

@@ -41,8 +41,9 @@ Chinese documentation (design draft and threat model included) lives at
 
 A configuration engine for programs that keep their settings in **plain files they can read and edit by hand**.
 
-- **Declared in code, owned by the files.** You declare keys and their types in Python;
-  the files on disk remain the single source of truth. Code is not authoritative.
+- **Declared in code, owned by the files.** You declare keys (and optionally a description)
+  in Python; the files on disk remain the single source of truth. Code is not authoritative,
+  and the runtime never overwrites a value the file already has.
 - **Surgical write-back.** When the engine changes one key, every byte it did not need to
   touch stays exactly where it was — comments, indentation, key order, blank lines.
 - **One flat key space, many backends.** `app.server.port` addresses the same logical key
@@ -124,30 +125,49 @@ Everything goes through two callables. That is the whole public surface.
 
 | Face | Purpose |
 |---|---|
-| `AutoConf(**engine)` | Configure **the engine itself**: `home` (config directory), `log` (where the mandatory log goes — `"stderr"` (default), `"stdout"`, or a file path), `audit` (also append every line to `<home>/audit.log`), `identity` (optional `service@host` tag recorded on each line), and `flush_window` (batching window; `0` = commit immediately). Optional — the conventions work without it. |
-| `conf(key, value=..., *, doc=..., type=..., force=..., **engine)` | Do all the work: read, write, register. |
+| `AutoConf(**engine)` | Configure **the engine itself**: `home` (config directory, default `./conf`), `file_type` (which value file to use — single-valued, `""` means JSON), `log` (where the mandatory log goes — `"stderr"` (default), `"stdout"`, or a file path), `audit` (also append every line to `<home>/audit.log`), `identity` (optional `service@host` tag recorded on each line), `flush_window` (batching window; `0` = commit immediately) and `lock_timeout`. Optional — the conventions work without it. |
+| `conf(key, value=..., doc=...)` | Do all the work: read, write, register. |
 
-`conf` infers the operation from the **shape of the call**, not from an `op` argument:
+`conf` picks its mode from the **shape of the call** — nothing else. The rule is simply
+*"is the `value` slot filled in?"*:
 
 ```python
-conf("app.port")  # read; raises if the key has no value
-conf("app.port", 9090)  # declare + write; returns the effective value
-conf("app.port", doc="服务端口")  # register a key without a value (required key)
-conf("app.port", 9090, force=True)  # overwrite a value already present in the file
+conf("app.port")                    # read; raises if the key has no value
+conf("app.port", 9090)              # declare + write; returns the effective value
+conf("app.port", 9090, "服务端口")   # same, plus a description registered in the vocabulary
+conf("app.port", doc="服务端口")     # register a key without a value (required key)
 ```
+
+Hard rules:
+
+- **`None` / `""` / `0` all count as filled in**; `MISSING` is the only sentinel.
+- The second position always belongs to `value`, so `conf(key, x)` is *always* a write;
+  the "register only" mode can only be triggered by the `doc=` keyword.
+- `doc` is a **positional** third parameter and the only registration metadata there is.
+  The rule mentions nothing else, so the parameter surface is **closed**: adding a parameter
+  later no longer means touching the rule.
+- The usage face **cannot configure the engine**: `conf(..., home=…)` is a `TypeError`.
 
 Notes on semantics that surprise people:
 
-- `type=` performs a **declaration-time consistency check only**. The engine is transparent
-  about values and never converts them on read. Want an `int` out of a `.env` file?
-  Write `int(conf("PORT"))` — explicit, and visible at the call site.
+- **There is no type declaration any more, and the engine never converts values.** A `.env`
+  file gives you `"8080"`, so write `int(conf("PORT"))` at the call site if you want an `int` —
+  explicit, and visible where it happens.
 - Reading a key that was never declared raises `KeyNotRegisteredError`; a declared key with no
-  value raises `KeyHasNoValueError`; a value contradicting its declared type raises
-  `TypeConflictError`.
+  value raises `KeyHasNoValueError`.
+- **The runtime never overwrites a value that is already in the file.** If the file says `8080`
+  and your code declares `9090`, the file is left byte-for-byte alone and an `op=skip` record is
+  logged — the call still returns the effective value `8080`. Overwriting is a human decision,
+  so it belongs to the CLI (`onconf build` / `onconf sync`, not implemented yet).
+- Only two things are ever written at runtime: **keys that are missing** and **vocabulary
+  metadata**.
+- The engine config has two layers: the **bootstrap layer** (`home`, `file_type`, `log`,
+  `audit`, `identity`, `flush_window`, `lock_timeout`) cannot be changed once the engine is
+  running — that would amount to editing your code; the **value layer** may change at any time,
+  because values are re-read from the file.
 - The commit point is **immediate by default** (`atexit` triggers a final `sync()`). A batching
   window is opt-in via `flush_window`; with it on, disk is touched at four commit points —
   window expiry, a read, `sync()`, and process exit.
-- The engine is a singleton: once started, it cannot be reconfigured in place.
 
 ## Currently implemented
 
@@ -157,7 +177,8 @@ Notes on semantics that surprise people:
 | YAML value backend — comments, anchors, key order preserved | ✅ |
 | `.env` value backend — string-only, no inline comments, no key renaming | ✅ |
 | TOML value backend — table headers normalized to dotted keys | ✅ |
-| Vocabulary (key space) — persisted, JSON Schema round-trip, hash short-circuit | ✅ |
+| Vocabulary (key space) — persisted, JSON Schema round-trip, hash short-circuit. It records exactly three things per key: the key, the description, the default | ✅ |
+| Value-file selection — `file_type` (single-valued; `""` = JSON) picks the suffix of `<home>/settings.<ext>`; choosing by "first name that exists" is gone | ✅ |
 | Engine assembly — `conf` / `AutoConf` end-to-end | ✅ |
 | Cross-process exclusive lock — an **OS** lock (`msvcrt.locking` on Windows, `fcntl.flock` elsewhere), released by the OS even if the process dies; `LockTimeoutError` after a 10 s wait | ✅ |
 | Re-read under that lock — fingerprint (`mtime` + `size`) over **both** the values file and the vocabulary, so a concurrent registration is never clobbered | ✅ |
@@ -165,7 +186,7 @@ Notes on semantics that surprise people:
 | **Atomic write** — same-directory temp file → `fsync` → `os.replace`, plus a parent-directory `fsync` on POSIX; original line endings and permission bits preserved, new files land as `0600` | ✅ |
 | Optional batching window — `flush_window` (default `0`, i.e. commit immediately), held **client-side** so each engine's window stays its own | ✅ |
 | Value-as-key (indirect addressing) + guaranteed `$schema` pointer on every write (JSON / YAML only — `.env` and `.toml` cannot hold a member, so the pointer is skipped) | ✅ |
-| Error taxonomy — `ConfError` as the base, with `KeyNotRegisteredError`, `KeyHasNoValueError`, `TypeConflictError`, `UnknownEngineParamError` and `LockTimeoutError` (defined in `_lock.py`, not `errors.py`; raised after a 10 s lock wait). `EnvSyntaxError`, `YamlFlatRequiredError` and `TomlFlatRequiredError` are `ValueError` subclasses, so they are **not** caught by `except ConfError` | ✅ |
+| Error taxonomy — `ConfError` as the base, with `KeyNotRegisteredError`, `KeyHasNoValueError`, `UnknownEngineParamError` and `LockTimeoutError` (defined in `_lock.py`, not `errors.py`; raised after a 10 s lock wait). `EnvSyntaxError`, `YamlFlatRequiredError` and `TomlFlatRequiredError` are `ValueError` subclasses, so they are **not** caught by `except ConfError` | ✅ |
 | **Logging + audit** — a mandatory `[Read]` / `[Write]` / `[Change]` / `[Error]` stream plus the process-structure trio `[Start]` / `[Link]` / `[Send]`; the destination can be changed but the log cannot be switched off; writes are logged in full (including `op=skip` "wanted to change, respected the file" and `op=noop` "this batch's declaration was already satisfied"), reads are de-duplicated per transaction (`n=1000`); every write carries its call site (`at=app/config.py:12`), the pid and the optional `identity=`; terminal columns are elastic tabstops measured in **display width** (CJK-safe), while the file form stays compact and is never truncated; `audit=True` appends to `<home>/audit.log` (`0600`, append-only, size-based rotation). See DESIGN §20 / §21 | ✅ |
 | Test suite — one file per module plus security invariants | ✅ green locally; CI runs it on ubuntu / windows / macos |
 
@@ -177,14 +198,19 @@ Do not plan around these; they are **not implemented**:
 |---|---|
 | WAL (write-ahead log) — judged **unnecessary**: the batching window covers merged bursts, declarations are re-derivable from code, the writer serialises, and read-modify-write plus atomic replace gives the ordering (DESIGN §32.7) | not planned |
 | C accelerator (future) — an **extra**, not a separate distribution: `pip install onconf[c]` | — |
-| Rule 1 (cleaning unknown keys) across **short-lived** processes — the writer's declaration set is not persisted, so a writer handover resets the baseline (DESIGN §32.4) | open design question |
+| Rule 1 (cleaning unknown keys) in the runtime path — moving it out to `onconf sync` is decided (ISSUE-035) but not implemented; the writer's declaration set is not persisted, so a writer handover resets the baseline (DESIGN §32.4) | with the CLI |
+| Overwriting a value the file already has — belongs to the CLI (`onconf build` / `onconf sync`), because it is a human decision, not a runtime one | with the CLI |
 | Prefix-sharded locks — the current lock is a single lock per config directory | — |
 | System environment variables as a configuration **source** (`ONCONF_HOME` only locates the config dir) | — |
 | Per-format vocabulary export | — |
-| A real CLI (`onconf` currently prints the config directory and exits) | M5 |
+| `.env` `dict` / `list` values — behind the `env_file_dict` / `env_file_list` booleans (both default off); scalars stay strings | 2.2 (planned) |
+| Multi-file configs — a key carries its file path (`conf("app/conf/net:net.id.post")`); must ship together with path-containment checks | unscheduled |
+| A real CLI — `build` / `sync` converge the file onto the declarations (`sync` also deletes undeclared keys) | M5 |
 
-See [`docs/roadmap.md`](docs/roadmap.md) for the full breakdown and
-[`docs/design/DESIGN.md`](docs/design/DESIGN.md) for the design draft (Chinese, still under review).
+See [`docs/roadmap.md`](docs/roadmap.md) for the full breakdown. The design docs live under
+[`docs/design/`](docs/design/index.md) (Chinese): [`init_config.md`](docs/design/init_config.md)
+and [`file_support.md`](docs/design/file_support.md) are being written as replacements for
+[`DESIGN.md`](docs/design/DESIGN.md), which retires piece by piece.
 
 ## Quality gates
 
@@ -233,6 +259,7 @@ Invariants this project commits to (each one has a regression test in
 | **Audit lines contain values verbatim** | `data=` / `old=` / `new=` carry the real value. `audit=True` writes them to `<home>/audit.log` (append-only, `0600`) — turning it on for a config file full of secrets is a deliberate exposure (threat-model T12) |
 | **The audit trail lives with the executor** | A client ships its request to the dedicated writer, which writes the audit file and logs to *its* destination; the client mirrors only the records that executor actually emitted. A failed remote call is logged as `[Error]` by the originator too, but a remote **read** waits for the writer's next commit point — so it may not appear in the client's own log at all. The audit file is the authoritative stream |
 | **The audit file assumes one writer** | A second engine on the same config directory with `audit=True` appends its own local records to the same `<home>/audit.log`, and `txn` numbers are per-process — so the file can hold two batches numbered alike and rotation stops being single-writer. Leave `audit` off in client processes (off by default) |
+| **Code cannot overwrite a value that already exists** | When the file holds a value different from the one your code declares, the runtime respects the file (it logs `op=skip`) and returns the file's value. Changing it is a human decision — that is the CLI's `build` / `sync`, once those exist. Hand-edit the file (or delete the key) until then |
 | **Writer-local calls share no lock with its session threads** | `conf()` on the writer's own thread runs next to a client request: the OS lock keeps the file consistent (one side may wait out `lock_timeout`), but engine memory is raceable in that window. No regression test covers it (threat-model T4) |
 
 Full analysis, per threat with code evidence: [`docs/security/threat-model.md`](docs/security/threat-model.md).
@@ -256,7 +283,9 @@ src/onconf/
   errors.py          # error taxonomy
 tests/               # one file per module + security invariants
 docs/                # documentation site sources (Chinese)
-  design/DESIGN.md   # the design draft — authoritative for *intent*, not for *status*
+  design/init_config.md   # the two faces, bootstrap vs value layer, the three modes
+  design/file_support.md  # value-file selection, return types, backends, vocabulary
+  design/DESIGN.md        # the old design draft — being replaced piece by piece
 ```
 
 The module list grows as backends land; `src/onconf/` itself is authoritative.
