@@ -103,9 +103,9 @@ nav:
   - 首页: index.md
   - 快速开始: getting-started.md
   - 路线图:
-      - 总览与读法: roadmap/index.md
+      - 路线图: roadmap/index.md
       - 1.0.x（已发布）: roadmap/1.0.x/roadmap.md
-      - 2.0.x（下一版）: roadmap/2.0.x/roadmap.md
+      - 2.0.x（跳转）: roadmap/2.0.x/roadmap.md
   - API 参考:
       - API 总览: api/index.md
   - 架构:

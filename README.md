@@ -265,9 +265,10 @@ Do not plan around these; they are **not implemented**:
 | The other seven CLI commands — `check` / `format` / `diff` / `read` / `get` / `set` / `add` | M5 |
 | `.pyproject.toml` / `.gitignore`-aware scan scope for the CLI (today it walks the project with a fixed skip list) | — |
 
-See the [roadmap](docs/roadmap/index.md) for the full breakdown —
-[1.0.x](docs/roadmap/1.0.x/roadmap.md) is what shipped,
-[2.0.x](docs/roadmap/2.0.x/roadmap.md) is what comes next. The design docs live under
+See the [roadmap](docs/roadmap/index.md) for the full breakdown — it is the **single source of
+truth for scope and versions** (numbered entries, decision state, version assignment);
+[1.0.x](docs/roadmap/1.0.x/roadmap.md) is the frozen record of what shipped. The design docs
+live under
 [`docs/design/`](docs/design/index.md) (Chinese): [`init_config.md`](docs/design/init_config.md),
 [`file_support.md`](docs/design/file_support.md) and [`log.md`](docs/design/log.md).
 

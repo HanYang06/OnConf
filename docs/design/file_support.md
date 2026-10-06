@@ -121,7 +121,7 @@ conf("app.tags")   # .env 后端 → "['a', 'b']"（如果开了结构开关）
 | 多文件（键内嵌路径） | **已实现**（`no_one_file`） | `conf("app/conf/net:net.id.post")`；与包含性校验同批落地，见 §1.1 |
 | 命名空间形式（`file_names = []`） | 计划中，版本待定 | 多文件之上再按命名空间分组；当前只有「路径段」一种分组 |
 
-> 「预计 2.2」是排期意向，不是承诺；落地时以 [2.0.x 路线图](../roadmap/2.0.x/roadmap.md) 为准。
+> 「预计 2.2」是排期意向，不是承诺；落地时以[路线图](../roadmap/index.md)为准。
 
 ## 6. 词表
 
@@ -196,13 +196,11 @@ conf("PORT", 8080)   # TypeError：.env 只能存字符串；要存非字符串�
 
 ## 10. 还没落地的部分
 
-批次（下一批 / 未来）的权威声明在 [2.0.x 路线图](../roadmap/2.0.x/roadmap.md) §5，
-这里只对齐归属：
+哪一条落在哪个版本，以[路线图](../roadmap/index.md)为准，这里只对齐归属：
 
-| 事项 | 批次 | 归属 |
-|---|---|---|
-| `.env` 的 `dict` / `list` 开关与编解码格式 | **未来（预计 2.2）** | [路线图 §5](../roadmap/2.0.x/roadmap.md) |
-| 命名空间形式 `file_names = []` | **未来** | 多文件的后续演进（当前是键内嵌路径） |
-| `format` 只覆盖 JSON | **未来** | [路线图 §4.3](../roadmap/2.0.x/roadmap.md) |
-| 词表按格式导出（当前只产出一份 JSON Schema） | **未来** | [路线图 §5](../roadmap/2.0.x/roadmap.md) |
-| 命令行其余命令（`check` / `format` / `diff` / `read` / `get` / `set` / `add`） | **未来** | [路线图 §4](../roadmap/2.0.x/roadmap.md)（`build` / `sync` 已交付） |
+| 事项 | 归属 |
+|---|---|
+| `.env` 的 `dict` / `list` 开关与编解码格式 | [路线图 038](../roadmap/index.md)（2.2.0） |
+| 命名空间形式 `file_names = []` | [路线图 041](../roadmap/index.md)（2.1.0） |
+| `format` 只覆盖 JSON | [路线图 044](../roadmap/index.md) |
+| 词表按格式导出（当前只产出一份 JSON Schema） | [路线图 039](../roadmap/index.md) |
