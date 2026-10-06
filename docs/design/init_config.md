@@ -248,18 +248,16 @@ conf(build_key(), 8080)                               # ❌
 
 ## 9. 还没落地的部分
 
-本页描述的口径与当前实现之间，还有这几处**已知差异**，不要当成既有能力。
-批次（下一批 / 未来）的权威声明在 [2.0.x 路线图](../roadmap/2.0.x/roadmap.md)，
-这里只对齐归属：
+本页描述的口径与当前实现之间，还有这几处**已知差异**，不要当成既有能力；
+每条落在哪个版本以[路线图](../roadmap/index.md)为准：
 
-| 事项 | 批次 | 归属 |
-|---|---|---|
-| 命令行 `check` 走「不产生记录」的只读路径（因此不落盘、不建目录） | **下一批** | [路线图 §4.2](../roadmap/2.0.x/roadmap.md) |
-| 运行期不再清理未声明的键 | **下一批** | [路线图 §2.7](../roadmap/2.0.x/roadmap.md) |
-| 落盘形式（含加密）与轮转参数 | **未来** | [路线图 §5](../roadmap/2.0.x/roadmap.md) |
-| 其余六条命令行（`check` / `format` / `diff` / `read` / `get` / `add`）与逐键覆盖 `set` | **未来** | [路线图 §4](../roadmap/2.0.x/roadmap.md) |
-| `check` 按「声明处字面量」出 warning | **未来** | [路线图 §1.6](../roadmap/2.0.x/roadmap.md) |
-| `.env` 的 `dict` / `list` 开关 | **未来（预计 2.2）** | [路线图 §5](../roadmap/2.0.x/roadmap.md) |
+| 事项 | 归属 |
+|---|---|
+| 命令行 `check` 走「不产生记录」的只读路径（因此不落盘、不建目录） | [路线图 043](../roadmap/index.md) |
+| 落盘形式（含加密）与轮转参数 | [路线图 036](../roadmap/index.md) |
+| 其余命令行（`get` / `read` / `set` / `diff` / `format`）与 `add` / `remove` | [路线图 044](../roadmap/index.md)、[路线图 045](../roadmap/index.md) |
+| `check` 按「声明处字面量」出 warning | [路线图 006](../roadmap/index.md) |
+| `.env` 的 `dict` / `list` 开关 | [路线图 038](../roadmap/index.md) |
 
 **已定、现在不动**：`$schema` 指针保持按载体能力（只有能吃下成员的后端才写），
 不新增「要 / 不要」参数 —— 见[文件支持](file_support.md) §8。

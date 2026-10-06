@@ -92,7 +92,7 @@ TOML 走 `tomllib.loads`，`.env` 是纯行扫描。
 5. **解析后必须仍在 `<home>` 之内** —— 既有符号链接指向外侧时也会被 `resolve()` 展开而拒绝。
 
 **守护的是目的，不是某一种手段**：值文件路径与键内嵌路径都过包含性校验
-（见 [2.0.x 路线图 §1.9](../roadmap/2.0.x/roadmap.md)）。
+（见[路线图 009](../roadmap/index.md)）。
 
 **守护**：`tests/test_security_invariants.py` 里逐条覆盖（非法文件名、含 `..` / 绝对路径 /
 分隔符的键内嵌路径、行为级「配置目录外无任何新文件」），另有 `tests/test_paths.py` 与
@@ -327,7 +327,7 @@ rename。内容不会半截，只是可能退回上一版。
 
 | 本文条目 | 出处 |
 |---|---|
-| T1 外部字符串寻址 | [文件支持 §1.1](../design/file_support.md)（多文件寻址）、[路线图 §1.9](../roadmap/2.0.x/roadmap.md)（包含性校验） |
+| T1 外部字符串寻址 | [文件支持 §1.1](../design/file_support.md)（多文件寻址）、[路线图 009](../roadmap/index.md)（包含性校验） |
 | T4 并发 | [并发模型](../design/concurrency.md)（进程内一把内存锁；跨进程「一个目录一个写者」是部署责任） |
 | T5 原子写 | [1.0.x §4.3](../roadmap/1.0.x/roadmap.md)；落盘实现见 `_engine._atomic_write_text` |
 | T6 权限 | 落盘实现 `mkstemp` 的 `0600` + 沿用既有权限位；审计文件同样按 `0600` 创建（`_log._append_file`） |
@@ -335,4 +335,4 @@ rename。内容不会半截，只是可能退回上一版。
 | T9 schema 落盘 | [文件支持 §8](../design/file_support.md)（`$schema` 指针） |
 | T10 不开端口 | [并发模型](../design/concurrency.md)（没有独立写者进程、没有 IPC、没有端点；引擎不开任何网络端口） |
 | T12 日志泄漏值 | [日志](../design/log.md) |
-| T13 命令行扫描与删除 | [路线图 §4](../roadmap/2.0.x/roadmap.md)（命令表、`--dry-run`、退出码） |
+| T13 命令行扫描与删除 | [路线图 042](../roadmap/index.md)、[路线图 046](../roadmap/index.md)（命令表、`--dry-run`、退出码） |

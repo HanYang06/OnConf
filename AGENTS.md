@@ -88,7 +88,8 @@ docstring，中间不空行：
 ### 3.4 代码里的设计引用
 
 注释与文档串里**不写裸节号**。涉及设计取舍时，引用现役设计稿的文件名 + 小节
-（如 `init_config.md §4`、`file_support.md §7`、`log.md`）或路线图小节（如 `路线图 §2.7`）；
+（如 `init_config.md §4`、`file_support.md §7`、`log.md`）或路线图条目的编号
+（如 `路线图 021`，编号见 [`docs/roadmap/index.md`](docs/roadmap/index.md)）；
 文档里没有对应记载就不写引用，别留悬空编号。
 
 ## 4. 测试
