@@ -1,0 +1,10 @@
+# 代码归属。base 分支上的 CODEOWNERS 让被触及文件的 code owner 在 PR 打开时自动
+# 收到评审请求（草稿 PR 除外）；Dependabot 开的 PR 同样走这里，dependabot.yml 里
+# 不再配置评审人。
+#
+# 匹配遵循 gitignore 语法，最后一条匹配的规则优先；列在这里的人必须具备 write 权限。
+# 注意不要打开 ruleset 的「Require review from Code Owners」：本仓库只有一位 owner，
+# 而 GitHub 不允许自审，打开后自己的 PR 无法满足该要求。日后引入协作者时，在下方
+# 按目录拆分行。
+
+* @HanYang06
