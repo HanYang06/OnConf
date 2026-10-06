@@ -114,6 +114,7 @@ nav:
       - 设计稿索引: design/index.md
       - 初始化配置: design/init_config.md
       - 文件支持: design/file_support.md
+      - 并发模型: design/concurrency.md
       - 审计日志: design/log.md
   - 安全:
       - 安全总览: security/index.md

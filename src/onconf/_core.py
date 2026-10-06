@@ -6,15 +6,20 @@
 
 * 事实权威（文件 > 代码）
 * 读写靠参数结构判定，``None`` 是合法值
-* 写入 = 三集合全量对账（四条规则）
-* 读取 = 五步 + 两类错误
+* 写入 = 两条规则的对账（补缺 / 补元数据），**运行期不删任何键**
+* 读取 = 两类错误分开
 
 引擎**不做类型推断、也不做向声明类型的转换**：值是载体原生的，原样进出
 （口径见 ``docs/design/file_support.md``）。词表也只有三样东西：键、说明、默认值。
 
 **写入只有"补缺"与"补元数据"两种动作**：对文件里已经存在的值一律只读
-（值不一致时产出 ``skip``，记一条"想改没改"）。覆盖既存值不属于运行期路径 ——
-它是人主动发起的命令行动作（``build`` / ``sync``），见 ``docs/design/init_config.md``。
+（值不一致时产出 ``skip``，记一条"想改没改"）。删除是另一回事：
+判据「事实里有、期望集里没有」只有在**期望集完整**时才成立，而运行期的期望集
+永远只是「这个进程到目前为止声明过的」—— 多进程下必然误删别人的键。所以
+``clean`` 动作不在这条路径上，它由 :func:`undeclared` 供给命令行的收敛路径
+（见 ``docs/design/concurrency.md`` 与 ``docs/design/init_config.md``）。
+
+覆盖既存值同理：它是人主动发起的命令行动作（``build`` / ``sync``）。
 """
 
 from __future__ import annotations
@@ -22,9 +27,13 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .errors import KeyHasNoValueError, KeyNotRegisteredError
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 # --------------------------------------------------------------------------- #
@@ -164,7 +173,12 @@ DIRECTIVE_PREFIX = "$"
 """
 
 
-def _is_directive(key: str) -> bool:
+def is_directive(key: str) -> bool:
+    """这个键是不是**指令**（``$`` 开头）。
+
+    判据要喂**文件内**的键名：多文件模式下扁平键是 ``app/net:$schema``，拿它去判会漏，
+    结果就是每次收敛都把那条指针删掉。
+    """
     return key.startswith(DIRECTIVE_PREFIX)
 
 
@@ -182,46 +196,24 @@ def reconcile(
     decls: list[Decl],
     facts: dict[str, Any],
     vocab: dict[str, VocabEntry],
-    *,
-    clean_unknown: bool = True,
 ) -> list[Action]:
     """把「代码声明的期望集」对到「事实集」上，产出动作清单。
 
-    规则 1 清理未知数据 / 2 补充缺失数据 / 3 补充缺失参数 / 4 保持原有数据。
+    规则 2 补充缺失数据 / 3 补充缺失参数 / 4 保持原有数据。
+
+    **没有"清理未知数据"这一条。** 它的判据是「事实里有、期望集里没有」，而期望集
+    只有在一个**完整**的提交点才完整 —— 运行期一个进程的期望集永远只是它自己声明过的
+    那部分，多进程下必然把别人的键当未知数据处理掉。删除因此被移出运行期，只在命令行的
+    一次性收敛里发生，判据由 :func:`undeclared` 给出。
 
     情形 4（两边都有、值不一致）**没有例外**：以文件为准，产出一条 ``skip``。
     运行期路径不改文件里已经存在的值 —— 覆盖是命令行的显式人工动作（``build`` /
     ``sync``），代码只能补它没有的，不能改它已经有的（``docs/design/init_config.md``）。
 
-    ``clean_unknown`` 为什么必须是个开关
-    ------------------------------------
-    规则 1 的判据是「事实里有、**期望集**里没有」。可它只有在**期望集完整**时
-    才成立。而引擎一次 ``conf()`` 调用只知道**到目前为止**声明过的键：
-
-    .. code-block:: python
-
-        conf("a.b", 1)  # 此刻期望集只有 {a.b}
-        conf("c.d", 2)  # 此刻期望集只有 {a.b, c.d}
-
-    如果第一次调用就按规则 1 对账，文件里所有**还没声明到**的键都会被当成
-    「未知数据」清掉。所以：
-
-    * **增量声明**走 ``clean_unknown=False``，只做补写 / 覆盖 / 补元数据；
-    * **提交点**（``sync()`` / 进程退出）期望集完整，才允许 ``clean_unknown=True``。
-
-    这不是性能优化，是**正确性前提**。
-
     指令键（``$`` 开头）不参与对账，见 :data:`DIRECTIVE_PREFIX`。
     """
     actions: list[Action] = []
     declared = {d.key: d for d in decls}
-
-    # 规则 1：事实有、期望没有 ⇒ 清理（指令键豁免；且必须期望集完整）
-    if clean_unknown:
-        for key, fact_value in facts.items():
-            if key in declared or _is_directive(key):
-                continue
-            actions.append(Action("clean", key, old=fact_value, reason="事实里有、代码没声明"))
 
     for key, decl in declared.items():
         stale = _meta_stale(vocab.get(key), decl)
@@ -260,6 +252,29 @@ def reconcile(
             )
 
     return actions
+
+
+def undeclared(
+    facts: dict[str, Any],
+    declared: set[str],
+    *,
+    is_directive: Callable[[str], bool] = is_directive,
+) -> list[Action]:
+    """事实里有、声明集里没有的键 —— **只给命令行的收敛路径用**。
+
+    这条判据只有在**期望集完整**时才成立，而完整只可能出现在「一次拿到全部声明」的
+    场合：命令行静态扫描整个项目，得到的正好是一份完整声明集。运行期永远不完整，
+    所以运行期不调用它（见 :func:`reconcile` 的说明）。
+
+    指令键（``$`` 开头）豁免：``$schema`` 是给编辑器的指针、不是配置项，
+    删掉它等于删掉用户的工具链。判据按**文件内**的键名判，所以调用方可以改喂
+    （多文件模式下扁平键带着路径段前缀，见 :func:`is_directive`）。
+    """
+    return [
+        Action("clean", key, old=value, reason="事实里有、声明集里没有")
+        for key, value in facts.items()
+        if key not in declared and not is_directive(key)
+    ]
 
 
 # --------------------------------------------------------------------------- #

@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from onconf._core import NO_VALUE, Decl, declaration_hash, read_value, reconcile
+from onconf._core import NO_VALUE, Decl, declaration_hash, read_value, reconcile, undeclared
 from onconf._vocab import Vocabulary
 from onconf.errors import KeyHasNoValueError
 
@@ -131,9 +131,10 @@ class TestApply:
         assert vocab.hash == declaration_hash(decls)
 
     def test_clean_drops_from_vocab(self) -> None:
+        """删除动作会把键从词表里摘掉 —— 它由命令行的收敛路径供给，运行期不产出。"""
         vocab = Vocabulary()
         vocab.register(Decl("ghost", 1))
-        vocab.apply(reconcile([], {"ghost": 1}, vocab.as_dict()), [])
+        vocab.apply(undeclared({"ghost": 1}, set()), [])
         assert "ghost" not in vocab
 
     def test_skip_does_not_touch_file_but_meta_is_updated(self) -> None:

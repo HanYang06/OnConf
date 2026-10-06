@@ -258,7 +258,6 @@ module = [
     "test_engine",
     "test_env_backend",
     "test_json_backend",
-    "test_owner",
     "test_paths",
     "test_security_invariants",
     "test_toml_backend",

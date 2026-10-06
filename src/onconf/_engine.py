@@ -4,12 +4,9 @@
 
 ## 提交点：默认**当场落盘**，攒批窗口按需开
 
-``flush_window`` **默认 0** —— 声明立刻落盘。这不是保守，是「文件是绝对权威」
-这条一旦成立，**写入的可见性延迟就是对它的削弱**：别的进程去读那个文件时，
-看不到你刚声明的东西，而多进程恰恰是本项目的目标场景之一。
-
-而且实测支持这个默认值：稳态下词表 diff 会让对账产出**空动作**，一个字节都不写，
-所以「每次声明都写」并不等于写放大。
+``flush_window`` **默认 0** —— 声明立刻落盘。「文件是绝对权威」这条一旦成立，
+**写入的可见性延迟就是对它的削弱**：读那个文件的人（同进程、派生进程、用户的编辑器）
+看不到你刚声明的东西。
 
 需要攒批的是**启动期一口气声明很多键**这种突发场景，而那正是调用方自己知道的事：
 
@@ -17,34 +14,43 @@
 
     AutoConf(home="…", flush_window=0.2)  # 攒一批再写
 
-窗口一旦开启，落盘发生在这些提交点：**窗口到期 / 一次读 / ``sync()`` / 进程退出**。
-前三个**不做规则 1**（期望集可能还不完整，），只有 ``sync()`` 与进程退出做。
+窗口一旦开启，落盘发生在这些提交点：**窗口到期 / 一次读 / ``flush()`` / ``sync()`` /
+进程退出**。
 
-## 并发：一个**专职写者**，OS 锁当安全网
+## 写权限：属主进程，派生的一律只读
 
-一个配置目录上，**谁抢绑到端点谁就是唯一的读写者**（:mod:`onconf._owner`）。
-四个公开出口（``read`` / ``declare`` / ``flush`` / ``sync``）都先问一句「我是不是
-写者」：是就就地干，不是就把请求交给写者（见 :meth:`Engine._channel`）。于是磁盘上
-的读改写只有一个进程在做，其余进程只是发请求。
+引擎不做并发协调 —— 没有锁、没有独立写者进程、没有 IPC、没有端点、没有待折日志。
+取而代之的是一条**由进程树保证**的规则：**创建这个实例的进程是属主**，它读写、生成词表；
+从它派生出来的进程一律只读。
 
-端点这条路不通（建不出来、环境奇怪）时逐层退让，最后**退回就地做** —— 那正是
-下面这套锁要顶住的场合。**正确性从来不靠 IPC 撑着**。
+判据不是探测、不是约定，而是一次 pid 核对：实例记下创建它的 pid，落盘前比一次 —— 对不上
+就说明这个实例是 ``fork`` 出来的（内存被复制了，写权不该跟着复制）。
 
-攒批窗口是**每个引擎自己**的：声明先在本地攒着，交出去时才走一次
-``OP_COMMIT``。窗口要是挪到写者身上，客户端显式配的 ``flush_window`` 就被静默
-忽略了。
+**边界**：``spawn`` 出来的进程（Windows 上 ``multiprocessing`` 的默认方式，以及任何
+``subprocess``）是**全新进程**，它自己建实例、自己就是属主 —— pid 核对在这种平台上不触发。
+要让它只读，靠的是调用方自己不写，或者干脆用命令行先把配置落好、运行期全部只读。
 
-写者不在了的时候，兜底仍旧是下面的老办法。
+于是三种部署形态都有确定答案：
 
-## 掉到兜底时：OS 锁 + 锁内按需重读
+* 单进程：创建者就是属主，读写；
+* 主进程 + 子进程：主进程写，派生出来的子进程天然只读；
+* N 个平级进程：各自都是属主 —— **不在保障范围**，配置归命令行离线写
+  （``onconf build`` / ``sync``）。
 
-多进程同时提交时，每个进程在锁里**重读一遍磁盘**再对账、再原子替换。
-没有这一步就会出现「A 和 B 各自基于同一份旧内容写回，后写的把先写的整段盖掉」。
-重读只在文件真的变过时才发生（比 mtime + size），所以单进程连续提交不会退化成
-「每次都把整篇读一遍」。
+代价写在明面上：**同一时刻只有一个写者是调用方的部署责任**。引擎不探测、不等待、不加锁、
+不猜。口径与取舍见 ``docs/design/concurrency.md``。
 
-锁用的是操作系统的锁（见 :mod:`onconf._lock`），所以进程崩溃时它会被自动释放，
-不会留下死锁。
+攒批窗口是**每个引擎自己**的：声明先在本地攒着，到提交点才一次性交出去。
+
+## 读：指纹校验 + 按需重读
+
+读**任何进程都能做**。代价是「读的时候属主可能正在替换文件」，所以两件事必须同时成立：
+
+* **读之前先比指纹**（``mtime`` + 大小），文件变过就重读。少了这一步，进程内存会
+  永远停在第一次加载的样子 —— 属主进程后来的写、用户的手改，它都看不见，
+  「值每次从文件重新读」就成了一句空话；
+* **读的寻址按被读的键自己决定**加载哪个值文件。多文件模式下，一个进程完全可以读
+  别人声明过的键，只看「本进程声明过哪些路径段」会读到词表默认值而不是文件值。
 
 ## 落盘是原子的，而且不碰不该碰的字节
 
@@ -52,14 +58,16 @@
 ``os.replace``，再 ``fsync`` 父目录（POSIX）。行尾按文件原本的样子写回，所以
 Windows 上不会把用户的 LF 文件偷偷改成 CRLF；已存在文件的权限位也原样保留。
 
+替换那一步带**有界重试**（:func:`_replace_with_retry`）：Windows 上 ``os.replace``
+撞上一个正在读这个文件的进程会报 ``ERROR_ACCESS_DENIED``，而读者不参与互斥、也不该
+参与，所以由替换这一侧等它几百毫秒。
+
 ## 目录约定（对齐真实产物）
 
 ::
 
     <home>/settings.json          值文件（用户手改）；名字由 ``file_name``、后缀由 ``file_type``
     <home>/schema/settings.json   词表（**库自己的资产**，随便重写；一份，与值文件个数无关）
-    <home>/schema/settings.lock   锁的握手点（空文件；库里自己的簿记）
-    <home>/schema/settings.key    写者端点的认证码（0600；库里自己的簿记）
     <home>/audit.log              审计文件（append-only；``audit=True`` 才有）
 
 ``<home>`` 由 ``home=`` 参数 / ``ONCONF_HOME`` 环境变量 / ``./conf`` 依次决定。
@@ -75,17 +83,12 @@ Windows 上不会把用户的 LF 文件偷偷改成 CRLF；已存在文件的权
 ## 日志与审计
 
 日志**不可关闭**，只能改去向（``log="stderr"`` 默认 / ``"stdout"`` / 一个文件路径）；
-``audit=True`` 再加一份 append-only 的 ``<home>/audit.log``。四个级别
-``[R]/[W]/[C]/[E]`` 与对齐规则见 :mod:`onconf._audit`。
+``audit=True`` 再加一份 append-only 的 ``<home>/audit.log``。级别与对齐规则见
+:mod:`onconf._audit`。
 
-**记账在执行点**：谁真正动了配置目录，谁写日志。经 IPC 的请求由写者执行、由写者记，
-但记录里的 ``pid`` / ``id=`` / ``at=`` 仍是**发起方**的（调用点在客户端抓，随声明过线；
-这两个身份字段都按线程存，免得应答线程把远端身份漏到主线程自己身上）。
-
-客户端补的是**执行点这一次真正输出出去的**记录（写 / 变更 / 被这次提交收口的读），
-审计文件不重复写。两条推论要记住：远端失败时客户端那一侧本来是空的，所以
-:meth:`Engine._log_remote_failure` 会在**发起方**也记一条 ``[E]``；而纯远端的读会攒在
-写者的事务里等它的下一个提交点，因此不一定出现在客户端的日志里 —— 权威流是审计文件。
+**谁发起谁记账**：这里没有第二个执行点，所以记录里的 ``pid`` / ``id=``（身份）/
+``at=``（调用点）都取自本进程。审计文件可能被多个进程同时追加 —— 那是预期的，
+不是缺陷：``O_APPEND`` 加上每行自带进程信息就足以解析。
 """
 
 from __future__ import annotations
@@ -95,6 +98,7 @@ import json
 import os
 import stat
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -105,21 +109,17 @@ from ._audit import (
     AUDIT_NAME,
     TERMINAL_STDERR,
     AuditLog,
-    Origin,
     Record,
-    Reply,
     call_site,
     error_kind,
 )
-from ._core import MISSING, Action, Decl, read_value, reconcile
-from ._lock import exclusive
+from ._core import MISSING, Action, Decl, is_directive, read_value, reconcile, undeclared
 from ._vocab import Vocabulary
 from .errors import ConfError
 
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-    from types import ModuleType
 
 
 HOME_ENV = "ONCONF_HOME"
@@ -129,7 +129,6 @@ DEFAULT_FILE_NAME = "settings"
 #: 兼容旧名：历史上它是写死的文件名主干，现在与 :data:`DEFAULT_FILE_NAME` 同源。
 VALUES_STEM = DEFAULT_FILE_NAME
 SCHEMA_DIR = "schema"
-LOCK_SUFFIX = ".lock"
 #: 缺省值文件类型：**字面 ``"json"``**，不是空串隐含出来的 json。
 DEFAULT_FILE_TYPE = "json"
 #: 缺省值文件的 ``$schema`` 指针（多文件模式下每个文件按自己的层级算出相对路径）。
@@ -138,6 +137,39 @@ SCHEMA_POINTER = f"{SCHEMA_DIR}/{DEFAULT_FILE_NAME}.json"
 #: 攒批窗口的默认值（秒）。**0 = 每次声明当场落盘**。
 #: 见模块文档：默认立即是语义决定，不是保守。
 DEFAULT_FLUSH_WINDOW = 0.0
+
+#: Windows 上 ``os.replace`` 因为**并发读者**失败的错误码：拒绝访问 / 共享冲突 /
+#: 锁冲突。读者不参与互斥（见模块文档），所以只能由替换这一侧让一步。
+_RETRYABLE_WINERRORS = frozenset({5, 32, 33})
+
+#: 替换的重试次数与间隔（秒）。最坏情况约 0.2 秒，实测足以穿过读者的读窗口。
+_REPLACE_ATTEMPTS = 40
+_REPLACE_INTERVAL = 0.005
+
+#: 属主 pid 沿**环境变量**传给子进程：``fork`` 靠继承内存就能看出来（pid 对不上），
+#: 而 ``spawn`` / ``subprocess`` 出来的是全新进程、什么都不继承 —— 只能靠这个标记
+#: 告诉它「你已经属于某个属主了」。它是**可信输入**（同 ``ONCONF_HOME``）。
+OWNER_ENV = "ONCONF_OWNER_PID"
+
+#: 进程内的互斥表：同一份值文件上的多个实例、以及同一实例的多个线程，共用一把锁。
+#: **纯内存**，不落任何文件、不碰操作系统 —— 跨进程那条禁令仍然是调用方的部署责任。
+_INSTANCE_LOCKS: dict[tuple[str, str, str], threading.RLock] = {}
+_INSTANCE_LOCKS_GUARD = threading.Lock()
+
+
+def _instance_lock(home: Path, file_name: str, suffix: str) -> threading.RLock:
+    """取（必要时建）某份值文件在**本进程内**的锁。
+
+    键是 ``(配置目录, 值文件名主干, 后缀)``：同一份值文件共锁，不同的互不影响 ——
+    拿一个全局大锁会把互不相干的配置目录也串起来。
+    """
+    key = (os.path.normcase(str(home)), file_name, suffix)
+    with _INSTANCE_LOCKS_GUARD:
+        lock = _INSTANCE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _INSTANCE_LOCKS[key] = lock
+        return lock
 
 
 def _detect_newline(raw: bytes) -> str:
@@ -177,6 +209,8 @@ def _atomic_write_text(path: Path, text: str, *, newline: str) -> None:
     * **沿用原权限位**：临时文件是 0600，直接替换会把用户特意放宽的权限收窄；
       已存在的文件按原样保留，新建文件才拿 mkstemp 的 0600。
     * **``newline`` 用文件原本的行尾**：见 :func:`_detect_newline`。
+    * **替换那一步重试**：见 :func:`_replace_with_retry` —— 读者不参与互斥，
+      Windows 上并发读者会让替换失败。
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
@@ -189,13 +223,38 @@ def _atomic_write_text(path: Path, text: str, *, newline: str) -> None:
             os.fsync(handle.fileno())
         if path.exists():
             tmp.chmod(stat.S_IMODE(path.stat().st_mode))
-        tmp.replace(path)
+        _replace_with_retry(tmp, path)
         replaced = True
     finally:
         if not replaced:
             with contextlib.suppress(OSError):
                 tmp.unlink()
     _fsync_directory(path.parent)
+
+
+def _replace_with_retry(tmp: Path, target: Path) -> None:
+    """``os.replace`` + **有界重试**（Windows）。
+
+    Windows 上替换一个**正被别人打开**的文件会失败（``ERROR_ACCESS_DENIED`` 之类），
+    而 Python 的 ``os.open`` 不带 ``FILE_SHARE_DELETE``。我们**故意不让读者参与互斥**
+    （见模块文档：读要快，而且 Windows 没有共享锁），所以只能由替换这一侧等一小会儿。
+    读者的读窗口是微秒级的，实测多进程持续提交时重试几百毫秒就足够。
+
+    只在 Windows 的这三个错误码上重试：POSIX 的 ``PermissionError``（不可变文件、
+    权限不足）是真实错误，重试没有意义也不该掩盖它。
+    """
+    for attempt in range(1, _REPLACE_ATTEMPTS + 1):
+        try:
+            tmp.replace(target)
+        except PermissionError as exc:
+            retryable = (
+                os.name == "nt" and getattr(exc, "winerror", None) in _RETRYABLE_WINERRORS
+            )
+            if not retryable or attempt == _REPLACE_ATTEMPTS:
+                raise
+            time.sleep(_REPLACE_INTERVAL)
+        else:
+            return
 
 
 #: 后端模块必须提供同一组函数与常量：
@@ -268,6 +327,10 @@ class _FileState:
 
     ``key`` 是**路径段**：空串表示默认文件 ``<home>/<file_name><ext>``，其余是键里
     ```:`` 左边那段相对路径。``facts`` 里的键是**文件内**的键名（不含路径段）。
+
+    ``loaded`` 区分「读过这个文件」与「只是知道它的路径」：指纹只看**读过**的文件，
+    而读一个键之前必须先把它所属的文件读进来（否则会拿着空事实去查词表，
+    把「文件里有值」误报成「只有默认值」）。
     """
 
     key: str
@@ -275,20 +338,7 @@ class _FileState:
     text: str | None = None
     facts: dict[str, Any] = field(default_factory=dict)
     newline: str = field(default_factory=lambda: os.linesep)
-
-
-def _owner_module() -> ModuleType:
-    """``_owner`` 模块（就地导入）。
-
-    **只能就地导入**：``_owner`` 在导入期就要本模块的目录常量
-    （``SCHEMA_DIR`` / ``VALUES_STEM``），模块级导入会成环。
-
-    （:mod:`onconf._lock` 那边也是就地导入的 —— 同一类理由，那边还多一条
-    mypy 的 ``warn_unreachable``。）
-    """
-    from . import _owner  # noqa: PLC0415 - 见上：打断循环导入
-
-    return _owner
+    loaded: bool = False
 
 
 class Engine:
@@ -303,7 +353,6 @@ class Engine:
         no_one_file: bool = False,
         audit: bool = False,
         flush_window: float = DEFAULT_FLUSH_WINDOW,
-        lock_timeout: float = 10.0,
         log: str | os.PathLike[str] = TERMINAL_STDERR,
         identity: str = "",
     ) -> None:
@@ -318,10 +367,18 @@ class Engine:
         #: 默认值文件。多文件模式下它是「没有路径段的键」的落点，所以仍在。
         self.values_path = _values_path(self.home, self.file_name, self.suffix)
         self.schema_path = self.home / SCHEMA_DIR / f"{self.file_name}.json"
-        self.lock_path = self.home / SCHEMA_DIR / f"{self.file_name}{LOCK_SUFFIX}"
+        #: 创建这个实例的进程 = **属主**。两个来源：``fork`` 复制了内存（pid 对不上），
+        #: 或者 ``spawn`` / ``subprocess`` 出来的子进程读到了父进程留下的 ``ONCONF_OWNER_PID``。
+        inherited = os.environ.get(OWNER_ENV)
+        if inherited is not None and inherited.isdigit():
+            self._owner_pid = int(inherited)
+        else:
+            self._owner_pid = os.getpid()
+            os.environ[OWNER_ENV] = str(self._owner_pid)
+        #: **进程内**互斥：同一份值文件上的多个实例（或同一实例的多个线程）共用这一把。
+        self._lock = _instance_lock(self.home, self.file_name, self.suffix)
         self.audit = audit
         self.flush_window = flush_window
-        self.lock_timeout = lock_timeout
         #: 应用 / 主机身份，记进 ``id=``。
         self.identity = identity
         #: 日志与审计的收口点。``audit=True`` 时它同时写 ``<home>/audit.log``。
@@ -343,11 +400,7 @@ class Engine:
         self._files: dict[str, _FileState] = {}
         self._stamp: tuple[Any, ...] | None = None
         self._loaded = False
-        #: 本引擎的通道，懒建。``_owner`` 只能用绑定方法传进来当写者的执行入口，
-        #: 所以这里存的是不透明句柄（见 :meth:`_channel`）。
-        self._chan: Any = None
-        #: 最近一条「已经记过账」的异常。远端失败要补记时认一下它，免得就地执行
-        #: （写者自己 / 退到底）那条路把同一件事记两遍。
+        #: 最近一条「已经记过账」的异常（避免同一件事在同一个进程里记两遍）。
         self._logged_failure: BaseException | None = None
         #: ``[Start]`` 只记一次（第一次真正用到这个引擎时）。
         self._started = False
@@ -415,28 +468,36 @@ class Engine:
             return self.read(key)
         return self.declare(key, value, doc=doc)
 
-    def read(self, key: str) -> Any:
-        """读一个配置项。**先把待写交出去**，否则可能读不到自己刚声明的事实。"""
-        self._ensure_started()
-        self._load_audited(item=key)
-        self._commit_local(clean=False)
-        if self._is_writer():
-            return self._read_local(key)
-        owner = _owner_module()
-        try:
-            reply: Reply = self._channel().submit(
-                owner.Request(
-                    op=owner.OP_READ,
-                    key=key,
-                    pid=os.getpid(),
-                    identity=self.identity or None,
-                )
+    def _assert_owner(self) -> None:
+        """落盘前的闸门：**只有创建这个实例的进程**能写。
+
+        「同一时刻只有一个写者」这条保证由**进程树**给，不需要谁发誓：``fork`` 会把内存
+        复制给子进程，但写权不该跟着被复制，所以 pid 对不上就一律只读。
+
+        当场报错，不静默降级：派生进程第一次想写的时候就会炸，而且错误里写着两条出路。
+        N 个**平级**进程各自建实例不在保障范围 —— 那是部署问题，正确姿势是用命令行
+        离线把配置写好，运行期全部只读。
+        """
+        if os.getpid() != self._owner_pid:
+            raise ConfError(
+                f"这个引擎实例是从 pid={self._owner_pid} 派生出来的：派生进程只读。"
+                "要改配置请让属主进程写，或者用命令行的 onconf build / sync 离线写。"
             )
-        except Exception as exc:
-            self._log_remote_failure(exc, item=key)
-            raise
-        self._collect_remote(reply)
-        return reply.value
+
+    def read(self, key: str) -> Any:
+        """读一个配置项。
+
+        四步都不能省：先把待提交的声明交出去（否则读不到自己刚声明的事实），
+        再把**这个键所属的值文件**读进来（多文件模式下它未必在本进程的声明集里），
+        最后比一次指纹 —— 属主进程或用户的手改过文件就重读，绝不拿陈旧内存当事实。
+        """
+        with self._lock:
+            self._ensure_started()
+            self._load_audited(item=key)
+            self._commit_pending()  # 先把自己的待写交出去，否则读不到自己刚声明的事实
+            self._open_for(key)
+            self._reload_if_changed()
+            return self._read_audited(key)
 
     def declare(self, key: str, value: Any = MISSING, doc: str | None = None) -> Any:
         """声明 / 写一个配置项。**返回当前生效值**（值文件优先，不是默认值）。
@@ -450,110 +511,52 @@ class Engine:
         归命令行的 ``build`` / ``sync``（见 ``docs/design/init_config.md``）。
         """
         at = call_site()
-        self._ensure_started()
-        self._load_audited(item=key)
-        decl = Decl(key=key, value=value, doc=doc, at=at)
-        self._pending[key] = decl
-        self._decls[key] = decl
+        with self._lock:
+            self._assert_owner()
+            self._ensure_started()
+            self._load_audited(item=key)
+            decl = Decl(key=key, value=value, doc=doc, at=at)
+            self._pending[key] = decl
+            self._decls[key] = decl
 
-        if self.flush_window <= 0 or self._window_expired():
-            self._commit_local(clean=False)
-        elif self._window_started is None:
-            self._window_started = time.monotonic()
+            if self.flush_window <= 0 or self._window_expired():
+                self._commit_pending()
+            elif self._window_started is None:
+                self._window_started = time.monotonic()
 
-        return self._effective(key, decl)
+            return self._effective(key, decl)
 
     # ------------------------------------------------------------------ 提交点
 
     def flush(self) -> None:
-        """把待提交的声明交出去。**不做规则 1**（期望集可能还不完整，见 ）。"""
-        self._commit_local(clean=False)
-        self._audit.close_txn()
+        """把待提交的声明交出去，并收口日志。**不删除任何键。**
+
+        运行期没有删除动作（见 :func:`onconf._core.reconcile`），所以它与
+        :meth:`sync` 现在是同一件事。
+        """
+        with self._lock:
+            self._commit_pending()
+            self._audit.close_txn()
 
     def sync(self) -> None:
-        """完整提交点：此刻**期望集完整**，规则 1（清理未知数据）才允许执行。"""
-        self._commit_local(clean=True)
-        self._audit.close_txn()
+        """完整提交点：把待提交的声明交出去，并收口日志。
+
+        「完整提交点」这个名字留着是为了语义（这里期望集确实是完整的），但它**不再
+        意味着清理** —— 删除只在命令行的收敛路径上发生，判据见
+        :func:`onconf._core.undeclared`。
+        """
+        self.flush()
 
     def close(self) -> None:
-        """放下写者身份（或断开连接）。下一个进程会接上。
+        """收口日志。
 
-        顺手把审计收口：纯读的程序也要在退出前把攒着的 ``[R]`` 行交出去。
-
-        **它不是提交点**：攒着的声明要在 ``flush()`` / ``sync()`` 里才交出去。
+        **它不是提交点**：攒着的声明要在 ``flush()`` / ``sync()`` 里才交出去；
         ``atexit`` 那条路会先 ``sync()`` 再 ``close()``，但直接调 ``close()``
-        （``flush_window > 0`` 时）会把还没交的声明丢掉 —— 要收口请显式 ``sync()``。
+        （``flush_window > 0`` 时）会把还没交的声明丢掉。
         """
-        try:
-            self._audit.close_txn()
-        finally:
-            if self._chan is not None:
-                self._chan.close()
-                self._chan = None
+        self._audit.close_txn()
 
-    # ------------------------------------------------------ 攒批窗口（本引擎的）
-
-    def _commit_local(self, *, clean: bool) -> None:
-        """把本地攒着的声明**交出去**。
-
-        谁交：写者就地做（:meth:`_commit_pending`），客户端打包发一批
-        （:meth:`_send_batch`）。所以攒批窗口是**每个引擎自己**的 —— 别人当了写者，
-        不该把这一侧显式配的 ``flush_window`` 静默丢掉。
-
-        窗口留在客户端还有第二个好处：突发期省下的是 **IPC 往返**，不只是磁盘写。
-        """
-        self._ensure_loaded()
-        self._window_started = None
-        if self._is_writer():
-            self._commit_pending(clean=clean)
-            return
-        self._send_batch(clean=clean)
-
-    def _send_batch(self, *, clean: bool) -> None:
-        """把攒着的声明交给写者。交出去清空的是**缓冲区**，不是声明本身。"""
-        decls = tuple(self._pending.values())
-        self._pending.clear()
-        if not decls and not clean:
-            return
-        owner = _owner_module()
-        try:
-            reply: Reply = self._channel().submit(
-                owner.Request(
-                    op=owner.OP_COMMIT,
-                    decls=decls,
-                    clean=clean,
-                    pid=os.getpid(),
-                    identity=self.identity or None,
-                )
-            )
-        except Exception as exc:
-            # 归属不到具体某个键：整批都可能失败。键名只用于记录，不改变异常。
-            self._log_remote_failure(exc, item=decls[0].key if len(decls) == 1 else "")
-            raise
-        self._collect_remote(reply)
-
-    def _is_writer(self) -> bool:
-        """本引擎是不是就是那个专职写者（「端点整条路不通」的退化也算）。"""
-        return bool(self._channel().is_mine())
-
-    def _channel(self) -> Any:
-        """本引擎的通道，懒建。**一个引擎一条** —— 不是「一个配置目录一条」。
-
-        同一进程里两个引擎指着同一个配置目录完全正常（测试里到处都是）。按目录
-        共用一条通道的话，第二个引擎会被塞进第一个引擎的通道，它的声明就落到
-        **另一个引擎**的声明集上了。
-        """
-        if self._chan is None:
-            owner = _owner_module()
-            self._chan = owner.Channel(
-                self,
-                self._execute_local,
-                on_link=self._linked,
-                on_send=self._sent,
-            )
-        return self._chan
-
-    # ------------------------------------------------- 进程结构的三行日志
+    # ---------------------------------------------------------------- 启动留痕
 
     def _ensure_started(self) -> None:
         """第一次真正用到这个引擎时记一行 ``[Start]``。
@@ -569,67 +572,18 @@ class Engine:
         with contextlib.suppress(ConfError):
             self._audit.close_txn()
 
-    def _linked(self, op: str) -> None:
-        """通道和写者的关系定下来了：``bind`` / ``connect`` / ``fallback``。"""
-        self._audit.linked(op=op, file=self.values_path.name)
-        with contextlib.suppress(ConfError):
-            self._audit.close_txn()
+    def _open_for(self, key: str) -> None:
+        """把**这个键所属**的值文件读进来（没读过才读）。
 
-    def _sent(self, request: Any) -> None:
-        """一次请求**真的过了 IPC** —— 只有 :meth:`onconf._owner.Channel._try_remote` 会调它。
-
-        退到就地执行时不会走到这里：那条路没有「发送」这回事。
+        读的寻址必须按被读的键自己决定：多文件模式下，一个进程完全可以读别人声明的键，
+        而它的路径段不在本进程的声明集里 —— 只看声明集就会拿着空事实去查词表，
+        把「文件里有值」误报成「只有默认值」。
         """
-        owner = _owner_module()
-        self._audit.sent(
-            op=request.op,
-            item=request.key,
-            file=self.values_path.name,
-            data=len(request.decls) if request.op == owner.OP_COMMIT else MISSING,
-        )
-        with contextlib.suppress(ConfError):
-            self._audit.close_txn()
+        path_part = self._address(key)[0]
+        if not self._file_for(path_part).loaded:
+            self._load_file(path_part)
 
-    # ------------------------------------------ 就地执行（只有写者会走这条路）
-
-    def _execute_local(self, request: Any) -> Reply:
-        """**就地执行一条请求**。这是终点：调它一定动文件，不再问「我是不是写者」。
-
-        它以绑定方法的形式交给 :class:`onconf._owner.Channel` 当写者的执行入口，
-        所以不需要为它开一个公开面 —— 公开面仍然只有 ``AutoConf`` 和 ``conf``。
-
-        记账的口径也定在这里：**执行点写日志**，但记录里的 ``pid`` / ``id=``
-        用请求里带来的**发起方**信息；``at=`` 早已随声明一起过线。回传的
-        :class:`~onconf._audit.Reply` 带着这一批记录，客户端据此在自己的终端上补一份。
-        """
-        owner = _owner_module()
-        previous = self._audit.origin
-        # ``pid`` 为 None ⇒ 这条请求是本进程自己发起的，用执行点自己的身份；
-        # 否则身份就是**发起方**的——它没设就是没设，不拿写者的服务名去顶。
-        self._audit.origin = (
-            Origin(pid=os.getpid(), identity=self.identity)
-            if request.pid is None
-            else Origin(pid=request.pid, identity=request.identity or "")
-        )
-        self._audit.begin_op()
-        value: Any = None
-        try:
-            if request.op == owner.OP_READ:
-                value = self._read_local(request.key)
-            elif request.op == owner.OP_COMMIT:
-                self._merge(request.decls, clean=request.clean)
-            else:
-                raise ConfError(f"不认识的请求：{request.op!r}")
-        finally:
-            records = self._audit.end_op()
-            self._audit.origin = previous
-        return Reply(value=value, records=records)
-
-    def _read_local(self, key: str) -> Any:
-        """读一个配置项（**就地**）。先把待写落盘，否则读不到自己刚声明的事实。"""
-        self._ensure_loaded()
-        self._commit_pending(clean=False)
-        return self._read_audited(key)
+    # ------------------------------------------------------------ 执行留痕
 
     def _read_audited(self, key: str) -> Any:
         """``read_value`` + 一条 ``[R]``（或失败时的 ``[E]``）。
@@ -662,14 +616,6 @@ class Engine:
         except ConfError:
             return self.values_path.name
 
-    def _collect_remote(self, reply: Reply) -> None:
-        """别的进程替我执行时，把它**这一次真正输出出去的**记录补到自己终端上。
-
-        审计文件不重复写：那份归执行点（写者），只有一个写者就不会交错。
-        """
-        if reply.remote:
-            self._audit.render_remote(reply.records)
-
     def _log_failure(
         self,
         exc: BaseException,
@@ -693,19 +639,6 @@ class Engine:
         with contextlib.suppress(ConfError):
             self._audit.close_txn()
 
-    def _log_remote_failure(self, exc: BaseException, *, item: str = "") -> None:
-        """远端执行失败时，在**发起方自己这一侧**也留一条痕。
-
-        执行点已经记过账（写者的日志/审计文件里有），但发起方的日志去向本来是空的：
-        ``except KeyNotRegisteredError`` 抓得到，可它自己的日志里什么都没有。
-
-        就地执行（写者自己 / 退到底）那两条路已经记过，用 ``_logged_failure`` 认一下，
-        避免同一件事在同一个进程里记两遍。
-        """
-        if self._logged_failure is exc:
-            return
-        self._log_failure(exc, item=item)
-
     def _load_audited(self, *, item: str) -> None:
         """加载值文件 / 词表；**失败也要留痕**。
 
@@ -718,39 +651,25 @@ class Engine:
             self._log_failure(exc, item=item)
             raise
 
-    def _merge(self, decls: Iterable[Decl], *, clean: bool) -> None:
-        """把别人交来的声明并进自己的声明集，然后提交。
-
-        **这就是专职写者多买到的东西**：它的 ``_decls`` 是**所有进程**声明的并集，
-        所以规则 1（清理未知数据）拿到的基准是完整的。硬锁做不到这一点 ——
-        每个进程只知道自己那份。
-        """
-        for decl in decls:
-            self._decls[decl.key] = decl
-            # 也要进 ``_pending``：``_commit_pending`` 在「没有待写且不清理」时直接
-            # 早退，只填 ``_decls`` 的话这批声明根本提交不出去。
-            self._pending[decl.key] = decl
-        self._commit_pending(clean=clean)
-
     def _window_expired(self) -> bool:
         if self._window_started is None:
             return False
         return (time.monotonic() - self._window_started) >= self.flush_window
 
-    def _commit_pending(self, *, clean: bool) -> tuple[Record, ...]:
+    def _commit_pending(self) -> tuple[Record, ...]:
         """提交一批声明。**对账动作同时也是审计记录**。
 
         返回这一批产生的记录；真正的输出在 :meth:`onconf._audit.AuditLog.close_txn`
         里完成 —— 它顺手把攒在同一个事务里的读一起收口，所以批次内能对齐。
 
-        失败必须留痕：锁拿不到、后端拒绝一个值……都先记一条 ``[E]``
-        再原样抛出，不静默吞掉。
+        失败必须留痕：后端拒绝一个值……都先记一条 ``[E]`` 再原样抛出，不静默吞掉。
         """
         self._ensure_loaded()
         self._window_started = None
-        if not self._pending and not clean:
-            return ()
+        if not self._pending:
+            return ()  # 读路径走到这里：没有待写，不需要写权限
 
+        self._assert_owner()
         batch = tuple(self._pending.values())
         self._pending.clear()
         if not self._decls:
@@ -758,14 +677,13 @@ class Engine:
 
         records: list[Record] = []
         try:
-            self._ensure_loaded()
-            # 锁内重读：别的进程可能刚写过。少了这一步就是「各写各的，后写的盖掉先写的」。
-            with exclusive(self.lock_path, timeout=self.lock_timeout):
-                self._reload_if_changed()
-                actions = self._reconcile_all(list(self._decls.values()), clean=clean)
-                if actions:
-                    self._commit(actions)
-                records = self._action_records(actions, batch)
+            # 属主是唯一的写者，所以这里不需要任何跨进程互斥。重读仍然要：用户的手改
+            # 或者别的属主（部署违规时）都可能动过文件，指纹对不上就重载。
+            self._reload_if_changed()
+            actions = self._reconcile_all(list(self._decls.values()))
+            if actions:
+                self._commit(actions)
+            records = self._action_records(actions, batch)
         # 后端拒绝一个值抛的是 TypeError / ValueError（TOML 没有 null、YAML 落不成单行……），
         # 文件坏了抛的是后端的 ValueError 子类，盘满 / 没权限是 OSError —— 它们都要留痕，
         # 不能只记 ConfError。
@@ -777,15 +695,15 @@ class Engine:
         self._audit.close_txn()
         return tuple(records)
 
-    def _reconcile_all(self, decls: list[Decl], *, clean: bool) -> list[Action]:
+    def _reconcile_all(self, decls: list[Decl]) -> list[Action]:
         """**按值文件分组**做对账，再拼成一份动作清单。
 
-        多文件模式下规则 1 的判据是「**这个文件里**有、期望集里没有」—— 分组不能省：
-        拿全部事实去对全部声明，A 文件里的键会被判成 B 文件的未知数据而被删掉。
-        分组之后每个文件各自跑一遍三集合算法，**期望集仍是全局的那一份**。
+        分组不能省：一个文件的事实只能对**属于它**的那些声明，拿全部事实去对全部声明
+        会让 A 文件里的键看起来像 B 文件的东西。分组之后每个文件各自跑一遍，期望集
+        仍是全局的那一份。
 
         加载范围只到「当前声明集引用到的文件」：磁盘上其它值文件不归这个引擎管，
-        一个字节都不会动（也就不会被规则 1 清理）。
+        一个字节都不会动。
         """
         groups: dict[str, list[Decl]] = {}
         for decl in decls:
@@ -793,14 +711,40 @@ class Engine:
 
         actions: list[Action] = []
         for path_part, group in sorted(groups.items()):
-            if path_part not in self._files:
-                self._load_file(path_part)
             state = self._file_for(path_part)
+            if not state.loaded:
+                self._load_file(path_part)
             facts = {
                 self._file_key(path_part, inner): value for inner, value in state.facts.items()
             }
-            actions.extend(reconcile(group, facts, self._vocab.as_dict(), clean_unknown=clean))
+            actions.extend(reconcile(group, facts, self._vocab.as_dict()))
         return actions
+
+    def _remove_undeclared(self) -> list[Action]:
+        """**命令行专用**：删掉声明集里没有的键。
+
+        这是运行期唯一不走的删除路径 —— 判据「事实里有、声明集里没有」只有在期望集
+        完整时才成立，而完整只出现在「一次拿到全部声明」这种场合：命令行静态扫描整个
+        项目，得到的正好是一份完整声明集。所以它不挂在 ``conf()`` 的任何一条出口上，
+        只由 ``onconf sync`` 调用。
+
+        动手前必须重读：删的是**磁盘上的**事实，不是内存里那份。
+        """
+        with self._lock:
+            self._assert_owner()
+            self._ensure_loaded()
+            self._reload()
+            removals = undeclared(
+                self._facts_view(),
+                set(self._decls),
+                # 指令豁免要按**文件内**的键名判：多文件模式下扁平键带着路径段前缀。
+                is_directive=lambda key: is_directive(self._address(key)[1]),
+            )
+            if removals:
+                self._commit(removals)
+                self._action_records(removals, ())
+            self._audit.close_txn()
+            return removals
 
     def _action_records(self, actions: Iterable[Action], batch: tuple[Decl, ...]) -> list[Record]:
         """对账动作 → 审计记录。**写全量**；本批里无事可做的声明留一行 ``op=noop``。
@@ -872,9 +816,9 @@ class Engine:
             return facts[key]
         if decl.value is MISSING:
             # 只登记不给值 ⇒ 登记得先算数（所以先交出去），再按读的规则取值。
-            # 必须重读磁盘：**登记是写者做的**，词表是它写到磁盘上的，我们内存里
-            # 这份还是旧的 —— 不重读就会把「登记了但没值」误报成「没登记」。
-            self._commit_local(clean=False)
+            # 必须重读磁盘：登记是写到词表文件里的，内存里这份还是旧的 ——
+            # 不重读就会把「登记了但没值」误报成「没登记」。
+            self._commit_pending()
             self._reload()
             return self._read_audited(key)
         return decl.value
@@ -887,14 +831,8 @@ class Engine:
         self._loaded = True
         self._reload()
 
-    def _known_path_parts(self) -> list[str]:
-        """归这个引擎管的值文件：默认文件 + 当前声明集引用到的每个路径段。"""
-        parts = {""}
-        parts.update(self._address(key)[0] for key in self._decls)
-        return sorted(parts)
-
     def _load_file(self, path_part: str) -> _FileState:
-        """把一个值文件读进内存（不存在就是空状态）。"""
+        """把一个值文件读进内存（不存在就是空状态），并标记它**读过了**。"""
         state = self._file_for(path_part)
         if state.path.exists():
             raw = state.path.read_bytes()
@@ -904,6 +842,7 @@ class Engine:
         else:
             state.text = None
             state.facts = {}
+        state.loaded = True
         return state
 
     def _facts_view(self) -> dict[str, Any]:
@@ -924,25 +863,34 @@ class Engine:
         return (stat.st_mtime_ns, stat.st_size)
 
     def _disk_stamp(self) -> tuple[Any, ...]:
-        """已加载的每个值文件 + 词表的「指纹」，用来判断要不要重读。
+        """已**读过**的每个值文件 + 词表的「指纹」，用来判断要不要重读。
 
         词表也必须看：只动词表的提交（例如「只登记不给值」）不会碰值文件，
-        只看值文件就会漏掉它，然后把别人刚登记的键从词表里挤掉。
+        只看值文件就会漏掉它，然后把刚登记的键从词表里挤掉。
         """
-        files = tuple(self._file_stamp(state.path) for _, state in sorted(self._files.items()))
+        files = tuple(
+            self._file_stamp(state.path)
+            for _, state in sorted(self._files.items())
+            if state.loaded
+        )
         return (files, self._file_stamp(self.schema_path))
 
     def _reload_if_changed(self) -> None:
-        """锁内重读 —— 但只在磁盘真的变过时才读，免得退化成每次全篇重读。"""
+        """磁盘真的变过才重读，免得退化成每次全篇重读。
+
+        读路径与写路径都调它：读的时候属主可能刚提交，写的时候更是必须看到最新事实。
+        """
         if self._disk_stamp() != self._stamp:
             self._reload()
 
     def _reload(self) -> None:
-        """从磁盘重读事实与词表。锁内调用，所以看到的是别人的最新提交。
+        """从磁盘重读事实与词表。
 
-        加载范围 = **默认文件 + 当前声明集引用到的每个路径段**（见 :meth:`_known_path_parts`）。
+        加载范围 = **默认值文件 + 这个引擎碰过的每个值文件**（声明集引用到的路径段，
+        以及读过的键所属的文件）。默认文件必须永远在内 —— 它一个键都没被声明过时也是
+        这个引擎的值文件，漏掉它就等于「空引擎不读任何文件」。
         """
-        for path_part in self._known_path_parts():
+        for path_part in sorted({"", *self._files}):
             self._load_file(path_part)
 
         if self.schema_path.exists():

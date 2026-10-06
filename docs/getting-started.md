@@ -91,12 +91,9 @@ for key, value in TABLE:
   app/conf/net.json      # 多文件模式（no_one_file=True）下 `<路径>:` 键的落点
   schema/
     settings.json        # 词表：库自己的资产，整篇重写（多文件下也只有这一份）
-    settings.lock        # 跨进程锁的握手点（空文件）
-    settings.key         # 专职写者的认证码（0600）
-    settings.sock        # 专职写者的端点（仅 POSIX）
 ```
 
-`schema/` 下另外三个文件是库自己的簿记，不是配置，不用手改。
+`schema/` 下那个文件是库自己的簿记，不是配置，不用手改。
 
 文件名主干由 `file_name` 给（缺省 `settings`，纯文件名），后缀由 `file_type` 给（缺省
 **字面** `"json"`）——目录里恰好有别的类型文件**不会**被选中。名字与（多文件模式的）键内嵌
@@ -110,8 +107,14 @@ for key, value in TABLE:
 !!! note "引擎起来之后不能改配置"
 
     v1 只支持在**第一次调用之前**设置 `home` / `file_name` / `file_type` / `no_one_file` /
-    `log` / `audit` / `identity` / `flush_window` / `lock_timeout`。
+    `log` / `audit` / `identity` / `flush_window`。
     引擎已经启动后再带上参数调用 `AutoConf(...)` 会抛 `ConfError`。
+
+!!! note "谁能写"
+
+    创建引擎实例的进程是**属主**，读写、生成词表；从它派生出来的进程（`fork`，或者继承了
+    `ONCONF_OWNER_PID` 的 `spawn` / `subprocess`）**只读**，第一次想写就抛 `ConfError`。
+    同一时刻只有一个写者是部署责任 —— 口径见[并发模型](design/concurrency.md)。
 
 ## 日志与审计去哪儿
 
@@ -130,20 +133,17 @@ $ uv run python -c "from onconf import conf; conf('app.server.port', 8080)"
 （这是实测输出的形态，时间戳与 pid 因运行而异。第三、五行都有：`fill` 是值落进文件，
 `update_meta` 是词表登记 —— 值与默认值一致时文件不动，但词表要补上「有这么一个键」。）
 
-**七个级别**，名字就是它干的事：
+**五个级别**，名字就是它干的事：
 
 | 级别 | 意思 | 出现时机 |
 |---|---|---|
 | `[Start]` | 引擎起来了 | 第一次真正用到这个引擎 |
-| `[Link]` | 和写者的关系定下来了 | `op=bind` 我成了写者 / `op=connect` 连上写者 / `op=fallback` 端点不通、就地执行 |
-| `[Send]` | 一次请求真的交给了写者 | `op=read` / `op=commit`（commit 的 `data=` 是本批声明数） |
 | `[Read]` | 读到一个值 | 带 `origin=`（file 或 vocab）与 `n=<次数>` |
-| `[Write]` | 一次对账动作 | `op=` 取 fill / clean / register / update_meta / **skip**「想改没改」/ **noop**「本批声明已满足」 |
+| `[Write]` | 一次对账动作 | `op=` 取 fill / register / update_meta / **skip**「想改没改」/ **noop**「本批声明已满足」 |
 | `[Change]` | 值真的变了 | `old → new` |
 | `[Error]` | 失败 | 带 `err=` 与原因 |
 
-`[Start]` / `[Link]` / `[Send]` 是**进程结构**那三行，一出现一条、带 `txn=0`（不属于任何
-配置事务）；它们让一个多进程跑起来的日志自己就把「启动 → 连接 → 发送 → 配置事实」讲清楚。
+`[Start]` 是**生命周期**那一行，带 `txn=0`（不属于任何配置事务）。
 同一事务里重复读同一个键会合并成一行 `n=<次数>`，所以循环里读一万次不会刷一万行。
 
 去向与开关在**第一次调用之前**一次性配好（引擎是单例，起来之后不能再改）：
@@ -156,14 +156,14 @@ AutoConf(identity="order-svc@host-3")  # 每行多一个 id=，回答「哪个�
 ```
 
 写记录里的 `at=` 是**调用点**（`app/config.py:12`），它回答的是「哪段代码改的」——
-配置语境下这比 pid 有用得多。审计文件由**执行点**写（有专职写者时就是写者），
-所以常规路径上多进程不会交错。
+配置语境下这比 pid 有用得多。**谁发起谁记账**：审计文件由发起操作的那个进程写，
+多个进程同时用同一个目录时各行都带自己的 pid，读的人据此分辨。
 
 ## 常见问题：几个异常怎么区分
 
 异常族的共同基类是 `ConfError`，定义在
-[`src/onconf/errors.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/errors.py)；
-`LockTimeoutError` 在 `_lock.py`，也是它的子类。但**读期**还有三个后端错误是 `ValueError`
+[`src/onconf/errors.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/errors.py)。
+**读期**还有三个后端错误是 `ValueError`
 的子类，`except ConfError` 接不住它们，「分开处理」按下表区分：
 
 | 异常 | 触发时机 | 含义 | 责任方 |
@@ -171,11 +171,10 @@ AutoConf(identity="order-svc@host-3")  # 每行多一个 id=，回答「哪个�
 | `KeyNotRegisteredError` | 读 | 词表里没有登记，代码也从没声明过 | 调用方（键名写错） |
 | `KeyHasNoValueError` | 读 | 词表里有登记，但值文件里没有值，也没有默认值 | 部署（漏配必填项） |
 | `UnknownEngineParamError` | 调用 `AutoConf` / `conf` | 透传给引擎的参数名不存在 | 调用方 |
-| `LockTimeoutError` | 任意落盘 | 超时内没拿到跨进程锁（另一个进程正卡在写盘上） | 部署（进程长期持锁） |
-| `EnvSyntaxError` | 读 `.env` 值文件 | `.env` 里有既不是空行、注释，也不是 `KEY=value` 的行 | 部署/使用者（`ValueError` 的子类，**不是** `ConfError`） |
+| `EnvSyntaxError` | 读 `.env` 值文件 | `.env` 里有既不是空行、注释，也不是 `KEY=VALUE` 的行 | 部署/使用者（`ValueError` 的子类，**不是** `ConfError`） |
 | `YamlFlatRequiredError` | 读 YAML 值文件 | 文件用了 v1 不支持的构造（嵌套 / 块标量 / 跨行 / 多文档） | 部署/使用者（`ValueError` 的子类，**不是** `ConfError`） |
 | `TomlFlatRequiredError` | 读 TOML 值文件 | 文件用了 v1 不支持的构造（表数组 `[[…]]` / 跨行值） | 部署/使用者（`ValueError` 的子类，**不是** `ConfError`） |
-| `ConfError` | 任意 | `ConfError` 子类的共同基类（也用于「引擎已启动又改配置」、值文件名或键内嵌路径不合法这类情形） | —— |
+| `ConfError` | 任意 | `ConfError` 子类的共同基类；也用于「引擎已启动又改配置」、值文件名或键内嵌路径不合法、以及**派生进程试图写**这类情形 | —— |
 
 「键名写错」与「部署漏配」被刻意分成两类，因为它们的**责任方不同**：
 前者你改代码，后者你改配置。把两者混成一句「配置不存在」，会让线上排障多绕一圈。

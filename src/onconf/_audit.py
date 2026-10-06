@@ -13,37 +13,27 @@
 
 两者同源，所以不会出现「日志文件与终端说的不是一回事」。
 
-## 七个级别：把进程结构也记下来
-
-配置事实四个：
+## 五个级别：配置事实四个，加一行启动
 
 ``[Read]`` 读 / ``[Write]`` 写（含 ``op=``）/ ``[Change]`` 值真的变了（``old → new``）/
-``[Error]`` 失败。
+``[Error]`` 失败，以及 ``[Start]`` 引擎起来了（pid / ``id=`` / 值文件）。
 
-进程结构三个：
-
-``[Start]`` 引擎起来了（pid / ``id=`` / 值文件）/ ``[Link]`` 和写者的关系定下来了
-（``op=bind`` 我成了写者 / ``op=connect`` 连上了写者 / ``op=fallback`` 端点不通、就地执行）/
-``[Send]`` 一次请求真的交给了写者（``op=read`` / ``op=commit``，commit 的 ``data=`` 是本批声明数）。
-
-* **写与进程结构全量、永不聚合**：每条对账动作一行，``op`` 取 fill / clean /
+* **写与启动全量、永不聚合**：每条对账动作一行，``op`` 取 fill / clean /
   register / update_meta / skip / noop；
 * **读按事务去重聚合**：同一事务内重复读同一个键合并成一行 ``n=<次数>``。
   循环里 ``conf("x")`` 一万次只会留下一行；
 * 读的记录**不立即输出**，而是攒在事务里等下一个提交点（写提交 / ``flush()`` /
   ``sync()`` / 进程退出）—— 这正是「批次本来就存在，批次内对齐因此免费」。
-  代价要写明：纯读的程序在退出前看不到自己的日志行。``[Start]`` / ``[Link]`` / ``[Send]``
-  各自立即输出（它们描述的是「此刻进程在干什么」，攒着就失去意义了）。
+  代价要写明：纯读的程序在退出前看不到自己的日志行。``[Start]`` 立即输出
+  （它描述的是「此刻这个进程在干什么」，攒着就失去意义了）。
 
 ## 谁记账
 
-**谁真正动了配置目录，谁记账。** 经 IPC 的请求由写者执行，所以由写者记 ——
-但记录里的 ``pid`` / ``id=``（身份）/ ``at=``（调用点）仍然是**发起方**的：
-调用点在客户端抓（写时一帧 ``sys._getframe``，），随声明一起过线。
+**谁发起谁记账**：这里没有第二个执行点，所以 ``pid`` / ``id=``（身份）/ ``at=``
+（调用点）都取自本进程；调用点在写时抓一帧（``sys._getframe``）。
 
-客户端补的是执行点**真正输出出去的**记录（写 / 变更 / 被这次提交收口的读），
-所以每个进程都看得见自己发起的操作；失败则两边各记一条（执行点 + 发起方）。
-**审计文件只由执行点写**，因此常规路径上不会两个进程往同一个文件里交错。
+审计文件因此**可能被多个进程同时追加** —— 那是预期的，不是缺陷：``O_APPEND``
+保证每一批以追加方式落盘，每行自带 ``txn=… pid=…``，解析者据此分辨批次。
 
 ## 不变量
 
@@ -75,7 +65,7 @@ from .errors import ConfError
 
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Sequence
     from typing import TextIO
 
 
@@ -86,10 +76,8 @@ LEVEL_WRITE = "Write"
 LEVEL_CHANGE = "Change"
 LEVEL_ERROR = "Error"
 
-#: 三个**进程结构**级别：启动、与写者的关系、把请求交出去。
+#: 进程自己的生命周期：现在只有启动这一件事值得记（引擎起来了）。
 LEVEL_START = "Start"
-LEVEL_LINK = "Link"
-LEVEL_SEND = "Send"
 
 #: 审计文件名（相对配置目录）
 AUDIT_NAME = "audit.log"
@@ -165,20 +153,11 @@ def _truncate(text: str, limit: int) -> str:
 
 
 @dataclass(frozen=True)
-class Origin:
-    """一条记录的**发起方**：pid + 可选身份。"""
-
-    pid: int = 0
-    identity: str = ""
-
-
-@dataclass(frozen=True)
 class Record:
-    """一条日志 / 审计记录。**纯数据**，可以直接过 IPC 回传给发起方。
+    """一条日志 / 审计记录。**纯数据**。
 
     ``txn`` 为 ``None`` 表示「登记时再分配」；显式写 ``0`` 表示**不属于任何配置事务**
-    （``[Start]`` / ``[Link]`` / ``[Send]`` 这类进程结构记录）。这个区分是必要的：
-    客户端自己的 txn 计数与写者的各数各的，混在一个文件里会出现两个同号批次。
+    （``[Start]`` 这类生命周期记录）—— 生命周期不该被算进某一批配置变更里。
     """
 
     level: str
@@ -197,15 +176,6 @@ class Record:
     message: str = ""
     count: int = 1
     reason: str = ""
-
-
-@dataclass(frozen=True)
-class Reply:
-    """一次就地执行的应答：值 + 这一批记录 + 「是不是别的进程替我干的」。"""
-
-    value: Any = None
-    records: tuple[Record, ...] = ()
-    remote: bool = False
 
 
 #: 内建异常按**精确类名**单独定名：它们去掉 ``Error`` 之后太含糊（``TypeError`` → ``type``）。
@@ -428,7 +398,7 @@ def _append_file(path: Path, text: str, *, rotate: bool) -> None:
 class AuditLog:
     """一个引擎的日志 / 审计收口点。
 
-    线程安全：写者的会话线程与主线程都会进来，所以缓冲、事务号与列宽都在锁里。
+    线程安全：一个进程里的多个线程都可能进来，所以缓冲、事务号与列宽都在锁里。
     """
 
     def __init__(
@@ -440,9 +410,6 @@ class AuditLog:
     ) -> None:
         self.audit_path = audit_path
         self.identity = identity
-        #: 默认发起方（本进程自己）。执行远端请求前，**发起方改写的是自己线程那一份**。
-        self._default_origin = Origin(pid=os.getpid(), identity=identity)
-        self._threads = threading.local()
         self._log = os.fspath(log)
         self._lock = threading.Lock()
         self._pending: list[Record] = []
@@ -450,22 +417,6 @@ class AuditLog:
         self._txn: int | None = None
         self._next_txn = 1
         self._widths: list[int] = []
-        self._op: list[Record] | None = None
-
-    @property
-    def origin(self) -> Origin:
-        """当前记录的发起方，**按线程存**。
-
-        写者的应答线程各自服务不同客户端；把这些客户端的信息写进一个共享字段，就会出现
-        「主线程自己的声明被记成远端调用方」——那条实测抓到过。按线程存之后，每个线程
-        只看得见自己那份，主线程永远是本进程自己。
-        """
-        per_thread: Origin | None = getattr(self._threads, "origin", None)
-        return self._default_origin if per_thread is None else per_thread
-
-    @origin.setter
-    def origin(self, value: Origin) -> None:
-        self._threads.origin = value
 
     # ------------------------------------------------------------------ 记录
 
@@ -529,53 +480,19 @@ class AuditLog:
             )
         )
 
-    # ---------------------------------------------------------- 进程结构三行
+    # ------------------------------------------------------------ 生命周期
 
     def started(self, *, file: str) -> Record:
-        """记一次「**引擎起来了**」：进程结构里最先出现的那一行。
+        """记一次「**引擎起来了**」：生命周期里最先出现的那一行。
 
         它只带 pid / ``id=`` / 值文件名 —— 「谁在什么时候开始用这个配置目录」。
         """
         return self._record(Record(level=LEVEL_START, txn=0, pid=0, item="", file=file))
 
-    def linked(self, *, op: str, file: str) -> Record:
-        """记一次「**和写者的关系定下来了**」。
-
-        ``op`` 取 ``bind``（抢绑成功，我成了写者）/ ``connect``（连上了写者）/
-        ``fallback``（端点不通，退到就地执行）。重选主会再记一行 —— 关系确实又定了一次。
-        """
-        return self._record(Record(level=LEVEL_LINK, txn=0, pid=0, item="", file=file, op=op))
-
-    def sent(self, *, op: str, item: str, file: str, data: Any = MISSING) -> Record:
-        """记一次「**请求真的交给了写者**」：``op`` 取 ``read`` / ``commit``。
-
-        ``commit`` 时 ``data=`` 是本批声明数。它只记**真的过了 IPC** 的那一次：
-        退到就地执行时没有「发送」这回事。
-        """
-        return self._record(
-            Record(level=LEVEL_SEND, txn=0, pid=0, item=item, file=file, op=op, data=data)
-        )
-
-    # ------------------------------------------------------ 事务 / 操作边界
-
-    def begin_op(self) -> None:
-        """开一个操作作用域：这期间产生的记录会被 :meth:`end_op` 一次性取走。"""
-        with self._lock:
-            self._op = []
-
-    def end_op(self) -> tuple[Record, ...]:
-        """收一个操作作用域：返回**这次操作自己产生**的记录（不含别人的）。"""
-        with self._lock:
-            records = tuple(self._op) if self._op is not None else ()
-            self._op = None
-            return records
+    # ------------------------------------------------------------ 事务边界
 
     def close_txn(self) -> tuple[Record, ...]:
         """收口一个事务：输出攒着的记录，下一个事务拿新的事务号。
-
-        **只有真正输出出去的记录才算进操作作用域**。读的记录会攒在事务里等下一个提交点，
-        所以「这一次读」不该把它当成自己的产出回传给发起方 —— 否则发起方的日志会先看到
-        ``n=1`` 再看到 ``n=2``，跟审计文件里那一行对不上。
 
         审计文件写失败**没有重试**：缓冲已经清空，这一批只留在终端那一份里。
         """
@@ -585,21 +502,8 @@ class AuditLog:
             self._reads.clear()
             self._txn = None
             if records:
-                if self._op is not None:
-                    self._op.extend(records)
                 self._emit(records)
             return records
-
-    def render_remote(self, records: Iterable[Record]) -> None:
-        """把**别的进程**执行出来的记录补到自己终端上（审计文件不重复写）。
-
-        这里也要拿锁：客户端的多个线程可能同时在收自己那一份，而渲染会推进列宽。
-        """
-        batch = tuple(records)
-        if not batch:
-            return
-        with self._lock:
-            self._emit_log(batch)
 
     # ------------------------------------------------------------------ 内部
 
@@ -618,11 +522,10 @@ class AuditLog:
             return stamped
 
     def _stamp(self, record: Record) -> Record:
-        """补上发起方身份；``txn`` 只在记录没带的时候分配。
+        """补上进程身份；``txn`` 只在记录没带的时候分配。
 
-        生命周期记录（``[Start]`` / ``[Link]`` / ``[Send]``）显式带 ``txn=0``：
-        它们不属于任何一个配置事务，硬塞一个号只会在「客户端 + 写者」同一个文件里
-        造出两个同号的批次。
+        生命周期记录（``[Start]``）显式带 ``txn=0``：它不属于任何一个配置事务，
+        硬塞一个号只会让「哪一批变更」这件事变得含糊。
         """
         txn = record.txn
         if txn is None:
@@ -630,7 +533,7 @@ class AuditLog:
                 self._txn = self._next_txn
                 self._next_txn += 1
             txn = self._txn
-        return replace(record, txn=txn, pid=self.origin.pid, identity=self.origin.identity)
+        return replace(record, txn=txn, pid=os.getpid(), identity=self.identity)
 
     def _emit(self, records: Sequence[Record]) -> None:
         """两路输出**互不牵连**：审计文件失败要抛，但不能让终端那一份跟着丢。

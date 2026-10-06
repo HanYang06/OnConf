@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import subprocess
 import sys
+import threading
 import time
 from typing import TYPE_CHECKING
 
@@ -26,8 +28,7 @@ from onconf import (
     _reset,
     conf,
 )
-from onconf._engine import SCHEMA_POINTER, Engine, default_home
-from onconf._lock import LockTimeoutError, exclusive
+from onconf._engine import OWNER_ENV, SCHEMA_POINTER, Engine, default_home
 
 
 if TYPE_CHECKING:
@@ -36,7 +37,9 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture(autouse=True)
-def _isolate() -> Iterator[None]:
+def _isolate(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    # 属主标记是进程级环境变量：测试之间必须清干净，否则后面起的子进程会被当成派生进程。
+    monkeypatch.delenv(OWNER_ENV, raising=False)
     _reset()
     yield
     _reset()
@@ -227,10 +230,12 @@ class TestSchemaPointer:
         assert twice.startswith(once.splitlines()[0])
 
 
-class TestCleanIsDeferredToTheCommitPoint:
-    """规则 1（清理未知数据）只有在**期望集完整**时才允许跑。
+class TestRuntimeNeverRemoves:
+    """运行期**不删任何键** —— 删除只在命令行的收敛路径上。
 
-    这条是回归测试：增量声明若顺手清理，会把文件里「还没声明到」的键全删掉。
+    判据「事实里有、声明集里没有」只有在**期望集完整**时才成立。运行期一个进程的期望集
+    永远只是它自己声明过的那部分：增量声明若顺手清理，会把文件里「还没声明到」的键全删掉；
+    多进程下更会拿自己那份去删别人的键。
     """
 
     def test_incremental_declare_does_not_delete_unseen_keys(self, engine: Engine) -> None:
@@ -250,7 +255,8 @@ class TestCleanIsDeferredToTheCommitPoint:
 
         assert values.read_text(encoding="utf-8") == original
 
-    def test_sync_cleans_what_the_declaration_set_does_not_know(self, engine: Engine) -> None:
+    def test_sync_does_not_remove_undeclared_keys(self, engine: Engine) -> None:
+        """``sync()`` 不是「完整到可以清理」的许可证：它一个键都不删。"""
         engine("a.b", 1)
         engine.values_path.write_text(
             json.dumps({"$schema": SCHEMA_POINTER, "a.b": 1, "ghost": 9}, indent=2) + "\n",
@@ -261,7 +267,7 @@ class TestCleanIsDeferredToTheCommitPoint:
         fresh.sync()
 
         data = json.loads(engine.values_path.read_text(encoding="utf-8"))
-        assert "ghost" not in data
+        assert data["ghost"] == 9
         assert data["a.b"] == 1
 
     def test_sync_keeps_the_schema_pointer(self, engine: Engine) -> None:
@@ -309,11 +315,6 @@ class TestRemovedParameters:
         """``EngineParams`` 的注解与 ``Engine.__init__`` 的形参逐一对应。"""
         ctor = set(inspect.signature(Engine.__init__).parameters) - {"self"}
         assert set(EngineParams.__annotations__) == ctor
-
-    def test_lock_timeout_is_reachable_from_the_public_surface(self, tmp_path: Path) -> None:
-        """``lock_timeout`` 以前对公开 API 完全不可达（``EngineParams`` 里没有它）。"""
-        engine = AutoConf(home=str(tmp_path), lock_timeout=30.0)
-        assert engine.lock_timeout == 30.0
 
 
 # --------------------------------------------------------------------------- #
@@ -411,11 +412,10 @@ class TestFileName:
         assert (tmp_path / "app.toml").exists()
 
     def test_the_bookkeeping_follows_the_name(self, tmp_path: Path) -> None:
-        """词表与锁都按同一个名字派生 —— 改了名字就是另一套文件。"""
+        """词表按名字派生 —— 改了名字就是另一套文件。"""
         engine = Engine(tmp_path, file_name="app")
         engine("a.b", 1, doc="说明")
         assert engine.schema_path == tmp_path / "schema" / "app.json"
-        assert engine.lock_path.name == "app.lock"
 
     @pytest.mark.parametrize("bad", ["a/b", "..", "", "C:x", "a\\b"])
     def test_a_name_that_could_escape_is_refused(self, tmp_path: Path, bad: str) -> None:
@@ -423,7 +423,7 @@ class TestFileName:
             Engine(tmp_path, file_name=bad)
 
     def test_two_names_in_one_directory_do_not_share_bookkeeping(self, tmp_path: Path) -> None:
-        """同一个目录、不同文件名的两个引擎互不相干（端点也按名字分开）。"""
+        """同一个目录、不同文件名的两个引擎互不相干。"""
         first = Engine(tmp_path, file_name="one")
         second = Engine(tmp_path, file_name="two")
         first("a", 1)
@@ -431,7 +431,6 @@ class TestFileName:
         assert first("a") == 1
         assert second("a") == 2
         assert first.schema_path != second.schema_path
-        assert first.lock_path != second.lock_path
 
 
 # --------------------------------------------------------------------------- #
@@ -503,8 +502,8 @@ class TestMultiFile:
         # 一个值文件都没写出来（``schema/`` 下只有锁的握手点）
         assert list(tmp_path.glob("**/*.json")) == []
 
-    def test_sync_cleans_only_the_files_it_manages(self, tmp_path: Path) -> None:
-        """未被声明引用的值文件不归这个引擎管，``sync`` 一个字节都不动它。"""
+    def test_removal_touches_only_the_files_it_manages(self, tmp_path: Path) -> None:
+        """命令行删除只动「默认文件 + 声明集引用到的文件」，别的值文件一个字节不动。"""
         engine = Engine(tmp_path, no_one_file=True)
         engine("app/net:kept", 1)
 
@@ -517,8 +516,9 @@ class TestMultiFile:
 
         fresh = Engine(tmp_path, no_one_file=True)
         fresh("app/net:kept", 1)
-        fresh.sync()
+        removed = fresh._remove_undeclared()
 
+        assert [action.key for action in removed] == ["app/net:ghost"]
         assert "ghost" not in json.loads(sub.read_text(encoding="utf-8"))
         assert untouched.read_text(encoding="utf-8") == '{"someone.elses": 1}\n'
 
@@ -863,123 +863,141 @@ class TestCommitReReadsUnderTheLock:
 
 
 class TestRealProcesses:
-    """真开进程：多个进程各写各的键，一个都不许丢。"""
+    """真开进程：一个进程写、另一个进程读 —— 事实落在文件上，谁都看得见。
 
-    _WORKER = (
+    **N 个平级进程各写各的不在这张契约里**：引擎不加锁、不协调，那种部署的正确答案是
+    用命令行先把配置写好，运行期全部只读（见 ``docs/design/concurrency.md``）。
+    """
+
+    _READER = (
         "import sys\n"
         "from onconf import Engine\n"
-        "eng = Engine(sys.argv[1], flush_window=0.0)\n"
-        "for key in sys.argv[2:]:\n"
-        "    eng(key, key)\n"
-        "eng.flush()\n"
+        "print(Engine(sys.argv[1])(sys.argv[2]), flush=True)\n"
     )
 
-    def test_four_processes_do_not_lose_each_others_keys(self, tmp_path: Path) -> None:
-        keys = [f"key.of.proc{n}" for n in range(4)]
-        procs = [
-            subprocess.Popen(  # noqa: S603 - 参数全是本测试自己造的，没有外部输入
-                [sys.executable, "-c", self._WORKER, str(tmp_path), *keys[n::4]],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            for n in range(4)
-        ]
-        for proc in procs:
-            _, stderr = proc.communicate(timeout=120)
-            assert proc.returncode == 0, stderr.decode("utf-8", "replace")
-
-        data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
-        for key in keys:
-            assert key in data, f"{key} 被别的进程盖掉了"
-
-    _SYNCER = (
-        "import sys\n"
-        "from onconf import Engine\n"
-        "eng = Engine(sys.argv[1], flush_window=0.0)\n"
-        "eng(sys.argv[2], sys.argv[2])\n"
-        "eng.sync()\n"  # 完整提交点 ⇒ 规则 1 允许执行
-        "eng.close()\n"
-    )
-
-    _KEEPER = (
-        "import sys\n"
-        "from onconf import Engine\n"
-        "eng = Engine(sys.argv[1], flush_window=0.0)\n"
-        "eng('keeper.alive', 1)\n"
-        "print('ready', flush=True)\n"
-        "sys.stdin.readline()\n"
-        "eng.close()\n"
-    )
-
-    def test_rule_one_uses_every_process_declaration_set(self, tmp_path: Path) -> None:
-        """**写者活着的时候**，规则 1 的基准才是所有进程的声明并集。
-
-        规则 1（清理未知数据）必须拿**完整**声明集当基准。硬锁那条路做不到 —— 每个
-        进程只知道自己那份，于是后 ``sync()`` 的进程会把先写的键当「未知数据」删掉
-        写者是唯一收口点，它的声明集是并集，所以一个键都不
-        该少。
-
-        **但这条有个前提：写者得活着。** 声明集**不是**持久状态 —— 写者一换人，
-        并集就跟着没了，接着上来的新写者会拿自己那一份去清理。进程起一个就退一个
-        的用法（下面 :meth:`test_four_processes_do_not_lose_each_others_keys` 那种）
-        正好踩在这个前提之外。所以这里先起一个守着的写者，再串行跑三个客户端。
-        """
-        keys = [f"key.of.sync{n}" for n in range(3)]
-        keeper = subprocess.Popen(  # noqa: S603 - 参数全是本测试自己造的，没有外部输入
-            [sys.executable, "-c", self._KEEPER, str(tmp_path)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+    def test_another_process_sees_what_this_one_wrote(self, tmp_path: Path) -> None:
+        Engine(tmp_path)("a.b", 512)
+        proc = subprocess.run(  # noqa: S603 - 参数全是本测试自己造的，没有外部输入
+            [sys.executable, "-c", self._READER, str(tmp_path), "a.b"],
+            capture_output=True,
+            check=False,
+            timeout=120,
         )
-        try:
-            assert keeper.stdout is not None
-            assert keeper.stdout.readline().strip() == "ready", "守着的写者没起来"
-            for key in keys:
-                proc = subprocess.run(  # noqa: S603 - 同上
-                    [sys.executable, "-c", self._SYNCER, str(tmp_path), key],
-                    capture_output=True,
-                    check=False,  # 返回值自己判，好把 stderr 一起报出来
-                    timeout=120,
-                )
-                assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
-        finally:
-            if keeper.stdin is not None:
-                keeper.stdin.close()
-            keeper.wait(timeout=120)
-            # 显式关掉，别留给 GC：本仓库 filterwarnings=error，
-            # 一个 ResourceWarning 就是一条失败的测试。
-            for stream in (keeper.stdout, keeper.stderr):
-                if stream is not None:
-                    stream.close()
+        assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+        assert proc.stdout.strip() == b"512"
+
+    def test_a_later_process_sees_an_earlier_ones_vocabulary(self, tmp_path: Path) -> None:
+        """词表也是文件：后起的进程读得到前一个进程登记过的键。"""
+        Engine(tmp_path)("a.b", 512, "说明")
+
+        proc = subprocess.run(  # noqa: S603 - 同上
+            [sys.executable, "-c", self._READER, str(tmp_path), "a.b"],
+            capture_output=True,
+            check=False,
+            timeout=120,
+        )
+        assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+        assert proc.stdout.strip() == b"512"
+
+        schema = json.loads((tmp_path / "schema" / "settings.json").read_text(encoding="utf-8"))
+        assert schema["properties"]["a.b"]["description"] == "说明"
+
+
+# --------------------------------------------------------------------------- #
+# 写权限：属主进程，派生的一律只读
+# --------------------------------------------------------------------------- #
+
+
+class TestWriteRole:
+    def test_the_owner_is_the_creating_process(self, tmp_path: Path) -> None:
+        engine = Engine(tmp_path)
+        assert engine._owner_pid == os.getpid()
+        assert engine("a.b", 1) == 1
+        assert json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))["a.b"] == 1
+
+    def test_a_derived_instance_cannot_write(self, tmp_path: Path) -> None:
+        """``fork`` 会把内存复制给子进程，但写权不该跟着被复制 —— pid 对不上就只读。"""
+        engine = Engine(tmp_path)
+        engine._owner_pid = os.getpid() + 1  # 冒充另一个进程：不真 fork 也能钉住这条
+        with pytest.raises(ConfError, match="派生进程只读"):
+            engine("a.b", 1)
+
+    def test_a_derived_instance_can_still_read(self, tmp_path: Path) -> None:
+        owner = Engine(tmp_path)
+        owner("a.b", 1)
+        owner.close()
+
+        derived = Engine(tmp_path)
+        derived._owner_pid = os.getpid() + 1
+        assert derived("a.b") == 1
+
+    def test_a_spawned_child_of_the_owner_is_read_only(self, tmp_path: Path) -> None:
+        """属主建过实例之后再生子进程，子进程只读 —— ``spawn`` / ``subprocess`` 也认得出。"""
+        Engine(tmp_path)("owned.key", 1)
+
+        child = (
+            "import sys\n"
+            "from onconf import ConfError, Engine\n"
+            "try:\n"
+            "    Engine(sys.argv[1])('child.key', 2)\n"
+            "except ConfError:\n"
+            "    print('refused', flush=True)\n"
+            "    sys.exit(0)\n"
+            "sys.exit(9)\n"
+        )
+        proc = subprocess.run(  # noqa: S603 - 参数全是本测试自己造的，没有外部输入
+            [sys.executable, "-c", child, str(tmp_path)],
+            capture_output=True,
+            check=False,
+            timeout=120,
+        )
+        assert b"refused" in proc.stdout, proc.stderr.decode("utf-8", "replace")
+        data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+        assert "child.key" not in data
+        assert data["owned.key"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# 实例级并发：同一进程里两个实例、或者一个实例被多个线程用
+# --------------------------------------------------------------------------- #
+
+
+class TestInstanceConcurrency:
+    """这才是常见的并发形状：进程内互斥由引擎自己兜住（一把**纯内存**的锁）。"""
+
+    def test_two_instances_in_one_process_do_not_lose_each_others_keys(
+        self, tmp_path: Path
+    ) -> None:
+        first = Engine(tmp_path)
+        second = Engine(tmp_path)
+        for i in range(20):
+            first(f"first.{i}", i)
+            second(f"second.{i}", i)
 
         data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
-        for key in keys:
-            assert key in data, f"{key} 被后来者的规则 1 当成未知数据清掉了"
+        for i in range(20):
+            assert data[f"first.{i}"] == i
+            assert data[f"second.{i}"] == i
 
+    def test_threads_on_one_instance_do_not_lose_each_others_keys(self, tmp_path: Path) -> None:
+        engine = Engine(tmp_path)
+        errors: list[BaseException] = []
 
-# --------------------------------------------------------------------------- #
-# 锁本身
-# --------------------------------------------------------------------------- #
+        def worker(index: int) -> None:
+            try:
+                for i in range(10):
+                    engine(f"t{index}.{i}", i)
+            except BaseException as exc:  # noqa: BLE001 - 线程里的异常要搬回主线程断言
+                errors.append(exc)
 
+        threads = [threading.Thread(target=worker, args=(n,)) for n in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
 
-class TestLockPrimitive:
-    def test_second_acquire_in_the_same_process_times_out(self, tmp_path: Path) -> None:
-        """互斥是真的 —— 同一进程里换个句柄也拿不到。"""
-        target = tmp_path / "x.lock"
-        with exclusive(target, timeout=1.0):  # noqa: SIM117 - 外层得先进去，内层才拿不到
-            with pytest.raises(LockTimeoutError), exclusive(target, timeout=0.05):
-                pass
-
-    def test_lock_is_released_after_the_context(self, tmp_path: Path) -> None:
-        target = tmp_path / "x.lock"
-        with exclusive(target, timeout=1.0):
-            pass
-        with exclusive(target, timeout=1.0):  # 不该超时
-            pass
-
-    def test_lock_file_is_just_a_handshake_point(self, tmp_path: Path) -> None:
-        target = tmp_path / "sub" / "x.lock"
-        with exclusive(target, timeout=1.0):
-            pass
-        assert target.exists()
+        assert not errors, errors
+        data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+        for n in range(4):
+            for i in range(10):
+                assert data[f"t{n}.{i}"] == i

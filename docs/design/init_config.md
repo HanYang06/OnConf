@@ -61,11 +61,13 @@ conf("a.b", 1)
 | `file_name` | `settings` | 值文件名主干，**纯文件名**（过包含性校验）。见[文件支持](file_support.md) |
 | `file_type` | `"json"` | 值文件类型，**单值**、缺省是字面的 `"json"`；`""` 不是合法取值。见[文件支持](file_support.md) |
 | `no_one_file` | `False` | 多文件：键的 `<路径>:` 前缀寻址 `<home>/<路径>.<ext>`；没有前缀的键仍落默认文件 |
+| `flush_window` | `0.0` | 攒批窗口（秒）。`0` = 每次声明当场落盘 |
 | `log` | `"stderr"` | 强制日志的去向（`"stderr"` / `"stdout"` / 文件路径） |
 | `audit` | `False` | 是否再追加一份 `<home>/audit.log` |
 | `identity` | `""` | 写进每行记录的可选 `服务@主机` 标记 |
-| `flush_window` | `0.0` | 攒批窗口（秒）。`0` = 每次声明当场落盘 |
-| `lock_timeout` | `10.0` | 等 OS 锁的上限（秒） |
+
+**写权限不在这里**：它由进程树决定 —— 创建实例的进程是属主，`fork` 派生出来的只读。
+同一时刻只有一个写者是部署责任，见[并发模型](concurrency.md)。
 
 拼错的参数不会被吞掉：
 
@@ -174,9 +176,8 @@ onconf sync  [--home DIR] [--file-name NAME] [--file-type TYPE] [--no-one-file]
 缓存目录等），`pyproject.toml` / `.gitignore` 的收敛留待后续版本。
 
 > 其余七条命令（`check` / `format` / `diff` / `read` / `get` / `set` / `add`）
-> **尚未实现**。键的清理移出运行期也尚未落地 ——
-> 在那之前，运行期的 `sync()` / 进程退出仍会清理未声明的键。
-> 两处口径见 [2.0.x 路线图](../roadmap/2.0.x/roadmap.md) §4 与 §2.7。
+> **尚未实现**。**运行期不清理未声明的键**已经落地：删除只走 `onconf sync` 这一条
+> 离线路径。口径见[并发模型](concurrency.md)。
 
 ## 7. 目录约定
 
@@ -184,8 +185,6 @@ onconf sync  [--home DIR] [--file-name NAME] [--file-type TYPE] [--no-one-file]
 <home>/<file_name>.json       值文件（用户手改）；名字与类型分别由 file_name / file_type 决定
 <home>/app/conf/net.json      多文件模式：键 `app/conf/net:…` 的落点（no_one_file=True）
 <home>/schema/<file_name>.json  词表（**库自己的资产**，随便重写；多文件下也只有这一份）
-<home>/schema/<file_name>.lock  锁的握手点（空文件；库自己的簿记）
-<home>/schema/<file_name>.key   写者端点的认证码（0600；库自己的簿记）
 <home>/audit.log              审计文件（append-only；audit=True 才有）
 ```
 

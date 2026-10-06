@@ -53,12 +53,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import _paths
-from ._core import MISSING, NO_VALUE, Action, Decl, declaration_hash
+from ._core import MISSING, NO_VALUE, Action, Decl, declaration_hash, undeclared
 from ._engine import (
     _BACKENDS,
     _POINTER_CAPABLE,
     DEFAULT_FILE_NAME,
     DEFAULT_FILE_TYPE,
+    OWNER_ENV,
     SCHEMA_DIR,
     Engine,
     _atomic_write_text,
@@ -436,9 +437,18 @@ def _schema_path(home: Path, file_name: str) -> Path:
 
 
 def _sync_plan(engine: Engine, decls: Sequence[Decl], *, clean: bool) -> list[Action]:
-    """**不写一个字节**地算出这次 ``sync`` 会做什么（``--dry-run`` 与预览共用）。"""
+    """**不写一个字节**地算出这次 ``sync`` 会做什么（``--dry-run`` 与预览共用）。
+
+    收敛 = 运行期那套对账（补缺 / 补元数据）**加上**删除未声明的键。删除只在命令行
+    这条路径上发生：它的判据是「事实里有、声明集里没有」，而这里的声明集是**完整**的
+    —— 静态扫描整个项目的产物。运行期永远拿不到完整声明集，所以运行期不删
+    （见 ``docs/design/concurrency.md``）。
+    """
     engine._ensure_loaded()  # noqa: SLF001 - 同包内部：只借用「把事实读进内存」这一步
-    return engine._reconcile_all(list(decls), clean=clean)  # noqa: SLF001
+    actions = engine._reconcile_all(list(decls))  # noqa: SLF001
+    if clean:
+        actions.extend(undeclared(engine._facts_view(), {d.key for d in decls}))  # noqa: SLF001
+    return actions
 
 
 def _run_sync(
@@ -454,10 +464,9 @@ def _run_sync(
         return plan
     for decl in decls:
         engine.declare(decl.key, decl.value, decl.doc)
+    engine.flush()
     if clean:
-        engine.sync()
-    else:
-        engine.flush()
+        engine._remove_undeclared()  # noqa: SLF001 - 删除只挂在命令行这条路径上
     return plan
 
 
@@ -500,7 +509,13 @@ def _emit(payload: dict[str, Any], *, as_json: bool) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """``onconf`` 的入口：目前只有 ``build`` / ``sync``（其余命令尚未实现）。"""
+    """``onconf`` 的入口：目前只有 ``build`` / ``sync``（其余命令尚未实现）。
+
+    命令行是**人 / CI 发起的配置管理者**，所以它清掉 ``ONCONF_OWNER_PID``：被一个属主
+    进程 shell 出来跑的时候，它不该被当成那个属主的派生进程而只读 —— 「想更新，拿命令行去」
+    这句话得成立。命令行不跟运行中的进程协调（那是调用方的部署责任）。
+    """
+    os.environ.pop(OWNER_ENV, None)
     args = _parser().parse_args(argv)
     handler: Callable[[argparse.Namespace], int] = args.handler
     try:
