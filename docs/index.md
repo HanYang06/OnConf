@@ -11,7 +11,7 @@
 **已发布到 PyPI**，发布名 [`OnConf`](https://pypi.org/project/OnConf/)。当前版本 `1.0.0`，
 首个稳定版：公开 API 与磁盘格式从 1.0 起遵循语义化版本，只在**主版本号**变更时才做
 破坏性变更；命令行已交付头两条（`build` / `sync`），其余七条尚未实现
-（以[路线图](roadmap/index.md)为准）。
+（以[路线图](roadmap/README.md)为准）。
 
 定位句的两个半句现在**都有机制支撑**：「不丢一个字节」由外科手术式回写保证；
 「不丢一次更新」由**写权限的角色**保证 —— 引擎不做跨进程协调，创建实例的进程是属主、
@@ -32,7 +32,7 @@
 | 值后端 | JSON（缺省）、YAML、TOML、`.env`（字符串后端）；多文件由 `no_one_file` 开启 |
 | 提交点 | 每次 `conf(key, value)` 当场对账并落盘；进程退出时 `atexit` 触发 `Engine.sync()` |
 | 日志 | 一份记录流、两个出口：文件出口**恒写**（`log_path`，缺省 `<home>/audit.log`），控制台出口可关（`log_console`）；见[日志](design/log.md) |
-| 测试 | 见[路线图](roadmap/index.md) |
+| 测试 | 见[路线图](roadmap/README.md) |
 
 ## 已实现的能力
 
@@ -69,7 +69,7 @@
   `except ConfError` 接不住它们）。见[快速开始](getting-started.md)的常见问题。
 
 尚未实现的能力（把系统环境变量当作配置源、除 `build` / `sync` 之外的七条命令行）
-**当前不可用**，一份完整清单见[路线图](roadmap/index.md)。
+**当前不可用**，一份完整清单见[路线图](roadmap/README.md)。
 
 ## 最小示例
 
@@ -100,7 +100,7 @@ conf/
 ## 下一步
 
 - [快速开始](getting-started.md) —— 环境要求、安装、目录约定、异常怎么区分。
-- [路线图](roadmap/index.md) —— 范围与版本的**唯一事实源**：条目卡片（编号 + 决策状态 +
+- [路线图](roadmap/README.md) —— 范围与版本的**唯一事实源**：条目卡片（编号 + 决策状态 +
   设计关联 + 版本分配）与按版本归集的清单；[1.0.x](roadmap/1.0.x/roadmap.md) 是它的冻结页。
 - [设计稿索引](design/index.md) —— 初始化配置 / 文件支持 / 并发模型 / 日志四份设计口径。
 - [API 参考](api/index.md) —— 由源码 docstring 直接生成。

@@ -103,9 +103,9 @@ nav:
   - 首页: index.md
   - 快速开始: getting-started.md
   - 路线图:
-      - 路线图: roadmap/index.md
-      - 1.0.x（已发布）: roadmap/1.0.x/roadmap.md
-      - 2.0.x（跳转）: roadmap/2.0.x/roadmap.md
+      - 读法与原则: roadmap/README.md
+      - 1.0.x（已发布，只读）: roadmap/1.0.x/roadmap.md
+      - 2.x（当前）: roadmap/2.x.md
   - API 参考:
       - API 总览: api/index.md
   - 架构:
@@ -122,6 +122,15 @@ nav:
   - 社区:
       - 参与方式: community/index.md
       - 变更日志: community/changelog.md
+
+# 路径兼容页：冻结件（CHANGELOG.md、已发布的那条版本线）引用着这两个地址，它们留在
+# 仓库里让旧链接可达。`roadmap/index.md` 与目录索引 `roadmap/README.md` 撞同一个 URL，
+# 所以它只存在于仓库、不进站点；另一个留在站点里，只是不进导航。
+exclude_docs: |
+  roadmap/index.md
+
+not_in_nav: |
+  roadmap/2.0.x/roadmap.md
 
 extra:
   social:
