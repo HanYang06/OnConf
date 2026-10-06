@@ -31,7 +31,7 @@
 | 公开 API | `AutoConf` / `conf` 两个面，`__all__` 共 8 个符号 |
 | 值后端 | JSON（缺省）、YAML、TOML、`.env`（字符串后端）；多文件由 `no_one_file` 开启 |
 | 提交点 | 每次 `conf(key, value)` 当场对账并落盘；进程退出时 `atexit` 触发 `Engine.sync()` |
-| 日志与审计 | 强制日志（`log=` 选去向，**不可关闭**）+ 可选 append-only 审计文件（`audit=True` → `<home>/audit.log`）；见[审计日志](design/log.md) |
+| 日志 | 一份记录流、两个出口：文件出口**恒写**（`log_path`，缺省 `<home>/audit.log`），控制台出口可关（`log_console`）；见[日志](design/log.md) |
 | 测试 | 见[路线图](roadmap/index.md) |
 
 ## 已实现的能力
@@ -59,10 +59,10 @@
 - **原子写**：同目录临时文件 → `fsync` → `os.replace`（POSIX 再加父目录 `fsync`），行尾与权限位原样保留；Windows 上替换带短暂重试（并发读者持有句柄）。
 - **可选攒批窗口**：`flush_window`（默认 `0`，即当场落盘）。
 - **运行期不删键**：只补缺、只补元数据；删除归 `onconf sync`。
-- **日志与审计**：强制 `[Read]` / `[Write]` / `[Change]` / `[Error]` 事件流，外加 `[Start]`
-  （去向可改、**不可关闭**），
-  写全量、读按事务去重（`n=`），写记录带调用点与 pid；`audit=True` 再落一份
-  append-only 的 `<home>/audit.log`（`0600`、按大小轮转）。终端用**显示宽度**对齐。
+- **日志就是审计**：一份记录流、两个出口。文件出口恒写（`log_path`，缺省
+  `<home>/audit.log`：只追加、`0600`、永不截断），控制台出口（`stderr`）可关；TTY 上由
+  `rich` 着色（惰性导入，非 TTY 无 ANSI）。写全量、读按事务去重（`n=`），写记录带调用点与
+  pid；轮转 / 脱敏 / 编码三个口子默认都不做。终端用**显示宽度**对齐。
 - **异常族**：`ConfError` 连同 `KeyNotRegisteredError` / `KeyHasNoValueError` /
   `UnknownEngineParamError`，以及三个**读期**的 `ValueError` 子类
   （`EnvSyntaxError` / `YamlFlatRequiredError` / `TomlFlatRequiredError`，
@@ -102,5 +102,5 @@ conf/
 - [快速开始](getting-started.md) —— 环境要求、安装、目录约定、异常怎么区分。
 - [路线图](roadmap/index.md) —— [1.0.x](roadmap/1.0.x/roadmap.md) 交付了什么、
   [2.0.x](roadmap/2.0.x/roadmap.md) 收什么；每条都带状态与设计文稿引用。
-- [设计稿索引](design/index.md) —— 初始化配置 / 文件支持 / 并发模型 / 审计日志四份设计口径。
+- [设计稿索引](design/index.md) —— 初始化配置 / 文件支持 / 并发模型 / 日志四份设计口径。
 - [API 参考](api/index.md) —— 由源码 docstring 直接生成。

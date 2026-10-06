@@ -124,7 +124,7 @@ $ uv run python -c "from onconf import conf; print(conf('app.server.port', 8080)
 
 | 面 | 职责 |
 |---|---|
-| `AutoConf(**engine)` | 配置**引擎自己**：`home`（配置目录，缺省 `./conf`）、`file_name`（值文件名主干，缺省 `settings`）、`file_type`（用哪个值文件，单值，缺省 `"json"`）、`no_one_file`（多文件：键的 `<路径>:` 前缀寻址 `<home>/<路径>.<ext>`）、`log`（强制日志的去向：`"stderr"` 默认 / `"stdout"` / 一个文件路径）、`audit`（再把每行追加进 `<home>/audit.log`）、`identity`（可选的 `服务@主机` 标记，写进每一行）、`flush_window`（攒批窗口，`0` = 当场落盘）。可省略——不调用它也能按约定工作。 |
+| `AutoConf(**engine)` | 配置**引擎自己**：`home`（配置目录，缺省 `./conf`）、`file_name`（值文件名主干，缺省 `settings`）、`file_type`（用哪个值文件，单值，缺省 `"json"`）、`no_one_file`（多文件：键的 `<路径>:` 前缀寻址 `<home>/<路径>.<ext>`）、`log_path`（审计文件的落点：空串 = `<home>/audit.log`，相对路径按 `<home>` 解析）、`log_console`（是否再把一份人读的刷到 `stderr`，缺省开）、`log_rotate` / `log_scrub` / `log_encode`（三个可选钩子：下一批写到哪个文件、落盘前怎么脱敏、最终落盘的字节）、`identity`（可选的 `服务@主机` 标记，写进每一行）、`flush_window`（攒批窗口，`0` = 当场落盘）。可省略——不调用它也能按约定工作。 |
 | `conf(key, value=..., doc=...)` | 干所有的活：读、写、登记。 |
 
 值文件的**名字**（以及多文件键里内嵌的路径）是这个库里唯一能到达文件系统的外部字符串，
@@ -161,7 +161,8 @@ conf("app.port", doc="服务端口")     # 只登记一个键、不给值（必�
   `onconf build` 则按声明**完整重建**值文件（先备份，或用 `--path`）。
 - 运行期只写两样东西：**缺失的键**与**词表元数据**。
 - 引擎配置分两层：**引导层**（`home` / `file_name` / `file_type` / `no_one_file` /
-  `log` / `audit` / `identity` / `flush_window`）起来之后不能改
+  `log_path` / `log_console` / `log_rotate` / `log_scrub` / `log_encode` / `identity` /
+  `flush_window`）起来之后不能改
   ——改了等于改代码；**值层**随时可改，因为值每次都从文件重新读。
 - **谁能写**由进程树决定，不靠开关：创建引擎实例的进程是**属主**（读 + 写 + 生成词表）；
   从它派生出来的进程——`fork`，或者继承了 `ONCONF_OWNER_PID` 的 `spawn` / `subprocess`
@@ -222,7 +223,7 @@ conf(build_key(), 8080)              # ❌
 | 可选攒批窗口 —— `flush_window`（默认 `0`，当场落盘），窗口归**每个引擎自己** | ✅ |
 | 用值当键（间接寻址）+ 每次落盘都保证 `$schema` 指针（仅 JSON / YAML —— `.env` 与 `.toml` 放不下成员，会直接跳过） | ✅ |
 | 异常族 —— `ConfError` 作基类，含 `KeyNotRegisteredError`、`KeyHasNoValueError`、`UnknownEngineParamError`。`EnvSyntaxError`、`YamlFlatRequiredError`、`TomlFlatRequiredError` 是 `ValueError` 子类，**不会**被 `except ConfError` 捕获 | ✅ |
-| **日志与审计** —— 强制 `[Read]` / `[Write]` / `[Change]` / `[Error]` 事件流，外加 `[Start]`：去向可改、**不可关闭**；写全量（含 `op=skip`「想改没改」与 `op=noop`「本批声明已满足」），读按事务去重（`n=1000`）；每条写记录带调用点（`at=app/config.py:12`）、pid 与可选 `identity=`；终端列宽是**显示宽度**的弹性制表位（中文不偏列），文件形态保持紧凑且永不截断；`audit=True` 追加写 `<home>/audit.log`（`0600`、只追加、按大小轮转）。见[审计日志](docs/design/log.md) | ✅ |
+| **日志就是审计** —— 一份记录流、两个出口。**文件**出口恒写（`log_path`，缺省 `<home>/audit.log`）：只追加、`0600`、紧凑 `key=value`、完整日期、**永不截断**。**控制台**出口（`stderr`）可以关（`log_console=False`）；TTY 上由 `rich` 着色——只在那个分支里惰性导入，所以强制路径与管道既不多付代价、也永远看不到 ANSI。级别是 `[Read]` / `[Write]` / `[Change]` / `[Error]` 外加 `[Start]`；写全量（含 `op=skip`「想改没改」与 `op=noop`「本批声明已满足」），读按事务去重（`n=1000`）；每条写记录带调用点（`at=app/config.py:12`）、pid 与可选 `identity=`。三个可选钩子——`log_rotate`（下一批写到哪个文件；**轮转只换落点，绝不 rename 文件**）、`log_scrub`（落盘前脱敏）、`log_encode`（最终落盘的字节）——默认全是「什么都不做」。见[日志](docs/design/log.md) | ✅ |
 | **运行期不删键** —— 只补缺、只补元数据；删除归 `onconf sync`（离线、单次、对着完整的声明集） | ✅ |
 | 测试 —— 每个模块一个测试文件，外加安全不变量 | ✅ 本地全绿；CI 在 ubuntu / windows / macos 上跑 |
 | **命令行（头两条命令）** —— `onconf build` 按声明完整重建值文件与词表（`--path` 把整份重建写到新目录，原目录不动）；`onconf sync` 补缺并删除声明里没有的键（`--no-clean` 则一个键都不删）。声明靠**扫描项目里的 `conf(...)` 调用**、解读参数得到 —— 单函数 API 正是这件事的前提。两条命令都支持 `--dry-run`（一个字节都不写）与 `--json`；扫不动的调用会让 `sync` 拒绝删除任何键 | ✅ `build` / `sync`；其余七条命令尚未实现 |
@@ -280,7 +281,7 @@ CodeQL、依赖审查与 OpenSSF Scorecard。
   纯文件名或相对路径、无分隔符、无 `..`、非绝对路径，且解析后仍在 `<home>` 之内（`src/onconf/_paths.py`）
 - 命令行**从不执行项目代码**：它用 `ast` 解析 `*.py`、读 `conf(...)` 的实参 —— 不 import、不 eval
 - 不对配置内容做 `eval` / `exec` / `pickle`
-- 审计文件只追加（`O_APPEND`）且按 `0600` 创建；日志可以改去向，但关不掉
+- 审计文件（文件出口）只追加（`O_APPEND`）且按 `0600` 创建，父目录不由它创建；控制台出口可以关，文件出口关不掉
 
 ### 已知限制
 
@@ -289,7 +290,7 @@ CodeQL、依赖审查与 OpenSSF Scorecard。
 | **「一个目录一个写者」是部署责任** | 引擎不拿跨进程锁、不做协调。两个平级进程同时写会互相盖掉键 —— 起进程之前先用 `onconf sync` 把配置落好，运行期保持只读 |
 | **符号链接会被替换** | 写入走 `os.replace`：符号链接本身被替换成普通文件，链接目标一个字节都不会被写（链接就此断开） |
 | **`ONCONF_HOME` 与 `ONCONF_OWNER_PID` 是可信输入** | 前者决定配置目录，后者决定本进程能不能写；两者都不做包含性校验 |
-| **审计行原样记值** | `data=` / `old=` / `new=` 里就是真实值。`audit=True` 会把它写进 `<home>/audit.log`（只追加、`0600`）—— 配置里全是密钥时打开它就是主动暴露（威胁模型 T12） |
+| **日志行原样记值** | `data=` / `old=` / `new=` 里就是真实值，而文件出口是**恒写**的 —— `<home>/audit.log`（只追加、`0600`）因此总带着真实值，没有开关可退。脱敏与加密是**你自己给的钩子**（`log_scrub` / `log_encode`），不是引擎自带的功能（威胁模型 T12） |
 | **审计文件可能被多个进程追加** | 每个进程记自己的操作，而 `txn` 是按进程编号的 —— 文件里可能出现两个同号的批次。每行都带 pid，读的人据此分辨 |
 | **代码改不了已经存在的值** | 文件里的值与代码声明的不一致时，运行期尊重文件（记一条 `op=skip`）并返回文件里的值。要改是**人**的决定：`onconf sync` 同样不碰既存值（只补缺、只删未声明的键），`onconf build` 则按声明**完整重建**值文件（先备份，或用 `--path`） |
 | **运行期不删键** | 值文件会积累不再声明的键；清理靠 `onconf sync` |
@@ -324,7 +325,7 @@ src/onconf/
   _cli.py            # onconf 入口：build / sync（声明靠 AST 扫描）
   _vocab.py          # 词表 + JSON Schema
   _textscan.py       # 各后端共用的字节级扫描
-  _audit.py          # 强制日志 + append-only 审计
+  _log.py            # 日志：一份记录流、两个出口、三个口子
   _json_backend.py   # JSON 值后端
   _yaml_backend.py   # YAML 值后端
   _env_backend.py    # .env 值后端

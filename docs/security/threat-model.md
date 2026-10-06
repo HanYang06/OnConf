@@ -182,7 +182,7 @@ rename。内容不会半截，只是可能退回上一版。
 
 **结论：已缓解。** 新建文件走 `tempfile.mkstemp`（POSIX 上就是 `0600`）；替换前若目标已存在，
 则**沿用它原本的权限位**（`stat.S_IMODE`）—— 也就是**只对新文件收紧，不擅自改用户特意
-放宽的权限**。审计文件同样按 `0600` 创建（`_audit._append_file`）。
+放宽的权限**。审计文件同样按 `0600` 创建（`_log._append_file`）。
 
 **残余风险**：Windows 上 `chmod` 只切换只读位，实际保护来自配置目录的 ACL；库也不做目录
 权限校验 —— `settings.json` 里放明文口令，读得到目录的人就读得到它。
@@ -251,32 +251,33 @@ rename。内容不会半截，只是可能退回上一版。
 
 ---
 
-### T12 — 审计日志泄漏配置值 🟠 中（已实现，接受为取舍）
+### T12 — 日志泄漏配置值 🟠 中（已实现，接受为取舍）
 
-**攻击设想**：日志 / 审计文件里原样记着 `data=` / `old=` / `new=`，
-于是 `.env` 里的口令、连接串跟着落进 `<home>/audit.log` 或用户选的日志文件。
+**攻击设想**：日志里原样记着 `data=` / `old=` / `new=`，
+于是 `.env` 里的口令、连接串跟着落进 `<home>/audit.log` 或调用方指定的落点。
 
 **结论：记录里确实有真实值，这是有意为之。** 审计 90% 的价值就在「从什么变成什么」，
 把值抹掉等于把审计废掉。已经做到的缓解：
 
-- **去向由调用方选**，`audit` 默认**关**：不开就没有审计文件（但强制日志仍在，
-  它默认去 `stderr`，不落盘）；
-- 审计文件只追加（`O_APPEND`）、按 **`0600`** 创建；**谁发起谁记账**，每个进程只写
-  自己那几行；
+- **文件出口恒写**（取舍本身：没有开关可退），但**控制台出口可以关**（`log_console`）；
+- 审计文件只追加（`O_APPEND`）、按 **`0600`** 创建，**不创建自己的父目录**；
+  **谁发起谁记账**，每个进程只写自己那几行；
 - 字段是**白名单**（`item` / `file` / `origin` / `op` / `data` / `old` / `new` / `n` /
   `at` / `err` / `msg` / `reason` / `id`），不是把值对象整个 dump 出去；
 - 键名 / 身份 / 调用点里的 CR / LF 会被折成可见转义 —— 否则一个换行就能往审计文件里
   **伪造出额外的记录行**。
 
 **残余风险**：Windows 上 `chmod` 只切换只读位，审计文件的实际保护来自目录 ACL；
-库**不做值脱敏**，也不去猜哪个键是密钥。要放真实凭据，就别开 `audit`，
-或者把配置目录整个排除在版本控制与日志采集之外。
-另外，同一个目录上多个进程同时开 `audit=True` 时，它们会往同一个文件里追加，
-而 `txn` 是按进程编号的 —— 文件里可能出现两个同号的批次（每行带 pid，读的人据此分辨）。
-轮转同理 —— 它是为单写者设计的。
+库**不做值脱敏**，也不去猜哪个键是密钥 —— 脱敏与加密是**调用方自己挂的钩子**
+（`log_scrub` / `log_encode`），不是引擎自带的能力。要放真实凭据，就把配置目录整个排除在
+版本控制与日志采集之外，或者挂上自己的钩子。
+另外，同一个目录上多个进程会往同一个文件里追加，而 `txn` 是按进程编号的 ——
+文件里可能出现两个同号的批次（每行带 pid，读的人据此分辨）。默认**不轮转**，所以没有
+「并发改名撞车」这条失败模式；调用方自己给的轮转策略要自己保证同样的性质。
 
-**守护**：`tests/test_audit.py::TestSinks::test_the_audit_file_is_private`（POSIX 上断言
-`0600`）、`test_key_names_never_become_audit_paths`（审计文件名固定，不参与键名拼接）、
+**守护**：`tests/test_log.py::TestFileSink::test_the_audit_file_is_private`（POSIX 上断言
+`0600`）、`test_the_file_sink_never_creates_its_parent`（审计不造目录）、
+`test_key_names_never_become_audit_paths`（审计文件名固定，不参与键名拼接）、
 `TestIdentityIntegrity::test_a_newline_in_a_key_cannot_forge_a_line`（换行折成转义）。
 
 ---
@@ -318,7 +319,7 @@ rename。内容不会半截，只是可能退回上一版。
 | **外部字符串只经一道包含性校验到达路径** | `tests/test_paths.py` 逐条规则 + `tests/test_security_invariants.py`（非法文件名 / 路径段、行为级「配置目录外无任何新文件」）+ `tests/test_engine.py::TestMultiFile` |
 | **命令行不执行项目代码** | `tests/test_security_invariants.py` 的源码静态检查（`src/` 无 `eval` / `exec` / `__import__`）；扫描只做 `ast.parse` |
 | 落盘后 `$schema` 指针存在 | `tests/test_engine.py`（只对能吃下成员的后端：JSON / YAML；多文件按各自层级算相对路径） |
-| 审计文件只追加、`0600`，且文件名不来自键名 | `tests/test_audit.py`（POSIX 断言权限位；另断言配置目录外无新文件） |
+| 审计文件只追加、`0600`、不造父目录，且文件名不来自键名 | `tests/test_log.py`（POSIX 断言权限位；另断言配置目录外无新文件） |
 
 ---
 
@@ -329,9 +330,9 @@ rename。内容不会半截，只是可能退回上一版。
 | T1 外部字符串寻址 | [文件支持 §1.1](../design/file_support.md)（多文件寻址）、[路线图 §1.9](../roadmap/2.0.x/roadmap.md)（包含性校验） |
 | T4 并发 | [并发模型](../design/concurrency.md)（进程内一把内存锁；跨进程「一个目录一个写者」是部署责任） |
 | T5 原子写 | [1.0.x §4.3](../roadmap/1.0.x/roadmap.md)；落盘实现见 `_engine._atomic_write_text` |
-| T6 权限 | 落盘实现 `mkstemp` 的 `0600` + 沿用既有权限位；审计文件同样按 `0600` 创建（`_audit._append_file`） |
+| T6 权限 | 落盘实现 `mkstemp` 的 `0600` + 沿用既有权限位；审计文件同样按 `0600` 创建（`_log._append_file`） |
 | T7 YAML 安全 | [文件支持 §5](../design/file_support.md)（后端能力与支持计划） |
 | T9 schema 落盘 | [文件支持 §8](../design/file_support.md)（`$schema` 指针） |
-| T10 不开端口 | [路线图 §2.2](../roadmap/2.0.x/roadmap.md)（传输沿用 `multiprocessing.connection`） |
-| T12 审计泄漏值 | [审计日志](../design/log.md) |
+| T10 不开端口 | [并发模型](../design/concurrency.md)（没有独立写者进程、没有 IPC、没有端点；引擎不开任何网络端口） |
+| T12 日志泄漏值 | [日志](../design/log.md) |
 | T13 命令行扫描与删除 | [路线图 §4](../roadmap/2.0.x/roadmap.md)（命令表、`--dry-run`、退出码） |

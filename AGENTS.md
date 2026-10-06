@@ -146,7 +146,7 @@ src/onconf/
   _core.py           # 对账：补缺 / 补元数据，以及命令行专用的 undeclared
   _vocab.py          # 词表 + JSON Schema
   _textscan.py       # 各后端共用的字节级扫描
-  _audit.py          # 强制日志 + append-only 审计
+  _log.py            # 日志：一份记录流、两个出口、三个口子
   _json_backend.py / _yaml_backend.py / _env_backend.py / _toml_backend.py
   errors.py          # 错误分类（EnvSyntaxError 等是 ValueError 子类，不是 ConfError）
 tests/               # 每模块一个文件 + test_security_invariants.py

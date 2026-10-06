@@ -107,7 +107,8 @@ for key, value in TABLE:
 !!! note "引擎起来之后不能改配置"
 
     v1 只支持在**第一次调用之前**设置 `home` / `file_name` / `file_type` / `no_one_file` /
-    `log` / `audit` / `identity` / `flush_window`。
+    `log_path` / `log_console` / `log_rotate` / `log_scrub` / `log_encode` / `identity` /
+    `flush_window`。
     引擎已经启动后再带上参数调用 `AutoConf(...)` 会抛 `ConfError`。
 
 !!! note "谁能写"
@@ -116,21 +117,21 @@ for key, value in TABLE:
     `ONCONF_OWNER_PID` 的 `spawn` / `subprocess`）**只读**，第一次想写就抛 `ConfError`。
     同一时刻只有一个写者是部署责任 —— 口径见[并发模型](design/concurrency.md)。
 
-## 日志与审计去哪儿
+## 日志去哪儿
 
-日志是**强制**的：每一次读 / 写 / 登记都会留下一行，**只能改去向，不能关掉**（关掉它不是
-「少看几行」，是缺失配置审计）。默认去 `stderr`：
+「审计」不是另一件东西：**记录只有一份、出口有两个**。文件出口**恒写**（缺省落在
+`<home>/audit.log`，只追加、`0600`、永不截断），控制台出口默认写 `stderr`、可以用
+`log_console=False` 关掉。库日志不占 `stdout` —— 那是调用方的数据通道：
 
 ```console
 $ uv run python -c "from onconf import conf; conf('app.server.port', 8080)"
 [Start]-[05:12:34.500]-[txn=0 pid=4821]   item=-  file=settings.json
-[Link]-[05:12:34.501]-[txn=0 pid=4821]    item=-  file=settings.json  op=bind
 [Write]-[05:12:34.502]-[txn=1 pid=4821]   item=app.server.port  file=settings.json  op=fill         data=8080  reason=事实里没有
 [Change]-[05:12:34.502]-[txn=1 pid=4821]  item=app.server.port  file=settings.json  old=-           new=8080   at=<string>:1
 [Write]-[05:12:34.502]-[txn=1 pid=4821]   item=app.server.port  file=settings.json  op=update_meta  data=8080  reason=登记元数据
 ```
 
-（这是实测输出的形态，时间戳与 pid 因运行而异。第三、五行都有：`fill` 是值落进文件，
+（这是实测输出的形态，时间戳与 pid 因运行而异。第二、四行都有：`fill` 是值落进文件，
 `update_meta` 是词表登记 —— 值与默认值一致时文件不动，但词表要补上「有这么一个键」。）
 
 **五个级别**，名字就是它干的事：
@@ -146,14 +147,27 @@ $ uv run python -c "from onconf import conf; conf('app.server.port', 8080)"
 `[Start]` 是**生命周期**那一行，带 `txn=0`（不属于任何配置事务）。
 同一事务里重复读同一个键会合并成一行 `n=<次数>`，所以循环里读一万次不会刷一万行。
 
-去向与开关在**第一次调用之前**一次性配好（引擎是单例，起来之后不能再改）：
+落点与开关在**第一次调用之前**一次性配好（引擎是单例，起来之后不能再改）：
 
 ```python
-AutoConf(log="./onconf.log")  # 改去文件（文件形态带完整日期、不截断）
-AutoConf(log="stdout")  # 或者 stdout
-AutoConf(audit=True)  # 再加一份 append-only 的 <home>/audit.log（0600、按大小轮转）
+AutoConf(log_path="./logs/onconf.log")  # 换落点（相对路径按 <home> 解析）
+AutoConf(log_console=False)  # 只留文件那一份
 AutoConf(identity="order-svc@host-3")  # 每行多一个 id=，回答「哪个部署改的」
 ```
+
+三个口子默认都是「什么都不做」，要什么自己挂：
+
+```python
+# 轮转是**换落点**，绝不 rename 已经在写的文件
+AutoConf(log_rotate=lambda path, size: path if size < 1 << 20 else path.with_name("audit-2.log"))
+AutoConf(log_scrub=lambda record: dataclasses.replace(record, data="-"))  # 落盘前脱敏
+AutoConf(log_encode=encrypt)  # 最终落盘的字节：加密 / 压缩都挂这里
+```
+
+!!! warning "文件出口恒写，所以 `<home>` 必须可写"
+
+    只读挂载上连读配置都会失败 —— 那是「写不出去就报错」，不是「少看几行」。审计也不创建
+    自己的父目录：`home` 打错会当场报错，而不是凭空造出一棵目录树。
 
 写记录里的 `at=` 是**调用点**（`app/config.py:12`），它回答的是「哪段代码改的」——
 配置语境下这比 pid 有用得多。**谁发起谁记账**：审计文件由发起操作的那个进程写，

@@ -1,15 +1,15 @@
 # SPDX-FileCopyrightText: 2026 HanYang06
 # SPDX-License-Identifier: Apache-2.0
-"""强制日志与审计。
+"""日志：**一份记录流，两个出口**。
 
-## 一条记录，两种渲染
+## 一个东西，两个出口
 
-记录本身只有一种，**渲染分成两种**：
+「审计」不是另一件东西 —— 落盘的那一份就是审计。记录只有一种，出口有两个：
 
-* **终端**（``log="stderr"`` / ``"stdout"``）：``HH:MM:SS.mmm`` + **弹性制表位对齐**，
-  长文本列截断成 ``…``；
-* **文件**（``audit=True`` 的 ``<home>/audit.log``，或 ``log=<路径>``）：完整日期 +
-  ``key=value`` 紧凑形态，**永不截断** —— 文件那一份必须无损。
+* **文件**（缺省 ``<home>/audit.log``，落点由 ``log_path`` 给）：完整日期 + 紧凑
+  ``key=value``，**永不截断**。这个出口**没有开关**，引擎实例一旦跑起来就写；
+* **控制台**（``stderr``）：``HH:MM:SS.mmm`` + **弹性制表位对齐**，长文本列截断成
+  ``…``；``log_console=False`` 关掉它。
 
 两者同源，所以不会出现「日志文件与终端说的不是一回事」。
 
@@ -18,8 +18,8 @@
 ``[Read]`` 读 / ``[Write]`` 写（含 ``op=``）/ ``[Change]`` 值真的变了（``old → new``）/
 ``[Error]`` 失败，以及 ``[Start]`` 引擎起来了（pid / ``id=`` / 值文件）。
 
-* **写与启动全量、永不聚合**：每条对账动作一行，``op`` 取 fill / clean /
-  register / update_meta / skip / noop；
+* **写与启动全量、永不聚合**：每条对账动作一行，``op`` 取 fill / register /
+  update_meta / skip / noop；
 * **读按事务去重聚合**：同一事务内重复读同一个键合并成一行 ``n=<次数>``。
   循环里 ``conf("x")`` 一万次只会留下一行；
 * 读的记录**不立即输出**，而是攒在事务里等下一个提交点（写提交 / ``flush()`` /
@@ -35,15 +35,28 @@
 审计文件因此**可能被多个进程同时追加** —— 那是预期的，不是缺陷：``O_APPEND``
 保证每一批以追加方式落盘，每行自带 ``txn=… pid=…``，解析者据此分辨批次。
 
+## 三个口子
+
+默认全是「不做」—— 不轮转、不脱敏、不编码：
+
+* ``rotate``：拿到**当前落点**与已写字节数，返回**这一批写到哪个文件**。轮转是
+  「换落点」而不是「搬文件」：引擎**绝不 rename 已经在写的文件**（改名会让已经写下
+  的审计在别的进程眼里凭空消失）；
+* ``scrub``：一条记录进、一条记录出，落盘前脱敏；
+* ``encode``：渲染后的字节进、落盘字节出，加密 / 压缩都行。密钥由调用方给，
+  引擎不生成、不推导、不保管。
+
 ## 不变量
 
 * 日志的字段是**白名单**，不是「把整个值对象 dump 出去」；
-* 审计文件**只追加不重写**（``O_APPEND``，0600），超过 ``AUDIT_MAX_BYTES`` 才按
-  时间戳轮转成 ``audit-<时间戳>.log``；
+* 审计文件**只追加不重写**（``O_APPEND``，0600），**父目录不由它创建** ——
+  建 ``<home>`` 属于值文件写入那条路，写不出去就当场报错；
 * 日志写出失败**不阻断配置读写**（连渲染失败都不阻断）—— 唯一的例外是审计文件：
   它的失败抛 :class:`~onconf.errors.ConfError`（审计缺席不是「少看几行」）。
-  唯一的例外之例外是 ``[Start]`` / ``[Link]`` 这两行信息性的记录：它们是「顺带说一下」，
-  不该拦住第一次 ``conf()``。
+  唯一的例外之例外是 ``[Start]`` 这一行信息性的记录：它是「顺带说一下」，
+  不该拦住第一次 ``conf()``；
+* ``import onconf`` **不导入 rich**：它只在 TTY 的终端渲染分支里惰性导入，
+  非 TTY 走纯文本、逐字稳定。
 """
 
 from __future__ import annotations
@@ -56,6 +69,7 @@ import sys
 import threading
 import time
 import unicodedata
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -65,7 +79,6 @@ from .errors import ConfError
 
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
     from typing import TextIO
 
 
@@ -79,15 +92,18 @@ LEVEL_ERROR = "Error"
 #: 进程自己的生命周期：现在只有启动这一件事值得记（引擎起来了）。
 LEVEL_START = "Start"
 
-#: 审计文件名（相对配置目录）
-AUDIT_NAME = "audit.log"
+#: 审计文件的缺省名（相对配置目录）。落点由 ``log_path`` 决定。
+LOG_NAME = "audit.log"
 
-#: 审计文件轮转阈值（字节）。只由写者轮转，所以不需要跨进程协调。
-AUDIT_MAX_BYTES = 1 << 20
+#: 轮转策略：``(当前落点, 已写字节数) -> 这一批写到哪个文件``。
+#: 返回同一个路径就是「不轮转」。**换落点，不是搬文件**。
+RotateHook = Callable[[Path, int], Path]
 
-#: 日志去向：终端（stderr / stdout）或一个文件路径
-TERMINAL_STDERR = "stderr"
-TERMINAL_STDOUT = "stdout"
+#: 脱敏钩子：``记录 -> 记录``。落盘前改掉任意字段。
+ScrubHook = Callable[["Record"], "Record"]
+
+#: 落盘编码钩子：``渲染后的字节 -> 落盘字节``。
+EncodeHook = Callable[[bytes], bytes]
 
 #: 弹性制表位的列间距（显示宽度，）
 _GUTTER = 2
@@ -100,6 +116,16 @@ _CLIPPABLE = ("data=", "old=", "new=", "msg=", "reason=")
 
 #: ANSI 颜色码是**零宽**的，算宽度前必须先剥掉
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+#: 级别 → rich 样式。**只给级别那一格上色**，其余保持默认前景色：
+#: 上色是给人看的，落盘那一份一个字节都不受影响。
+_LEVEL_STYLE: dict[str, str] = {
+    LEVEL_READ: "dim",
+    LEVEL_WRITE: "cyan",
+    LEVEL_CHANGE: "green",
+    LEVEL_ERROR: "bold red",
+    LEVEL_START: "bold",
+}
 
 #: 抓调用点时最多往上找几帧，避免病态栈把热路径拖慢
 _MAX_FRAMES = 8
@@ -353,50 +379,57 @@ def _render_terminal(records: Sequence[Record], widths: list[int]) -> str:
     return _aligned(rows, widths)
 
 
+def _is_tty(stream: TextIO) -> bool:
+    """终端判定：非 TTY 一律走纯文本，**绝不让 ANSI 漏进管道与 CI 日志**。"""
+    return bool(stream.isatty())
+
+
+def _rich_write(lines: Sequence[str]) -> None:
+    """TTY 上把**已经排好**的行交给 rich 上色。
+
+    rich 只负责着色：宽度、截断与对齐仍然是上面那套（定宽表格一旦自动折行，
+    对齐就毁了）。导入点在这里 —— ``import onconf`` 与文件那一份都不碰 rich。
+    """
+    from rich.console import Console  # noqa: PLC0415 - 惰性导入正是这一条的全部要点
+    from rich.text import Text  # noqa: PLC0415 - 同上
+
+    console = Console(file=sys.stderr, highlight=False, soft_wrap=True, force_terminal=True)
+    for line in lines:
+        token, separator, rest = line.partition("]-[")
+        text = Text()
+        text.append(token, style=_LEVEL_STYLE.get(token.strip("[]"), ""))
+        text.append(separator + rest)
+        console.print(text)
+
+
 # --------------------------------------------------------------------------- #
 # 审计器
 # --------------------------------------------------------------------------- #
 
 
-def _rotate_if_needed(path: Path) -> None:
-    """审计文件超过阈值就按时间戳轮转。**只追加、不重写**。"""
-    try:
-        if path.stat().st_size < AUDIT_MAX_BYTES:
-            return
-    except FileNotFoundError:
-        return
-    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
-    target = path.with_name(f"{path.stem}-{stamp}{path.suffix}")
-    suffix = 1
-    while target.exists():
-        suffix += 1
-        target = path.with_name(f"{path.stem}-{stamp}-{suffix}{path.suffix}")
-    path.replace(target)
+def _append_file(path: Path, data: bytes) -> None:
+    """追加写入（``O_APPEND`` + 0600）。不重写、不截断、**不创建父目录**。
 
-
-def _append_file(path: Path, text: str, *, rotate: bool) -> None:
-    """追加写入（``O_APPEND`` + 0600）。不重写、不截断。
+    父目录的创建归值文件那条路：审计不该成为「凭空造出一棵目录树」的触发者。
+    写不出去就当场报错，由调用方转成 :class:`~onconf.errors.ConfError`。
 
     ``os.write`` **允许短写**（磁盘满、``RLIMIT_FSIZE``）：不看返回值就会把一批记录
     截在一个记录中间，而且一声不吭。所以这里写到写完为止。
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if rotate:
-        _rotate_if_needed(path)
     handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     try:
-        data = memoryview(text.encode("utf-8"))
-        while data:
-            written = os.write(handle, data)
+        data_view = memoryview(data)
+        while data_view:
+            written = os.write(handle, data_view)
             if written <= 0:  # pragma: no cover - 正常文件系统不会返回 0；防死循环
                 raise OSError(f"写入没有进展：{path}")
-            data = data[written:]
+            data_view = data_view[written:]
     finally:
         os.close(handle)
 
 
-class AuditLog:
-    """一个引擎的日志 / 审计收口点。
+class Log:
+    """一个引擎的日志收口点：**一份记录流，两个出口**。
 
     线程安全：一个进程里的多个线程都可能进来，所以缓冲、事务号与列宽都在锁里。
     """
@@ -404,13 +437,20 @@ class AuditLog:
     def __init__(
         self,
         *,
-        audit_path: Path | None,
-        log: str | os.PathLike[str] = TERMINAL_STDERR,
+        path: Path,
+        console: bool = True,
+        rotate: RotateHook | None = None,
+        scrub: ScrubHook | None = None,
+        encode: EncodeHook | None = None,
         identity: str = "",
     ) -> None:
-        self.audit_path = audit_path
+        #: 文件出口的当前落点。轮转钩子只改它，引擎从不搬动已有文件。
+        self.path = path
         self.identity = identity
-        self._log = os.fspath(log)
+        self._console = console
+        self._rotate = rotate
+        self._scrub = scrub
+        self._encode = encode
         self._lock = threading.Lock()
         self._pending: list[Record] = []
         self._reads: dict[tuple[str, str], int] = {}
@@ -501,11 +541,28 @@ class AuditLog:
             self._pending.clear()
             self._reads.clear()
             self._txn = None
-            if records:
-                self._emit(records)
-            return records
+            emitted = self._scrubbed(records)
+            if emitted:
+                self._emit(emitted)
+            return emitted
 
     # ------------------------------------------------------------------ 内部
+
+    def _scrubbed(self, records: Sequence[Record]) -> tuple[Record, ...]:
+        """把脱敏钩子套在这一批上。没有钩子就是原样 —— 默认不做任何脱敏。"""
+        if self._scrub is None:
+            return tuple(records)
+        return tuple(self._scrub(record) for record in records)
+
+    def _target(self) -> Path:
+        """这一批写到哪个文件。**换落点，不搬文件**：引擎从不 rename 已有文件。"""
+        if self._rotate is None:
+            return self.path
+        size = 0
+        with contextlib.suppress(FileNotFoundError):
+            size = self.path.stat().st_size
+        self.path = self._rotate(self.path, size)
+        return self.path
 
     def _record(self, record: Record) -> Record:
         with self._lock:
@@ -543,38 +600,41 @@ class AuditLog:
         """
         failure: ConfError | None = None
         try:
-            self._emit_audit_file(records)
+            self._emit_file(records)
         except ConfError as exc:
             failure = exc
-        self._emit_log(records)
+        self._emit_console(records)
         if failure is not None:
             raise failure
 
-    def _emit_log(self, records: Sequence[Record]) -> None:
-        """人读的那一路：终端对齐（或日志文件紧凑）。**它失败不阻断配置读写。**
+    def _emit_console(self, records: Sequence[Record]) -> None:
+        """人读的那一路：终端对齐（TTY 上再着色）。**它失败不阻断配置读写。**
 
         整段都吞：不只是 IO —— 值里有什么东西让**渲染**炸了（``__repr__`` 抛、
         循环引用……）也不该让一次 ``conf()`` 失败。日志是配套设施，不是事务的一部分；
         审计那一路（另一份）才是「写不出去要出声」的那个。
         """
         with contextlib.suppress(Exception):
-            if self._log == TERMINAL_STDERR:
-                self._write_stream(sys.stderr, _render_terminal(records, self._widths))
-            elif self._log == TERMINAL_STDOUT:
-                self._write_stream(sys.stdout, _render_terminal(records, self._widths))
+            if not self._console:
+                return
+            text = _render_terminal(records, self._widths)
+            if _is_tty(sys.stderr):
+                _rich_write(text.splitlines())
             else:
-                _append_file(
-                    Path(self._log), _render_compact(records, full_date=True), rotate=False
-                )
+                self._write_stream(sys.stderr, text)
 
-    def _emit_audit_file(self, records: Sequence[Record]) -> None:
+    def _emit_file(self, records: Sequence[Record]) -> None:
         """机读的那一路：append-only 审计文件。**它失败是有代价的，所以抛出来。**"""
-        if self.audit_path is None:
-            return
         try:
-            _append_file(self.audit_path, _render_compact(records, full_date=True), rotate=True)
+            target = self._target()
+            _append_file(target, self._encoded(_render_compact(records, full_date=True)))
         except OSError as exc:
-            raise ConfError(f"审计文件写入失败：{self.audit_path}（{exc}）") from exc
+            raise ConfError(f"审计文件写入失败：{self.path}（{exc}）") from exc
+
+    def _encoded(self, text: str) -> bytes:
+        """渲染结果 → 落盘字节。没有编码钩子就是 UTF-8。"""
+        data = text.encode("utf-8")
+        return data if self._encode is None else self._encode(data)
 
     @staticmethod
     def _write_stream(stream: TextIO | None, text: str) -> None:

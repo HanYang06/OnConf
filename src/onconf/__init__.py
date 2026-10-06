@@ -4,7 +4,7 @@
 
 对外只有两个面::
 
-    AutoConf(**engine)            配置**引擎自己**：配置目录、值文件类型、日志去向、审计、身份
+    AutoConf(**engine)            配置**引擎自己**：配置目录、值文件类型、日志落点与开关、身份
     conf(key, value=…, doc=…)     干所有的活：读 / 写 / 登记
 
 ``conf`` 的模式靠**参数结构**推断，不是参数：``value`` 位空着就是读，
@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import atexit
-from typing import Any, TypedDict, Unpack
+from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
 from ._core import MISSING
 from ._engine import Engine
@@ -27,6 +27,10 @@ from .errors import (
     KeyNotRegisteredError,
     UnknownEngineParamError,
 )
+
+
+if TYPE_CHECKING:
+    from ._log import EncodeHook, RotateHook, ScrubHook
 
 
 __all__ = [
@@ -54,9 +58,12 @@ class EngineParams(TypedDict, total=False):
     file_name: str
     file_type: str
     no_one_file: bool
-    audit: bool
+    log_path: str
+    log_console: bool
+    log_rotate: RotateHook
+    log_scrub: ScrubHook
+    log_encode: EncodeHook
     flush_window: float
-    log: str
     identity: str
 
 
@@ -113,7 +120,7 @@ def AutoConf(**engine: Unpack[EngineParams]) -> Engine:  # noqa: N802 - 公开 A
     elif engine:
         raise ConfError(
             "引擎已经启动：引导层参数（配置目录 / 值文件名 / 值文件类型 / 多文件开关 / "
-            "日志去向 / 审计 / 身份）不可运行中改，改了等于改代码。"
+            "日志落点与开关 / 身份）不可运行中改，改了等于改代码。"
             "请在第一次调用之前设置。"
         )
     return _engine

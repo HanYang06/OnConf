@@ -68,7 +68,7 @@ Windows 上不会把用户的 LF 文件偷偷改成 CRLF；已存在文件的权
 
     <home>/settings.json          值文件（用户手改）；名字由 ``file_name``、后缀由 ``file_type``
     <home>/schema/settings.json   词表（**库自己的资产**，随便重写；一份，与值文件个数无关）
-    <home>/audit.log              审计文件（append-only；``audit=True`` 才有）
+    <home>/audit.log              审计文件（append-only；落点由 ``log_path`` 决定）
 
 ``<home>`` 由 ``home=`` 参数 / ``ONCONF_HOME`` 环境变量 / ``./conf`` 依次决定。
 文件名主干由 ``file_name``（缺省 ``settings``）、后缀由 ``file_type``（缺省 **字面**
@@ -80,11 +80,11 @@ Windows 上不会把用户的 LF 文件偷偷改成 CRLF；已存在文件的权
 每个值文件的 ``$schema`` 指针按自己的层级算出相对路径。归这个引擎管的文件 =
 **默认文件 + 当前声明集引用到的路径段**；磁盘上其它值文件一个字节都不动。
 
-## 日志与审计
+## 日志
 
-日志**不可关闭**，只能改去向（``log="stderr"`` 默认 / ``"stdout"`` / 一个文件路径）；
-``audit=True`` 再加一份 append-only 的 ``<home>/audit.log``。级别与对齐规则见
-:mod:`onconf._audit`。
+记录只有一份，出口有两个：**文件**（缺省 ``<home>/audit.log``，落点由 ``log_path``
+给）没有开关，**控制台**（``stderr``）由 ``log_console`` 开关。级别、级别筛选与三个
+口子（轮转 / 脱敏 / 编码）见 :mod:`onconf._log` 与 ``docs/design/log.md``。
 
 **谁发起谁记账**：这里没有第二个执行点，所以记录里的 ``pid`` / ``id=``（身份）/
 ``at=``（调用点）都取自本进程。审计文件可能被多个进程同时追加 —— 那是预期的，
@@ -105,15 +105,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import _env_backend, _json_backend, _paths, _toml_backend, _yaml_backend
-from ._audit import (
-    AUDIT_NAME,
-    TERMINAL_STDERR,
-    AuditLog,
+from ._core import MISSING, Action, Decl, is_directive, read_value, reconcile, undeclared
+from ._log import (
+    LOG_NAME,
+    EncodeHook,
+    Log,
     Record,
+    RotateHook,
+    ScrubHook,
     call_site,
     error_kind,
 )
-from ._core import MISSING, Action, Decl, is_directive, read_value, reconcile, undeclared
 from ._vocab import Vocabulary
 from .errors import ConfError
 
@@ -306,6 +308,19 @@ def _values_path(home: Path, file_name: str, suffix: str) -> Path:
     return _paths.values_path(home, file_name, suffix)
 
 
+def _log_path(home: Path, log_path: str | os.PathLike[str]) -> Path:
+    """文件出口的落点：空串 = **伴随值文件目录**，相对路径按 ``<home>`` 解析。
+
+    落点是调用方直接给的引导层参数（不是键名那种外部字符串），所以不做包含性校验；
+    它与值文件同处一个配置目录，因此「相对」这件事以 ``<home>`` 为基准最不意外。
+    """
+    raw = os.fspath(log_path)
+    if not raw:
+        return home / LOG_NAME
+    target = Path(raw)
+    return target if target.is_absolute() else home / target
+
+
 def _schema_pointer(values_path: Path, schema_path: Path) -> str:
     """值文件里的 ``$schema`` 指针：**从值文件所在目录到词表的相对路径**。
 
@@ -351,9 +366,12 @@ class Engine:
         file_name: str = DEFAULT_FILE_NAME,
         file_type: str = DEFAULT_FILE_TYPE,
         no_one_file: bool = False,
-        audit: bool = False,
+        log_path: str | os.PathLike[str] = "",
+        log_console: bool = True,
+        log_rotate: RotateHook | None = None,
+        log_scrub: ScrubHook | None = None,
+        log_encode: EncodeHook | None = None,
         flush_window: float = DEFAULT_FLUSH_WINDOW,
-        log: str | os.PathLike[str] = TERMINAL_STDERR,
         identity: str = "",
     ) -> None:
         self.home = Path(home).resolve() if home is not None else default_home()
@@ -377,14 +395,18 @@ class Engine:
             os.environ[OWNER_ENV] = str(self._owner_pid)
         #: **进程内**互斥：同一份值文件上的多个实例（或同一实例的多个线程）共用这一把。
         self._lock = _instance_lock(self.home, self.file_name, self.suffix)
-        self.audit = audit
         self.flush_window = flush_window
         #: 应用 / 主机身份，记进 ``id=``。
         self.identity = identity
-        #: 日志与审计的收口点。``audit=True`` 时它同时写 ``<home>/audit.log``。
-        self._audit = AuditLog(
-            audit_path=(self.home / AUDIT_NAME) if audit else None,
-            log=log,
+        #: 文件出口的落点：空串 = 伴随值文件目录（``<home>/audit.log``）。
+        self.log_path = _log_path(self.home, log_path)
+        #: 日志收口点：**一份记录流，两个出口**。文件那一份没有开关。
+        self._log = Log(
+            path=self.log_path,
+            console=log_console,
+            rotate=log_rotate,
+            scrub=log_scrub,
+            encode=log_encode,
             identity=identity,
         )
 
@@ -536,7 +558,7 @@ class Engine:
         """
         with self._lock:
             self._commit_pending()
-            self._audit.close_txn()
+            self._log.close_txn()
 
     def sync(self) -> None:
         """完整提交点：把待提交的声明交出去，并收口日志。
@@ -554,7 +576,7 @@ class Engine:
         ``atexit`` 那条路会先 ``sync()`` 再 ``close()``，但直接调 ``close()``
         （``flush_window > 0`` 时）会把还没交的声明丢掉。
         """
-        self._audit.close_txn()
+        self._log.close_txn()
 
     # ---------------------------------------------------------------- 启动留痕
 
@@ -568,9 +590,9 @@ class Engine:
         if self._started:
             return
         self._started = True
-        self._audit.started(file=self.values_path.name)
+        self._log.started(file=self.values_path.name)
         with contextlib.suppress(ConfError):
-            self._audit.close_txn()
+            self._log.close_txn()
 
     def _open_for(self, key: str) -> None:
         """把**这个键所属**的值文件读进来（没读过才读）。
@@ -597,7 +619,7 @@ class Engine:
         except ConfError as exc:
             self._log_failure(exc, item=key)
             raise
-        self._audit.read(
+        self._log.read(
             item=key,
             file=self._label_for_key(key),
             source=result.origin,
@@ -628,7 +650,7 @@ class Engine:
         当场收口是因为异常一抛，后面就没有提交点会替这条记录收尾了。
         审计**自己**写不出去时不在这里抛：那会盖住真正的异常，而调用方要诊断的是配置那件事。
         """
-        self._audit.failed(
+        self._log.failed(
             item=item,
             file=self._label_for_key(item),
             err=error_kind(exc),
@@ -637,7 +659,7 @@ class Engine:
         )
         self._logged_failure = exc
         with contextlib.suppress(ConfError):
-            self._audit.close_txn()
+            self._log.close_txn()
 
     def _load_audited(self, *, item: str) -> None:
         """加载值文件 / 词表；**失败也要留痕**。
@@ -659,7 +681,7 @@ class Engine:
     def _commit_pending(self) -> tuple[Record, ...]:
         """提交一批声明。**对账动作同时也是审计记录**。
 
-        返回这一批产生的记录；真正的输出在 :meth:`onconf._audit.AuditLog.close_txn`
+        返回这一批产生的记录；真正的输出在 :meth:`onconf._log.Log.close_txn`
         里完成 —— 它顺手把攒在同一个事务里的读一起收口，所以批次内能对齐。
 
         失败必须留痕：后端拒绝一个值……都先记一条 ``[E]`` 再原样抛出，不静默吞掉。
@@ -692,7 +714,7 @@ class Engine:
             raise
         # 正常路径才在这里收口：审计写不出去就抛（审计缺席不是「少看几行」）。
         # 不放进 finally，是因为 finally 里抛出的异常会盖掉上面那条真正的失败。
-        self._audit.close_txn()
+        self._log.close_txn()
         return tuple(records)
 
     def _reconcile_all(self, decls: list[Decl]) -> list[Action]:
@@ -743,7 +765,7 @@ class Engine:
             if removals:
                 self._commit(removals)
                 self._action_records(removals, ())
-            self._audit.close_txn()
+            self._log.close_txn()
             return removals
 
     def _action_records(self, actions: Iterable[Action], batch: tuple[Decl, ...]) -> list[Record]:
@@ -763,7 +785,7 @@ class Engine:
             if action.kind == "skip":
                 # 「值不一致但尊重文件、想改没改」—— old / new 都要留。
                 records.append(
-                    self._audit.wrote(
+                    self._log.wrote(
                         item=action.key,
                         file=file,
                         op=action.kind,
@@ -774,7 +796,7 @@ class Engine:
                 )
             else:
                 records.append(
-                    self._audit.wrote(
+                    self._log.wrote(
                         item=action.key,
                         file=file,
                         op=action.kind,
@@ -785,7 +807,7 @@ class Engine:
                 )
             if action.kind in ("fill", "clean"):
                 records.append(
-                    self._audit.changed(
+                    self._log.changed(
                         item=action.key,
                         file=file,
                         old=action.old,
@@ -794,7 +816,7 @@ class Engine:
                     )
                 )
         records.extend(
-            self._audit.wrote(
+            self._log.wrote(
                 item=decl.key,
                 file=self._label_for_key(decl.key),
                 op="noop",

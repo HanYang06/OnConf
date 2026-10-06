@@ -130,7 +130,7 @@ Everything goes through two callables. That is the whole public surface.
 
 | Face | Purpose |
 |---|---|
-| `AutoConf(**engine)` | Configure **the engine itself**: `home` (config directory, default `./conf`), `file_name` (value-file name stem, default `settings`), `file_type` (which value file to use — single-valued, default `"json"`), `no_one_file` (multi-file: a key's `<path>:` prefix addresses `<home>/<path>.<ext>`), `log` (where the mandatory log goes — `"stderr"` (default), `"stdout"`, or a file path), `audit` (also append every line to `<home>/audit.log`), `identity` (optional `service@host` tag recorded on each line) and `flush_window` (batching window; `0` = commit immediately). Optional — the conventions work without it. |
+| `AutoConf(**engine)` | Configure **the engine itself**: `home` (config directory, default `./conf`), `file_name` (value-file name stem, default `settings`), `file_type` (which value file to use — single-valued, default `"json"`), `no_one_file` (multi-file: a key's `<path>:` prefix addresses `<home>/<path>.<ext>`), `log_path` (where the audit file goes — empty means `<home>/audit.log`, and a relative path resolves against `<home>`), `log_console` (whether the human-readable copy also goes to `stderr`; default `True`), `log_rotate` / `log_scrub` / `log_encode` (three optional hooks: which file the next batch goes to, redaction of a record before it lands, and the final bytes on disk), `identity` (optional `service@host` tag recorded on each line) and `flush_window` (batching window; `0` = commit immediately). Optional — the conventions work without it. |
 | `conf(key, value=..., doc=...)` | Do all the work: read, write, register. |
 
 Value-file *names* (and the embedded paths of multi-file keys) are the only external strings
@@ -176,9 +176,9 @@ Notes on semantics that surprise people:
 - Only two things are ever written at runtime: **keys that are missing** and **vocabulary
   metadata**.
 - The engine config has two layers: the **bootstrap layer** (`home`, `file_name`, `file_type`,
-  `no_one_file`, `log`, `audit`, `identity`, `flush_window`) cannot be changed
-  once the engine is running — that would amount to editing your code; the **value layer** may
-  change at any time, because values are re-read from the file.
+  `no_one_file`, `log_path`, `log_console`, `log_rotate`, `log_scrub`, `log_encode`, `identity`,
+  `flush_window`) cannot be changed once the engine is running — that would amount to editing
+  your code; the **value layer** may change at any time, because values are re-read from the file.
 - **Who may write** is decided by the process tree, not by a flag: the process that created the
   engine instance is the **owner** (read + write + regenerate the vocabulary); a process derived
   from it — `fork`, or `spawn`/`subprocess` that inherited `ONCONF_OWNER_PID` — is **read-only**
@@ -246,7 +246,7 @@ whatever key was registered.
 | Optional batching window — `flush_window` (default `0`, i.e. commit immediately), **per engine** | ✅ |
 | Value-as-key (indirect addressing) + guaranteed `$schema` pointer on every write (JSON / YAML only — `.env` and `.toml` cannot hold a member, so the pointer is skipped) | ✅ |
 | Error taxonomy — `ConfError` as the base, with `KeyNotRegisteredError`, `KeyHasNoValueError` and `UnknownEngineParamError`. `EnvSyntaxError`, `YamlFlatRequiredError` and `TomlFlatRequiredError` are `ValueError` subclasses, so they are **not** caught by `except ConfError` | ✅ |
-| **Logging + audit** — a mandatory `[Read]` / `[Write]` / `[Change]` / `[Error]` stream plus `[Start]`; the destination can be changed but the log cannot be switched off; writes are logged in full (including `op=skip` "wanted to change, respected the file" and `op=noop` "this batch's declaration was already satisfied"), reads are de-duplicated per transaction (`n=1000`); every write carries its call site (`at=app/config.py:12`), the pid and the optional `identity=`; terminal columns are elastic tabstops measured in **display width** (CJK-safe), while the file form stays compact and is never truncated; `audit=True` appends to `<home>/audit.log` (`0600`, append-only, size-based rotation). See the [audit-log design](docs/design/log.md) | ✅ |
+| **Logging = audit** — one record stream, two sinks. The **file** sink is always on (`log_path`, default `<home>/audit.log`): append-only, `0600`, compact `key=value`, full dates, **never truncated**. The **console** sink (`stderr`) can be switched off (`log_console=False`) and, on a TTY, is coloured by `rich` — imported lazily in that branch only, so the mandatory path and pipes never pay for it and never see ANSI. Levels are `[Read]` / `[Write]` / `[Change]` / `[Error]` plus `[Start]`; writes are logged in full (including `op=skip` "wanted to change, respected the file" and `op=noop` "this batch's declaration was already satisfied"), reads are de-duplicated per transaction (`n=1000`); every write carries its call site (`at=app/config.py:12`), the pid and the optional `identity=`. Three optional hooks — `log_rotate` (which file the next batch goes to; **rotation changes the sink, it never renames a file**), `log_scrub` (redact a record before it lands) and `log_encode` (the final bytes on disk) — all default to *do nothing*. See the [log design](docs/design/log.md) | ✅ |
 | **No runtime cleanup** — the runtime only fills what is missing and updates vocabulary metadata; it never deletes a key. Deletion lives in `onconf sync` (offline, one shot, over a complete declaration set) | ✅ |
 | Test suite — one file per module plus security invariants | ✅ green locally; CI runs it on ubuntu / windows / macos |
 | **CLI (first two commands)** — `onconf build` rebuilds the value file(s) and the vocabulary from the declarations (`--path` writes the whole rebuild into a new directory instead); `onconf sync` fills what is missing and deletes keys the declarations do not know (`--no-clean` keeps them). Declarations are found by **scanning the project for `conf(...)` calls** and reading their arguments — the single-function API is what makes that possible. Both commands support `--dry-run` (writes nothing) and `--json`; `sync` refuses to delete anything when some call could not be read statically | ✅ `build` / `sync`; the other seven commands are not implemented |
@@ -307,7 +307,7 @@ Invariants this project commits to (each one has a regression test in
 - the CLI **never executes project code**: it parses `*.py` with `ast` and reads `conf(...)`
   call arguments — no `import`, no `eval`
 - no `eval` / `exec` / `pickle` on configuration content
-- the audit file is append-only (`O_APPEND`) and created `0600`; the log can be redirected but never switched off
+- the audit file (the file sink) is append-only (`O_APPEND`) and created `0600`, and its parent directory is never created by the log; the console sink can be switched off, the file sink cannot
 
 ### Known limitations
 
@@ -316,7 +316,7 @@ Invariants this project commits to (each one has a regression test in
 | **One writer per config directory is a deployment duty** | The engine takes no cross-process lock and does no coordination. Two peer processes that both write can lose each other's keys — prepare the config with `onconf sync` before starting them, and keep the runtime read-only |
 | **A symlinked value file is replaced** | Writes go through `os.replace`: the symlink is replaced by a regular file and the link's target is left untouched (the link itself is destroyed) |
 | **`ONCONF_HOME` and `ONCONF_OWNER_PID` are trusted input** | The first decides the config directory, the second decides whether this process may write; neither is containment-checked |
-| **Audit lines contain values verbatim** | `data=` / `old=` / `new=` carry the real value. `audit=True` writes them to `<home>/audit.log` (append-only, `0600`) — turning it on for a config file full of secrets is a deliberate exposure (threat-model T12) |
+| **Log lines contain values verbatim** | `data=` / `old=` / `new=` carry the real value, and the file sink is **always on** — so `<home>/audit.log` (append-only, `0600`) holds real values with no switch to flip. Redaction and encryption are **hooks you supply** (`log_scrub` / `log_encode`), not features the engine ships (threat-model T12) |
 | **The audit file may be appended by several processes** | Every process logs its own operations, and `txn` numbers are per-process — so the file can hold two batches numbered alike. Each line carries its pid, which is what a reader uses to tell them apart |
 | **Code cannot overwrite a value that already exists** | When the file holds a value different from the one your code declares, the runtime respects the file (it logs `op=skip`) and returns the file's value. Overwriting is a human decision: `onconf sync` still will not touch an existing value — it only fills what is missing and deletes undeclared keys, and `onconf build` rebuilds the value file from the declarations (back it up first, or use `--path`) |
 | **The runtime never deletes a key** | Value files accumulate keys that are no longer declared; `onconf sync` is what removes them |
@@ -352,7 +352,7 @@ src/onconf/
   _cli.py            # the `onconf` entry point: build / sync (declarations by AST scan)
   _vocab.py          # vocabulary + JSON Schema
   _textscan.py       # shared byte-level scanning used by the backends
-  _audit.py          # mandatory log + append-only audit
+  _log.py            # the log: one record stream, two sinks, three hooks
   _json_backend.py   # JSON value backend
   _yaml_backend.py   # YAML value backend
   _env_backend.py    # .env value backend
@@ -363,7 +363,7 @@ docs/                # documentation site sources (Chinese)
   design/init_config.md    # the two faces, bootstrap vs value layer, the three modes
   design/file_support.md   # value-file selection, return types, backends, vocabulary
   design/concurrency.md    # who may write, what a read sees, what the engine will not do
-  design/log.md            # logging and audit
+  design/log.md            # one record stream, two sinks, three hooks
 ```
 
 The module list grows as backends land; `src/onconf/` itself is authoritative.
