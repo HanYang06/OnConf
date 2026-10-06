@@ -149,7 +149,8 @@ def test_key_name_cannot_escape_the_config_home(tmp_path: Path) -> None:
     # （schema/settings.json 与 settings.json 同名），而且 parts 不看平台分隔符。
     written = sorted(p.relative_to(home) for p in home.rglob("*") if p.is_file())
     assert Path("settings.json") in written
-    assert all(p.parts[0] in {"settings.json", "schema"} for p in written)
+    # 审计文件是**恒写**的第三个成员（前两个是值文件与词表），它同样落在 home 之内。
+    assert all(p.parts[0] in {"settings.json", "schema", "audit.log"} for p in written)
     assert all(".." not in p.parts for p in written)
 
     # 配置目录之外不得出现任何新文件

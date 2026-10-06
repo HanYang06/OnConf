@@ -20,6 +20,7 @@ from onconf._core import (
     declaration_hash,
     read_value,
     reconcile,
+    undeclared,
 )
 from onconf.errors import KeyHasNoValueError, KeyNotRegisteredError
 
@@ -75,10 +76,15 @@ def _kinds(actions: list[Action]) -> list[tuple[str, str]]:
 
 
 class TestReconcile:
-    def test_rule1_clean_unknown_fact(self) -> None:
-        """事实有、期望没有 ⇒ 清理。"""
+    def test_reconcile_never_cleans(self) -> None:
+        """事实有、期望没有 ⇒ **运行期什么都不做**。
+
+        删除的判据「事实里有、期望集里没有」只有在期望集完整时才成立，而运行期的期望集
+        永远只是「这个进程到目前为止声明过的」。所以 ``reconcile`` 连一条 ``clean``
+        都不产出 —— 删除只走 ``undeclared`` 那条命令行专用的路。
+        """
         actions = reconcile([], {"ghost": 1}, {})
-        assert _kinds(actions) == [("clean", "ghost")]
+        assert actions == []
 
     def test_rule2_fill_missing_with_default(self) -> None:
         actions = reconcile([Decl("a.b", 512)], {}, {})
@@ -134,28 +140,31 @@ class TestReconcile:
         actions = reconcile([Decl("a.b", 512, doc="端口")], {"a.b": 512}, vocab)
         assert actions == []
 
-    def test_clean_and_fill_together(self) -> None:
-        actions = reconcile([Decl("new", 1)], {"old": 2}, {})
-        assert set(_kinds(actions)) >= {("clean", "old"), ("fill", "new")}
+    def test_fill_and_removal_are_two_different_paths(self) -> None:
+        """补缺走 ``reconcile``，删除走 ``undeclared`` —— 两条路互不越界。"""
+        assert _kinds(reconcile([Decl("new", 1)], {"old": 2}, {})) == [
+            ("fill", "new"),
+            ("update_meta", "new"),
+        ]
+        assert _kinds(undeclared({"old": 2}, {"new"})) == [("clean", "old")]
 
 
 class TestDirectiveKeys:
-    """``$`` 开头的是**指令**，不是配置项：不许被清理，也不许被声明。
+    """``$`` 开头的是**指令**，不是配置项：不许被删除，也不许被声明。
 
     这条来自真实产物 ``Cairn/config/settings.json``：
 
         {"$schema": "schema/settings.json", "pack.max.byte": 2147483648}
 
-    规则 1 若不给它豁免，第一次运行就会把 ``$schema`` 删掉。
+    删除若不豁免它，第一次收敛就会把 ``$schema`` 删掉 —— 那等于删掉用户的编辑器工具链。
     """
 
-    def test_schema_directive_is_not_cleaned(self) -> None:
+    def test_schema_directive_is_not_removed(self) -> None:
         facts = {"$schema": "schema/settings.json", "a.b": 1}
-        actions = reconcile([Decl("a.b", 1)], facts, {})
-        assert ("clean", "$schema") not in _kinds(actions)
+        assert _kinds(undeclared(facts, {"a.b"})) == []
 
     def test_unknown_directives_are_kept(self) -> None:
-        assert reconcile([], {"$id": "x", "$comment": "y"}, {}) == []
+        assert undeclared({"$id": "x", "$comment": "y"}, set()) == []
 
     def test_real_cairn_payload_shape(self) -> None:
         facts = {
@@ -170,9 +179,10 @@ class TestDirectiveKeys:
             Decl("hub.default", "main"),
         ]
         actions = reconcile(decls, facts, {})
-        assert [a for a in actions if a.kind == "clean"] == []
         # 稳态下只该产出元数据登记
         assert {a.kind for a in actions} <= {"update_meta"}
+        # 收敛也不会碰任何一条指令
+        assert undeclared(facts, {d.key for d in decls}) == []
 
 
 # --------------------------------------------------------------------------- #

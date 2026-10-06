@@ -252,13 +252,12 @@ disallow_any_explicit = false
 # （通配只能占整段，如 spam.*.eggs）。只能逐个列。加测试文件时记得补这里。
 [[tool.mypy.overrides]]
 module = [
-    "test_audit",
+    "test_log",
     "test_cli",
     "test_core",
     "test_engine",
     "test_env_backend",
     "test_json_backend",
-    "test_owner",
     "test_paths",
     "test_security_invariants",
     "test_toml_backend",

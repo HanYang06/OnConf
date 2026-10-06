@@ -130,7 +130,7 @@ Everything goes through two callables. That is the whole public surface.
 
 | Face | Purpose |
 |---|---|
-| `AutoConf(**engine)` | Configure **the engine itself**: `home` (config directory, default `./conf`), `file_name` (value-file name stem, default `settings`), `file_type` (which value file to use — single-valued, default `"json"`), `no_one_file` (multi-file: a key's `<path>:` prefix addresses `<home>/<path>.<ext>`), `log` (where the mandatory log goes — `"stderr"` (default), `"stdout"`, or a file path), `audit` (also append every line to `<home>/audit.log`), `identity` (optional `service@host` tag recorded on each line), `flush_window` (batching window; `0` = commit immediately) and `lock_timeout`. Optional — the conventions work without it. |
+| `AutoConf(**engine)` | Configure **the engine itself**: `home` (config directory, default `./conf`), `file_name` (value-file name stem, default `settings`), `file_type` (which value file to use — single-valued, default `"json"`), `no_one_file` (multi-file: a key's `<path>:` prefix addresses `<home>/<path>.<ext>`), `log_path` (where the audit file goes — empty means `<home>/audit.log`, and a relative path resolves against `<home>`), `log_console` (whether the human-readable copy also goes to `stderr`; default `True`), `log_rotate` / `log_scrub` / `log_encode` (three optional hooks: which file the next batch goes to, redaction of a record before it lands, and the final bytes on disk), `identity` (optional `service@host` tag recorded on each line) and `flush_window` (batching window; `0` = commit immediately). Optional — the conventions work without it. |
 | `conf(key, value=..., doc=...)` | Do all the work: read, write, register. |
 
 Value-file *names* (and the embedded paths of multi-file keys) are the only external strings
@@ -176,9 +176,15 @@ Notes on semantics that surprise people:
 - Only two things are ever written at runtime: **keys that are missing** and **vocabulary
   metadata**.
 - The engine config has two layers: the **bootstrap layer** (`home`, `file_name`, `file_type`,
-  `no_one_file`, `log`, `audit`, `identity`, `flush_window`, `lock_timeout`) cannot be changed
-  once the engine is running — that would amount to editing your code; the **value layer** may
-  change at any time, because values are re-read from the file.
+  `no_one_file`, `log_path`, `log_console`, `log_rotate`, `log_scrub`, `log_encode`, `identity`,
+  `flush_window`) cannot be changed once the engine is running — that would amount to editing
+  your code; the **value layer** may change at any time, because values are re-read from the file.
+- **Who may write** is decided by the process tree, not by a flag: the process that created the
+  engine instance is the **owner** (read + write + regenerate the vocabulary); a process derived
+  from it — `fork`, or `spawn`/`subprocess` that inherited `ONCONF_OWNER_PID` — is **read-only**
+  and gets a `ConfError` the moment it tries to write. Inside one process, several instances and
+  several threads on the same value file share one in-memory lock, so they never lose each
+  other's keys.
 - The commit point is **immediate by default** (`atexit` triggers a final `sync()`). A batching
   window is opt-in via `flush_window`; with it on, disk is touched at four commit points —
   window expiry, a read, `sync()`, and process exit.
@@ -231,16 +237,17 @@ whatever key was registered.
 | TOML value backend — **optional**; table headers normalized to dotted keys | ✅ |
 | Vocabulary (key space) — persisted, JSON Schema round-trip, hash short-circuit. It records exactly three things per key: the key, the description, the default | ✅ |
 | Value-file selection — `file_name` (default `settings`) plus `file_type` (single-valued, default `"json"`) pick `<home>/<file_name>.<ext>` | ✅ |
-| **Multi-file** — `no_one_file=True` makes a key's `<path>:` prefix address `<home>/<path>.<ext>` (e.g. `conf("app/conf/net:net.id.post", 8080)` → `<home>/app/conf/net.json`). Keys without a prefix still land in the default file. One vocabulary, one lock, one writer per `(home, file_name)`; every embedded path goes through the containment check | ✅ |
+| **Multi-file** — `no_one_file=True` makes a key's `<path>:` prefix address `<home>/<path>.<ext>` (e.g. `conf("app/conf/net:net.id.post", 8080)` → `<home>/app/conf/net.json`). Keys without a prefix still land in the default file. One vocabulary per `(home, file_name)`; every embedded path goes through the containment check | ✅ |
 | Engine assembly — `conf` / `AutoConf` end-to-end | ✅ |
-| Cross-process exclusive lock — an **OS** lock (`msvcrt.locking` on Windows, `fcntl.flock` elsewhere), released by the OS even if the process dies; `LockTimeoutError` after a 10 s wait | ✅ |
-| Re-read under that lock — fingerprint (`mtime` + `size`) over **both** the values file and the vocabulary, so a concurrent registration is never clobbered | ✅ |
-| **Dedicated writer** — whichever process first binds the endpoint is the only reader/writer; the rest send requests over `multiprocessing.connection`. Binding *is* the election, so no lock file is involved | ✅ |
-| **Atomic write** — same-directory temp file → `fsync` → `os.replace`, plus a parent-directory `fsync` on POSIX; original line endings and permission bits preserved, new files land as `0600` | ✅ |
-| Optional batching window — `flush_window` (default `0`, i.e. commit immediately), held **client-side** so each engine's window stays its own | ✅ |
+| **Process-tree write rights** — the process that creates the engine instance is the **owner** (read + write + regenerate the vocabulary). A process derived from it is **read-only** and gets a `ConfError` on its first write: `fork` is caught by a pid check, `spawn` / `subprocess` by the inherited `ONCONF_OWNER_PID`. The CLI clears that marker — "want a change? use the command line" | ✅ |
+| **In-process lock** — one in-memory lock per value file, shared by every engine instance and every thread in the process, so they never lose each other's keys. It never touches the filesystem | ✅ |
+| Re-read on change — fingerprint (`mtime` + `size`) over **both** the values file and the vocabulary, checked before every read and every write, so an external edit (or an owner's commit) is never missed | ✅ |
+| **Atomic write, with a bounded retry** — same-directory temp file → `fsync` → `os.replace`, plus a parent-directory `fsync` on POSIX; original line endings and permission bits preserved, new files land as `0600`. On Windows the replace is retried briefly, because a concurrent *reader* holds the file open and readers take no lock | ✅ |
+| Optional batching window — `flush_window` (default `0`, i.e. commit immediately), **per engine** | ✅ |
 | Value-as-key (indirect addressing) + guaranteed `$schema` pointer on every write (JSON / YAML only — `.env` and `.toml` cannot hold a member, so the pointer is skipped) | ✅ |
-| Error taxonomy — `ConfError` as the base, with `KeyNotRegisteredError`, `KeyHasNoValueError`, `UnknownEngineParamError` and `LockTimeoutError` (defined in `_lock.py`, not `errors.py`; raised after a 10 s lock wait). `EnvSyntaxError`, `YamlFlatRequiredError` and `TomlFlatRequiredError` are `ValueError` subclasses, so they are **not** caught by `except ConfError` | ✅ |
-| **Logging + audit** — a mandatory `[Read]` / `[Write]` / `[Change]` / `[Error]` stream plus the process-structure trio `[Start]` / `[Link]` / `[Send]`; the destination can be changed but the log cannot be switched off; writes are logged in full (including `op=skip` "wanted to change, respected the file" and `op=noop` "this batch's declaration was already satisfied"), reads are de-duplicated per transaction (`n=1000`); every write carries its call site (`at=app/config.py:12`), the pid and the optional `identity=`; terminal columns are elastic tabstops measured in **display width** (CJK-safe), while the file form stays compact and is never truncated; `audit=True` appends to `<home>/audit.log` (`0600`, append-only, size-based rotation). See the [audit-log design](docs/design/log.md) | ✅ |
+| Error taxonomy — `ConfError` as the base, with `KeyNotRegisteredError`, `KeyHasNoValueError` and `UnknownEngineParamError`. `EnvSyntaxError`, `YamlFlatRequiredError` and `TomlFlatRequiredError` are `ValueError` subclasses, so they are **not** caught by `except ConfError` | ✅ |
+| **Logging = audit** — one record stream, two sinks. The **file** sink is always on (`log_path`, default `<home>/audit.log`): append-only, `0600`, compact `key=value`, full dates, **never truncated**. The **console** sink (`stderr`) can be switched off (`log_console=False`) and, on a TTY, is coloured by `rich` — imported lazily in that branch only, so the mandatory path and pipes never pay for it and never see ANSI. Levels are `[Read]` / `[Write]` / `[Change]` / `[Error]` plus `[Start]`; writes are logged in full (including `op=skip` "wanted to change, respected the file" and `op=noop` "this batch's declaration was already satisfied"), reads are de-duplicated per transaction (`n=1000`); every write carries its call site (`at=app/config.py:12`), the pid and the optional `identity=`. Three optional hooks — `log_rotate` (which file the next batch goes to; **rotation changes the sink, it never renames a file**), `log_scrub` (redact a record before it lands) and `log_encode` (the final bytes on disk) — all default to *do nothing*. See the [log design](docs/design/log.md) | ✅ |
+| **No runtime cleanup** — the runtime only fills what is missing and updates vocabulary metadata; it never deletes a key. Deletion lives in `onconf sync` (offline, one shot, over a complete declaration set) | ✅ |
 | Test suite — one file per module plus security invariants | ✅ green locally; CI runs it on ubuntu / windows / macos |
 | **CLI (first two commands)** — `onconf build` rebuilds the value file(s) and the vocabulary from the declarations (`--path` writes the whole rebuild into a new directory instead); `onconf sync` fills what is missing and deletes keys the declarations do not know (`--no-clean` keeps them). Declarations are found by **scanning the project for `conf(...)` calls** and reading their arguments — the single-function API is what makes that possible. Both commands support `--dry-run` (writes nothing) and `--json`; `sync` refuses to delete anything when some call could not be read statically | ✅ `build` / `sync`; the other seven commands are not implemented |
 
@@ -250,10 +257,8 @@ Do not plan around these; they are **not implemented**:
 
 | Capability | Milestone |
 |---|---|
-| WAL (write-ahead log) — judged **unnecessary**: the batching window covers merged bursts, declarations are re-derivable from code, the writer serialises, and read-modify-write plus atomic replace gives the ordering | not planned |
+| WAL (write-ahead log) — judged **unnecessary**: declarations are re-derivable from code, and the runtime only ever fills missing keys, so there is nothing to replay | not planned |
 | C accelerator (future) — an **extra**, not a separate distribution: `pip install onconf[c]` | — |
-| Runtime cleanup of undeclared keys — not implemented (see [roadmap §2.7](docs/roadmap/2.0.x/roadmap.md)); `onconf sync` does the deleting offline. The writer's declaration set is not persisted, so a writer handover resets the baseline | with the CLI |
-| Prefix-sharded locks — the current lock is a single lock per config directory | — |
 | System environment variables as a configuration **source** (`ONCONF_HOME` only locates the config dir) | — |
 | Per-format vocabulary export | — |
 | `.env` `dict` / `list` values — behind the `env_file_dict` / `env_file_list` booleans (both default off); scalars stay strings | 2.2 (planned) |
@@ -294,8 +299,7 @@ Report vulnerabilities privately — see [`SECURITY.md`](SECURITY.md). Do not op
 Invariants this project commits to (each one has a regression test in
 [`tests/test_security_invariants.py`](tests/test_security_invariants.py)):
 
-- the default path opens **no network ports** and spawns **no subprocesses** (the writer's endpoint
-  is a per-user local pipe in the OS namespace, and the writer is a *thread*, not a child process)
+- the default path opens **no network ports** and spawns **no subprocesses**
 - YAML configuration is only ever parsed with `yaml.safe_load` / `yaml.safe_load_all` — never `yaml.load` (JSON uses `json.loads`, TOML `tomllib.loads`, `.env` a plain line scan)
 - **external strings (the value-file name and the embedded paths of multi-file keys) reach the
   filesystem through one containment check only** — a plain name or relative path, no separators,
@@ -303,22 +307,19 @@ Invariants this project commits to (each one has a regression test in
 - the CLI **never executes project code**: it parses `*.py` with `ast` and reads `conf(...)`
   call arguments — no `import`, no `eval`
 - no `eval` / `exec` / `pickle` on configuration content
-- the audit file is append-only (`O_APPEND`) and created `0600`; the log can be redirected but never switched off
+- the audit file (the file sink) is append-only (`O_APPEND`) and created `0600`, and its parent directory is never created by the log; the console sink can be switched off, the file sink cannot
 
 ### Known limitations
 
 | Limitation | Consequence |
 |---|---|
-| **Rule 1 needs a long-lived writer** | The writer's declaration set is not persisted, so if writer processes come and go, `sync()` cleans against only its own process's declarations |
-| **The writer is a peer, not a service** | It lives inside whichever process claimed the directory first, and requests are serialised behind one lock — a client waits for its own request, and behind whatever is running. There is no queue and no background retry |
-| **The fallback path is process-local** | If the endpoint cannot be created at all, the engine degrades to direct writes under the OS lock: correctness holds, but rule 1's baseline becomes per-process |
+| **One writer per config directory is a deployment duty** | The engine takes no cross-process lock and does no coordination. Two peer processes that both write can lose each other's keys — prepare the config with `onconf sync` before starting them, and keep the runtime read-only |
 | **A symlinked value file is replaced** | Writes go through `os.replace`: the symlink is replaced by a regular file and the link's target is left untouched (the link itself is destroyed) |
-| **`ONCONF_HOME` is trusted input** | It decides the config directory and is not containment-checked |
-| **Audit lines contain values verbatim** | `data=` / `old=` / `new=` carry the real value. `audit=True` writes them to `<home>/audit.log` (append-only, `0600`) — turning it on for a config file full of secrets is a deliberate exposure (threat-model T12) |
-| **The audit trail lives with the executor** | A client ships its request to the dedicated writer, which writes the audit file and logs to *its* destination; the client mirrors only the records that executor actually emitted. A failed remote call is logged as `[Error]` by the originator too, but a remote **read** waits for the writer's next commit point — so it may not appear in the client's own log at all. The audit file is the authoritative stream |
-| **The audit file assumes one writer** | A second engine on the same config directory with `audit=True` appends its own local records to the same `<home>/audit.log`, and `txn` numbers are per-process — so the file can hold two batches numbered alike and rotation stops being single-writer. Leave `audit` off in client processes (off by default) |
+| **`ONCONF_HOME` and `ONCONF_OWNER_PID` are trusted input** | The first decides the config directory, the second decides whether this process may write; neither is containment-checked |
+| **Log lines contain values verbatim** | `data=` / `old=` / `new=` carry the real value, and the file sink is **always on** — so `<home>/audit.log` (append-only, `0600`) holds real values with no switch to flip. Redaction and encryption are **hooks you supply** (`log_scrub` / `log_encode`), not features the engine ships (threat-model T12) |
+| **The audit file may be appended by several processes** | Every process logs its own operations, and `txn` numbers are per-process — so the file can hold two batches numbered alike. Each line carries its pid, which is what a reader uses to tell them apart |
 | **Code cannot overwrite a value that already exists** | When the file holds a value different from the one your code declares, the runtime respects the file (it logs `op=skip`) and returns the file's value. Overwriting is a human decision: `onconf sync` still will not touch an existing value — it only fills what is missing and deletes undeclared keys, and `onconf build` rebuilds the value file from the declarations (back it up first, or use `--path`) |
-| **Writer-local calls share no lock with its session threads** | `conf()` on the writer's own thread runs next to a client request: the OS lock keeps the file consistent (one side may wait out `lock_timeout`), but engine memory is raceable in that window. No regression test covers it (threat-model T4) |
+| **The runtime never deletes a key** | Value files accumulate keys that are no longer declared; `onconf sync` is what removes them |
 
 Full analysis, per threat with code evidence: [`docs/security/threat-model.md`](docs/security/threat-model.md).
 
@@ -345,15 +346,13 @@ statically: they are listed as problems, and `sync` then **refuses to delete any
 ```text
 src/onconf/
   __init__.py        # the two faces: AutoConf + conf
-  _engine.py         # engine assembly, directory conventions, write-back
+  _engine.py         # engine assembly, directory conventions, write-back, the owner gate
   _paths.py          # the one entry point from external strings to paths (containment check)
-  _core.py           # reconciliation: the three-set algorithm
+  _core.py           # reconciliation: fill / metadata, plus `undeclared` for the CLI
   _cli.py            # the `onconf` entry point: build / sync (declarations by AST scan)
   _vocab.py          # vocabulary + JSON Schema
   _textscan.py       # shared byte-level scanning used by the backends
-  _lock.py           # cross-process exclusive lock (OS lock; the fallback path)
-  _owner.py          # dedicated writer: endpoint election, IPC, the writer loop
-  _audit.py          # mandatory log + append-only audit
+  _log.py            # the log: one record stream, two sinks, three hooks
   _json_backend.py   # JSON value backend
   _yaml_backend.py   # YAML value backend
   _env_backend.py    # .env value backend
@@ -361,9 +360,10 @@ src/onconf/
   errors.py          # error taxonomy
 tests/               # one file per module + security invariants
 docs/                # documentation site sources (Chinese)
-  design/init_config.md   # the two faces, bootstrap vs value layer, the three modes
-  design/file_support.md  # value-file selection, return types, backends, vocabulary
-  design/log.md           # logging and audit
+  design/init_config.md    # the two faces, bootstrap vs value layer, the three modes
+  design/file_support.md   # value-file selection, return types, backends, vocabulary
+  design/concurrency.md    # who may write, what a read sees, what the engine will not do
+  design/log.md            # one record stream, two sinks, three hooks
 ```
 
 The module list grows as backends land; `src/onconf/` itself is authoritative.

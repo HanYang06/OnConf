@@ -42,5 +42,5 @@
   三种模式、运行期写路径、使用范式。
 - [`file_support.md`](../design/file_support.md) —— 文件支持：值文件选定、多文件、读回来的类型、
   四个后端、词表、外科手术式回写。
-- [`log.md`](../design/log.md) —— 审计日志。
-- 2.0 的**进程结构还没有设计文稿**，口径暂时只在本目录里。
+- [`concurrency.md`](../design/concurrency.md) —— 并发模型：谁能写、读看到什么、引擎不做的事。
+- [`log.md`](../design/log.md) —— 日志：一份记录流、两个出口、三个口子。

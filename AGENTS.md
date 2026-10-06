@@ -9,7 +9,8 @@
 **OnConf**（发布名 / import 名 / CLI 入口统一为 `onconf`；本目录名 `auto_conf` 与历史
 提交里的 `auto-conf` 是**改名前的旧名**，不要再用）是一个**基于本地文件的进程内配置引擎**。
 
-- 不是服务、不走网络；单机运行，但多进程同时读写不丢更新；
+- 不是服务、不走网络；单机运行，**同一时刻只有一个写者是调用方的部署责任** ——
+  写权限由进程树定（创建实例的进程是属主，`fork` 派生出来的只读），引擎不加锁、不协调；
 - 核心语义是「**文件绝对优先**」：代码不权威，代码只发出写请求；
 - 回写是**外科手术式**的：未被触及的字节（注释、缩进、键序、空行）逐字不动。
 
@@ -98,7 +99,8 @@ docstring，中间不空行：
 - `filterwarnings = ["error"]`：任何 `DeprecationWarning` / `ResourceWarning` 都当场变红。
   断言异常用 `pytest.raises(..., match=...)`（`PT011` 已豁免，不强制）。
 - 涉及文件系统/并发的用例**必须用 `tmp_path`**，不要污染仓库根目录，也不要依赖 CWD；
-  并发要**真的起多进程**验证"不丢更新"，不要在单进程里模拟。
+  跨进程行为要**真的起多进程**验证（另一进程读得到属主写的事实、派生进程拒绝写），
+  不要在单进程里模拟。
 - 涉及回写的用例，除了断言最终值，还要断言**未被触及的字节逐字不变**（注释、缩进、键序）。
 - **覆盖率门槛 90% 由 CI 强制**（当前实测 93.95%）。不要靠排除文件或
   `# pragma: no cover` 凑数。
@@ -118,7 +120,7 @@ docstring，中间不空行：
    （**不匹配** `.gitignore` 里的 `.env` / `.env.*` 模式）。
    另外 `/conf/`、`*.wal`、`audit.log` / `audit-*.log` 都是运行痕迹，不是源码。
 5. **Windows 上环境变量大小写不敏感**；`.env` / 系统环境变量后端要覆盖大小写归一化，
-   不要指望大小写区分两个键。文件锁与 OneDrive / 网盘同步目录会打架，并发测试别放那儿。
+   不要指望大小写区分两个键。OneDrive / 网盘同步目录会打架，跨进程测试别放那儿。
 6. **`mkdocs.yml` 被 `check-yaml` 排除是必须的**，且不能用 `--unsafe` 解决
    （`pymdownx.superfences` 的自定义围栏标签会让安全加载器失败）。权威校验走
    `mkdocs build --strict`。
@@ -140,13 +142,11 @@ docstring，中间不空行：
 ```text
 src/onconf/
   __init__.py        # 对外仅两个面：AutoConf(**engine) 与 conf(key, value=…, doc=…)
-  _engine.py         # 引擎装配、目录约定、回写
-  _core.py           # 对账：三集合算法
+  _engine.py         # 引擎装配、目录约定、回写、属主闸门
+  _core.py           # 对账：补缺 / 补元数据，以及命令行专用的 undeclared
   _vocab.py          # 词表 + JSON Schema
   _textscan.py       # 各后端共用的字节级扫描
-  _lock.py           # 跨进程 OS 锁（兜底路径；LockTimeoutError 定义在这里）
-  _owner.py          # 专职写者：端点选举、IPC、写循环
-  _audit.py          # 强制日志 + append-only 审计
+  _log.py            # 日志：一份记录流、两个出口、三个口子
   _json_backend.py / _yaml_backend.py / _env_backend.py / _toml_backend.py
   errors.py          # 错误分类（EnvSyntaxError 等是 ValueError 子类，不是 ConfError）
 tests/               # 每模块一个文件 + test_security_invariants.py

@@ -4,7 +4,7 @@
 
 对外只有两个面::
 
-    AutoConf(**engine)            配置**引擎自己**：配置目录、值文件类型、日志去向、审计、身份
+    AutoConf(**engine)            配置**引擎自己**：配置目录、值文件类型、日志落点与开关、身份
     conf(key, value=…, doc=…)     干所有的活：读 / 写 / 登记
 
 ``conf`` 的模式靠**参数结构**推断，不是参数：``value`` 位空着就是读，
@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import atexit
-from typing import Any, TypedDict, Unpack
+from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
 from ._core import MISSING
 from ._engine import Engine
@@ -27,6 +27,10 @@ from .errors import (
     KeyNotRegisteredError,
     UnknownEngineParamError,
 )
+
+
+if TYPE_CHECKING:
+    from ._log import EncodeHook, RotateHook, ScrubHook
 
 
 __all__ = [
@@ -54,10 +58,12 @@ class EngineParams(TypedDict, total=False):
     file_name: str
     file_type: str
     no_one_file: bool
-    audit: bool
+    log_path: str
+    log_console: bool
+    log_rotate: RotateHook
+    log_scrub: ScrubHook
+    log_encode: EncodeHook
     flush_window: float
-    lock_timeout: float
-    log: str
     identity: str
 
 
@@ -65,9 +71,10 @@ _engine: Engine | None = None
 
 
 def _sync_at_exit() -> None:
-    """进程退出是一个**提交点**：此刻期望集完整，规则 1 才允许执行。
+    """进程退出是一个**提交点**：把攒着的声明交出去，再收口日志。
 
-    落完盘顺手还回写者身份：端点早一点释放，下一个进程就早一点接上。
+    这里不做任何删除 —— 运行期不删键（见 ``docs/design/concurrency.md``），
+    所以退出只是「把还没交的交出去」。
     """
     if _engine is not None:
         _engine.sync()
@@ -96,11 +103,14 @@ def _check_engine_params(params: dict[str, Any]) -> None:
 def AutoConf(**engine: Unpack[EngineParams]) -> Engine:  # noqa: N802 - 公开 API 就是这个名字
     """配置引擎自己。走约定时可完全不调它；无参数调用 = 把单例**取回来**。
 
-    **引导层不可运行中改**：``home`` / ``file_name`` / ``file_type`` / ``no_one_file`` /
-    ``lock_timeout`` 这些参数决定引擎怎么装配，改了等于改代码。引擎一旦起来再带参数
-    调用会抛 ``ConfError`` —— 要换配置请在第一次调用之前设置。
+    **引导层不可运行中改**：``home`` / ``file_name`` / ``file_type`` / ``no_one_file``
+    这些参数决定引擎怎么装配，改了等于改代码。引擎一旦起来再带参数调用会抛 ``ConfError``
+    —— 要换配置请在第一次调用之前设置。
 
-    值层不受这条限制：值每次都从文件重新读。
+    **写权限由进程树定，不需要谁发誓**：创建这个实例的进程是**属主**，读写、生成词表；
+    ``fork`` 出来的子进程自动只读 —— 内存会被复制，写权不跟着走。``spawn`` / ``subprocess``
+    出来的进程是全新进程，它自己就是属主（Windows 上没有 ``fork``，这条因此不触发）。
+    N 个**平级**进程各自建实例属于调用方的部署问题，引擎不探测、不加锁、不兜底。
     """
     global _engine  # noqa: PLW0603 - 单例的创建与取回
     _check_engine_params(dict(engine))
@@ -110,7 +120,7 @@ def AutoConf(**engine: Unpack[EngineParams]) -> Engine:  # noqa: N802 - 公开 A
     elif engine:
         raise ConfError(
             "引擎已经启动：引导层参数（配置目录 / 值文件名 / 值文件类型 / 多文件开关 / "
-            "日志去向 / 审计 / 身份 / 锁超时）不可运行中改，改了等于改代码。"
+            "日志落点与开关 / 身份）不可运行中改，改了等于改代码。"
             "请在第一次调用之前设置。"
         )
     return _engine

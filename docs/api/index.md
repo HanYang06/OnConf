@@ -8,7 +8,7 @@
 
 | 面 | 职责 |
 |---|---|
-| `AutoConf(**engine)` | 配置**引擎自己**：`home`（配置目录，缺省 `./conf`）、`file_name`（值文件名主干，缺省 `settings`）、`file_type`（用哪个值文件，单值，缺省 `"json"`）、`no_one_file`（多文件：键的 `<路径>:` 前缀寻址 `<home>/<路径>.<ext>`）、`log`（强制日志的去向：`"stderr"` 默认 / `"stdout"` / 文件路径）、`audit`（是否再追加一份 `<home>/audit.log`）、`identity`（写进每行的 `服务@主机` 标记）、`flush_window`（攒批窗口，默认 `0` 即当场落盘）、`lock_timeout`（等 OS 锁的上限）。这些全是**引导层**参数：引擎起来之后不能再改 |
+| `AutoConf(**engine)` | 配置**引擎自己**：`home`（配置目录，缺省 `./conf`）、`file_name`（值文件名主干，缺省 `settings`）、`file_type`（用哪个值文件，单值，缺省 `"json"`）、`no_one_file`（多文件：键的 `<路径>:` 前缀寻址 `<home>/<路径>.<ext>`）、`log_path`（审计文件落点：空串 = `<home>/audit.log`，相对路径按 `<home>` 解析）、`log_console`（是否再刷一份人读的到 `stderr`，缺省开）、`log_rotate` / `log_scrub` / `log_encode`（三个可选钩子：下一批写到哪个文件、落盘前怎么脱敏、最终落盘的字节）、`identity`（写进每行的 `服务@主机` 标记）、`flush_window`（攒批窗口，默认 `0` 即当场落盘）。这些全是**引导层**参数：引擎起来之后不能再改。**写权限不在这里** —— 创建实例的进程是属主，派生出来的只读（见[并发模型](../design/concurrency.md)） |
 | `conf(key, value=MISSING, doc=None)` | 干所有的活：读 / 写 / 登记 |
 
 **后端的主 / 辅**（`file_type` 的取值）：**JSON 是主后端** —— 它是缺省值、能力最完整的一份，

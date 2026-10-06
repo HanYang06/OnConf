@@ -99,10 +99,9 @@ uv python install 3.14
 
 #### Linux
 
-- 关注权限位：只有写者的认证码文件 `schema/settings.key` 被显式收紧到 `0600`
-  （`_owner.authkey_for` 在 `os.link` 之前 `chmod`，硬链接共享 inode）。
-  端点本身是 `ipc.Listener`（Windows 命名管道 / POSIX 下 `schema/` 里的 socket 文件），
-  库没有给它设权限位。
+- 关注文件锁语义：引擎已经不用任何跨进程锁，所以这里没有「NFS / 网络挂载上锁不生效」
+  的问题；但网络挂载上的 `os.replace` 与 `fsync` 语义仍然可能与本地盘不同，跨进程用例
+  请在本地磁盘跑。
 - CI 使用 `ubuntu-latest`，本地能过、CI 不能过时，优先看时区、语言环境（`LC_ALL`）
   与文件系统大小写差异。
 
@@ -479,7 +478,7 @@ $schema 这类以 $ 开头的指令键不参与「清理未知数据」，
 - **`.env` 及其变体**（`.gitignore` 里只有 `.env`、`.env.*`，并放行 `!.env.example`）。
   注意引擎自己的 env 值文件叫 `settings.env`，**不匹配**上面任何一条模式
   （默认布局下靠 `/conf/` 兜底）。示例请写成不含真实值的样例文件；
-- **运行时产物**：`/conf/` 目录、`*.wal` 预写日志、`audit.log` / `audit-*.log` 审计日志；
+- **运行时产物**：`/conf/` 目录、`*.wal` 预写日志、`audit.log` 审计日志；
   这些是本项目自己的运行痕迹，属于产物而非源码；
 - **构建与缓存产物**：`dist/`、`build/`、`site/`、各类 `*_cache/`、`*.egg-info/`；
 - **与本 PR 无关的大文件、二进制与生成物**。
