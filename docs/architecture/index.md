@@ -15,8 +15,8 @@
 | [初始化配置 §5](../design/init_config.md) | 运行期只补缺；文件里已有的值一律只读 | `_core.reconcile` |
 | [文件支持 §6](../design/file_support.md) | 词表只记键、说明、默认值三样 | `_vocab.py` |
 | [文件支持 §7](../design/file_support.md) | 外科手术式回写：未被触及的字节逐字不动 | `_json_backend` 等四个后端 |
-| [路线图 009](../roadmap/index.md) | 外部字符串（值文件名、键内嵌路径）到路径的唯一入口 | `_paths.py`（包含性校验） |
-| [路线图 042](../roadmap/index.md) | 命令行：声明靠静态扫描 `conf(...)`，不执行项目代码 | `_cli.py` |
+| [路线图 2-009](../roadmap/2.x.md) | 外部字符串（值文件名、键内嵌路径）到路径的唯一入口 | `_paths.py`（包含性校验） |
+| [路线图 2-042](../roadmap/2.x.md) | 命令行：声明靠静态扫描 `conf(...)`，不执行项目代码 | `_cli.py` |
 
 ## 当前实现的位置
 
@@ -41,5 +41,5 @@
 [并发模型](../design/concurrency.md)。
 **命令行已交付头两条**（`build` / `sync`），`check` / `get` / `read` / `set` / `diff` /
 `format` 与 `add` / `remove` 未实现；落盘形式与轮转参数、按格式导出词表、把系统环境变量
-当作配置源仍在增量的未来段里 —— 当前不可用。范围与版本以[路线图](../roadmap/index.md)
+当作配置源仍在增量的未来段里 —— 当前不可用。范围与版本以[路线图](../roadmap/README.md)
 为准，本页不重复那份清单。

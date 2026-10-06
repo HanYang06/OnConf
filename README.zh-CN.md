@@ -242,7 +242,7 @@ conf(build_key(), 8080)              # ❌
 | 其余七条命令行 —— `check` / `format` / `diff` / `read` / `get` / `set` / `add` | M5 |
 | 命令行按 `pyproject.toml` / `.gitignore` 收敛扫描范围（现在是固定跳过名单 + 整个项目） | — |
 
-完整清单见[路线图](docs/roadmap/index.md) —— 它是**范围与版本的唯一事实源**（条目编号 +
+完整清单见[路线图](docs/roadmap/README.md) —— 它是**范围与版本的唯一事实源**（条目编号 +
 决策状态 + 版本分配）；[1.0.x](docs/roadmap/1.0.x/roadmap.md) 是已发布那一版的冻结记录。设计文档在
 [`docs/design/`](docs/design/index.md)：[`init_config.md`](docs/design/init_config.md)、
 [`file_support.md`](docs/design/file_support.md) 与 [`log.md`](docs/design/log.md)。
