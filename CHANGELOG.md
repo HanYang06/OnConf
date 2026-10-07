@@ -11,6 +11,8 @@
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-07
+
 ### Changed
 
 - **`EngineParams` 新增 `file_name` / `no_one_file`，`file_type` 的缺省值改为字面 `"json"`**
@@ -36,6 +38,13 @@
 - **`home` 的缺省从「当前目录」改为 `./conf`**。
 - 修复：新建**非 JSON** 值文件时，引擎用写死的 `"{}"` 当种子，TOML / YAML 后端会把它当内容
   解析而报错。现在每种后端各自提供 `EMPTY_TEXT` 种子（JSON 是 `{}`，其余三种是空文本）。
+- **命令行输出统一英文**：命令自己写的文本（标签、计划、摘要、参数帮助、扫描报告）一律英文，
+  不再混中文。库产出的文本（`ConfError` 消息、计划里的 `reason=`）原样透传 —— 后者还要落进
+  审计文件，属于数据而不是 CLI 文案。
+- **本地 pre-commit 钩子精简到「秒级 + 能自动修」**：`git commit` 时只跑行尾 / 空白 /
+  冲突标记与 `ruff check --fix`，外加 `commit-msg` 的约定式提交校验。mypy、pytest、
+  codespell、markdownlint、bandit、pip-audit、zizmor 与各类语法检查一概交给 CI ——
+  本地再跑一遍只会让提交变慢、把贡献者劝退。
 
 ### Added
 
@@ -45,6 +54,17 @@
   `sync` 补缺并删除声明里没有的键（`--no-clean` 只补缺）。两者都支持 `--dry-run`（一个字节
   都不写）与 `--json`；扫不动的调用会被逐条列出，此时 `sync` **拒绝删除任何键**。
   控制台入口从「只打印配置目录」的占位改为 `onconf._cli:main`。
+- **命令行 `onconf check`**：一个字节都不写地对比**三个口径** —— 代码里扫到的声明、词表、
+  值文件 —— 报六类差异（`missing` / `stale` / `default` / `doc` / `unfilled` / `undeclared`），
+  按 `key` 的码位序排。缺省只给 CI 状态（通过回一行、不通过逐条报），`--verbose` 补上落点
+  文件，`--strict` 把 warning 也算作失败；发现问题时以退出码 5 结束。它**不带 `--fix`**：
+  不通过时末行推荐 `onconf sync`。值文件读不出来时以退出码 3 报错，不再抛栈。
+- **命令行 `get` / `set` / `diff` / `format`**：取值（四列 `key` / `value` / `path` / `doc`，
+  同名的键有多少刷多少）、改值（`set` 只改**已有**键，`set --default` 改词表里的默认值并去
+  追踪声明点）、变更历史（`diff` 扫审计日志里全部 `[Change]`，**不读哈希、不建索引**）、
+  重排缩进（`format` 只做 JSON，`--indent` 是唯一触发参数，不给就一个字节都不写）。
+  `--file` 只在多文件模式下有意义：关闭时给它是用法错误（退出码 2），不静默忽略。
+  `set` 的多命中不再交给交互选择：列出编号候选并要求显式给出落点。
 - 新增 `src/onconf/_paths.py`：外部字符串 → 路径的**唯一入口**（五条包含性规则）。
 - `EngineParams` 补上 `lock_timeout` —— 它以前对公开 API 完全不可达（传了会抛
   `UnknownEngineParamError`）。
@@ -57,6 +77,10 @@
   `_audit` 模块 docstring 的 `op=overwrite`、`Engine._log_failure` 那个只为「类型冲突」而存在
   且无人使用的 `message` 形参。
 - 命令行扫描对齐 CPython：带 UTF-8 BOM 的源文件不再被当成语法错误（改用 `utf-8-sig` 读取）。
+- 命令行扫描不再把**变量键的读取**（`conf(APP)`）当成问题：问题清单是给「期望集完不完整」
+  用的，而期望集只由**声明形态**构成 —— 读取不产生持久状态，它的键是不是字面量与期望集无关
+  （[初始化配置](docs/design/init_config.md) §8）。连带修掉一处误伤：项目里只要有一处变量键的
+  读取，问题清单就非空，`sync` 因此拒绝清理任何键。
 
 ### Docs
 
@@ -100,6 +124,10 @@
   [设计稿索引](docs/design/index.md) 下的三份。源码与测试里指向它的节号引用全部清掉
   （不留悬空编号），`AGENTS.md` §3.4 改成「引用现役设计稿的文件名 + 小节」；
   `mkdocs.yml` 导航、codespell / markdownlint 的排除项、PR 与 issue 模板同步。
+- 新增[命令行设计页](docs/design/cli.md)：把命令行矩阵从退役归档按**现行口径**重裁 ——
+  九条命令的语义与分工、统一约定（`--dry-run` 零字节、退出码、`--json` 同源、不做交互选择）、
+  破坏性操作的形态，以及它与运行中进程的关系。路线图命令行条目的「设计关联文件」不再指向
+  「还没落地的部分」清单。
 
 ## [1.0.0] - 2026-10-04
 
@@ -246,7 +274,8 @@ classifier 仍是 `Development Status :: 2 - Pre-Alpha`，页面正文也还写�
 
 - 指令键（`$` 开头）豁免对账，`$schema` 不会被规则 1 清掉（`787360e`）。
 
-[Unreleased]: https://github.com/HanYang06/OnConf/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/HanYang06/OnConf/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/HanYang06/OnConf/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/HanYang06/OnConf/compare/3ef3f4f...v1.0.0
 [0.1.0]: https://github.com/HanYang06/OnConf/compare/3ef3f4f...d166050
 

@@ -176,9 +176,12 @@ onconf sync  [--home DIR] [--file-name NAME] [--file-type TYPE] [--no-one-file]
 `--dry-run` 一个字节都不写。扫描范围默认为当前项目（固定跳过 `.git` / `.venv` /
 缓存目录等），`pyproject.toml` / `.gitignore` 的收敛留待后续版本。
 
-> 其余七条命令（`check` / `format` / `diff` / `read` / `get` / `set` / `add`）
-> **尚未实现**。**运行期不清理未声明的键**已经落地：删除只走 `onconf sync` 这一条
-> 离线路径。口径见[并发模型](concurrency.md)。
+> 其余两条命令（`add` / `log`）
+> **尚未实现**（`read` 后移，取决于日志能否二进制落盘）。**运行期不清理未声明的键**已经落地：
+> 删除只走 `onconf sync` 这一条离线路径。口径见[并发模型](concurrency.md)。
+
+九条命令的完整矩阵 —— 每条的语义、入参、破坏性、退出码与统一约定 —— 见[命令行](cli.md)；
+本页只保留「收敛与清理归命令行」这条判据。
 
 ## 7. 目录约定
 
@@ -255,7 +258,7 @@ conf(build_key(), 8080)                               # ❌
 |---|---|
 | 命令行 `check` 走「不产生记录」的只读路径（因此不落盘、不建目录） | [路线图 2-043](../roadmap/2.x.md) |
 | 落盘形式（含加密）与轮转参数 | [路线图 2-036](../roadmap/2.x.md) |
-| 其余命令行（`get` / `read` / `set` / `diff` / `format`）与 `add` / `remove` | [路线图 2-044](../roadmap/2.x.md)、[路线图 2-045](../roadmap/2.x.md) |
+| 其余命令行（`get` / `set` / `diff` / `format`）与 `add` / `log`、`read` | [路线图 2-044](../roadmap/2.x.md)、[路线图 2-045](../roadmap/2.x.md)、[路线图 2-073](../roadmap/2.x.md) |
 | `check` 按「声明处字面量」出 warning | [路线图 2-006](../roadmap/2.x.md) |
 | `.env` 的 `dict` / `list` 开关 | [路线图 2-038](../roadmap/2.x.md) |
 

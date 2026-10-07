@@ -182,14 +182,22 @@ def is_directive(key: str) -> bool:
     return key.startswith(DIRECTIVE_PREFIX)
 
 
+def meta_diff(entry: VocabEntry, decl: Decl) -> tuple[bool, bool]:
+    """词表条目与声明的两处差异：``(默认值不一致, 说明不一致)``。
+
+    判据只有这一处 —— :func:`_meta_stale` 把它并成一个布尔量给运行期用，
+    ``check`` 拆开按两类报，两边不会走偏。
+    """
+    want = NO_VALUE if decl.value is MISSING else decl.value
+    return bool(entry.default != want), entry.doc != decl.doc
+
+
 def _meta_stale(entry: VocabEntry | None, decl: Decl) -> bool:
     """词表是否需要更新：说明、或**默认值指纹**有变。"""
     if entry is None:
         return True
-    if entry.doc != decl.doc:
-        return True
-    want = NO_VALUE if decl.value is MISSING else decl.value
-    return bool(entry.default != want)
+    default_differs, doc_differs = meta_diff(entry, decl)
+    return default_differs or doc_differs
 
 
 def reconcile(

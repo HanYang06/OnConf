@@ -201,7 +201,7 @@ AutoConf(log_encode=encrypt)  # 最终落盘的字节：加密 / 压缩都挂这
 
 ## 命令行
 
-九条计划命令里已实现两条。它们靠**扫描项目里的 `conf(...)` 调用**找到声明
+九条计划命令里已实现七条。它们靠**扫描项目里的 `conf(...)` 调用**找到声明
 （只做语法分析，**不 import 你的代码**）：
 
 ```console
@@ -209,8 +209,17 @@ onconf build                # 按声明完整重建值文件与词表（先备�
 onconf build --path ./out   # 整份重建写到别处；原目录一个字节不动
 onconf sync                 # 补缺，然后删掉声明里没有的键
 onconf sync --no-clean      # 只补缺，一个键都不删
+onconf check                # 只读体检：代码 / 词表 / 值文件对不上就逐条报
+onconf check --verbose      # 细节模式：每条再补上落在哪个文件
+onconf get app.port         # 取值：key / value / path / doc 四列
+onconf set app.port 8080    # 改一个已有键的值（不建新键）
+onconf set --default app.port 8080   # 改词表里的默认值（不改代码）
+onconf diff                 # 审计日志里记下的变更，一行一条
+onconf format --indent 2    # 重排 JSON 值文件的缩进（不给 --indent 就不写字节）
 ```
 
 `--home` / `--file-name` / `--file-type` / `--no-one-file` 与 `AutoConf` 的参数一一对应；
 `--dry-run` 一个字节都不写；`--json` 输出同一份数据的机器可读形态。实参不是字面量的调用
 扫不动，会被逐条列出来——此时 `sync` **拒绝删除任何键**。
+
+`check` 不写一个字节、不带 `--fix`：不通过时它只把差异列出来，末行推荐 `onconf sync`。

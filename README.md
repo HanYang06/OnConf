@@ -249,7 +249,7 @@ whatever key was registered.
 | **Logging = audit** — one record stream, two sinks. The **file** sink is always on (`log_path`, default `<home>/audit.log`): append-only, `0600`, compact `key=value`, full dates, **never truncated**. The **console** sink (`stderr`) can be switched off (`log_console=False`) and, on a TTY, is coloured by `rich` — imported lazily in that branch only, so the mandatory path and pipes never pay for it and never see ANSI. Levels are `[Read]` / `[Write]` / `[Change]` / `[Error]` plus `[Start]`; writes are logged in full (including `op=skip` "wanted to change, respected the file" and `op=noop` "this batch's declaration was already satisfied"), reads are de-duplicated per transaction (`n=1000`); every write carries its call site (`at=app/config.py:12`), the pid and the optional `identity=`. Three optional hooks — `log_rotate` (which file the next batch goes to; **rotation changes the sink, it never renames a file**), `log_scrub` (redact a record before it lands) and `log_encode` (the final bytes on disk) — all default to *do nothing*. See the [log design](docs/design/log.md) | ✅ |
 | **No runtime cleanup** — the runtime only fills what is missing and updates vocabulary metadata; it never deletes a key. Deletion lives in `onconf sync` (offline, one shot, over a complete declaration set) | ✅ |
 | Test suite — one file per module plus security invariants | ✅ green locally; CI runs it on ubuntu / windows / macos |
-| **CLI (first two commands)** — `onconf build` rebuilds the value file(s) and the vocabulary from the declarations (`--path` writes the whole rebuild into a new directory instead); `onconf sync` fills what is missing and deletes keys the declarations do not know (`--no-clean` keeps them). Declarations are found by **scanning the project for `conf(...)` calls** and reading their arguments — the single-function API is what makes that possible. Both commands support `--dry-run` (writes nothing) and `--json`; `sync` refuses to delete anything when some call could not be read statically | ✅ `build` / `sync`; the other seven commands are not implemented |
+| **CLI (seven commands)** — `onconf build` rebuilds the value file(s) and the vocabulary from the declarations (`--path` writes the whole rebuild into a new directory instead); `onconf sync` fills what is missing and deletes keys the declarations do not know (`--no-clean` keeps them). Declarations are found by **scanning the project for `conf(...)` calls** and reading their arguments — the single-function API is what makes that possible. Both commands support `--dry-run` (writes nothing) and `--json`; `sync` refuses to delete anything when some call could not be read statically. `onconf check` compares **three** things without writing a single byte — the declarations found in code, the vocabulary and the value files — and reports `missing` / `stale` / `default` / `doc` / `unfilled` / `undeclared`; `--verbose` adds the file each finding lives in, `--strict` counts warnings as failures. `onconf get` prints `key` / `value` / `path` / `doc` for every file that holds the key, `onconf set` changes the value of an existing key (or the vocabulary default, with `--default`), `onconf diff` lists the changes recorded in the audit log, and `onconf format --indent N` re-indents JSON value files | ✅ `build` / `sync` / `check` / `get` / `set` / `diff` / `format`; `add` / `log` are not implemented |
 
 ## Roadmap — not available yet
 
@@ -262,7 +262,8 @@ Do not plan around these; they are **not implemented**:
 | System environment variables as a configuration **source** (`ONCONF_HOME` only locates the config dir) | — |
 | Per-format vocabulary export | — |
 | `.env` `dict` / `list` values — behind the `env_file_dict` / `env_file_list` booleans (both default off); scalars stay strings | 2.2 (planned) |
-| The other seven CLI commands — `check` / `format` / `diff` / `read` / `get` / `set` / `add` | M5 |
+| The other two CLI commands — `add` / `log` | 2.1 |
+| `read` (file-level raw read) — deferred: it is only needed if the log can land as binary (`log_encode`); otherwise there is no raw byte to read back | — |
 | `.pyproject.toml` / `.gitignore`-aware scan scope for the CLI (today it walks the project with a fixed skip list) | — |
 
 See the [roadmap](docs/roadmap/README.md) for the full breakdown — it is the **single source of
@@ -270,7 +271,8 @@ truth for scope and versions** (numbered entries, decision state, version assign
 [1.0.x](docs/roadmap/1.0.x/roadmap.md) is the frozen record of what shipped. The design docs
 live under
 [`docs/design/`](docs/design/index.md) (Chinese): [`init_config.md`](docs/design/init_config.md),
-[`file_support.md`](docs/design/file_support.md) and [`log.md`](docs/design/log.md).
+[`file_support.md`](docs/design/file_support.md), [`concurrency.md`](docs/design/concurrency.md),
+[`log.md`](docs/design/log.md) and [`cli.md`](docs/design/cli.md).
 
 ## Quality gates
 
@@ -365,6 +367,7 @@ docs/                # documentation site sources (Chinese)
   design/file_support.md   # value-file selection, return types, backends, vocabulary
   design/concurrency.md    # who may write, what a read sees, what the engine will not do
   design/log.md            # one record stream, two sinks, three hooks
+  design/cli.md            # the command matrix: semantics, exit codes, what writes bytes
 ```
 
 The module list grows as backends land; `src/onconf/` itself is authoritative.

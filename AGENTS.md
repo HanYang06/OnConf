@@ -32,7 +32,7 @@ uv run pytest --cov --cov-report=term-missing # 带覆盖率（门槛 90%，见�
 uv run ruff check --fix .                     # lint 并自动修复
 uv run mypy                                   # 严格类型检查（files = src, tests）
 uv run ruff format .                          # 格式化（manual，见 §5 坑 1）
-uv run pre-commit run --all-files             # 本地全量检查
+uv run pre-commit run --all-files             # 本地钩子（精简集；完整检查在 CI）
 uv run mkdocs serve                           # 文档站预览
 uv version --short --frozen                   # 读版本号（只读，不动 lock/venv）
 uv version --bump patch                       # 自增版本（同时改 pyproject + uv.lock）
@@ -122,9 +122,9 @@ docstring，中间不空行：
    另外 `/conf/`、`*.wal`、`audit.log` / `audit-*.log` 都是运行痕迹，不是源码。
 5. **Windows 上环境变量大小写不敏感**；`.env` / 系统环境变量后端要覆盖大小写归一化，
    不要指望大小写区分两个键。OneDrive / 网盘同步目录会打架，跨进程测试别放那儿。
-6. **`mkdocs.yml` 被 `check-yaml` 排除是必须的**，且不能用 `--unsafe` 解决
-   （`pymdownx.superfences` 的自定义围栏标签会让安全加载器失败）。权威校验走
-   `mkdocs build --strict`。
+6. **`mkdocs.yml` 不走普通 YAML 校验**：`pymdownx.superfences` 的自定义围栏标签会让安全
+   加载器失败，而 `--unsafe` 又等于把校验钩子变成代码执行面。权威校验是
+   `mkdocs build --strict`（CI 的 docs job 跑它）。
 7. 依赖版本改动请走 `uv add` / `uv lock`，不要手写 `uv.lock`。
 
 ## 6. 文档同步（用户可见变更的硬要求）
