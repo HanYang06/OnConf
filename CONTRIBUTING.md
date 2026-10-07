@@ -130,32 +130,31 @@ uv run pre-commit install --install-hooks
 
 ### 3.2 提交前会发生什么
 
-执行 `git commit` 时，pre-commit 会依次跑这些钩子（多数只看**本次改动的文件**）：
+**本地钩子只有精简的一小撮。** 完整检查在 CI 里跑（`.github/workflows/ci.yml`），本地再跑
+一遍只会让提交变慢、把贡献者劝退。留下的都是**秒级、而且失败时自己就把文件改好**的。
 
-- 行尾与空白字符检查 —— 确认文件是 UTF-8、LF 行尾、文件末尾有且只有一个换行；
-- 文件完整性检查 —— 大文件、私钥、冲突标记、YAML / TOML / JSON 语法；
-- `ruff check` —— lint（含自动修复）；
-- `mypy` —— 严格类型检查（`--strict`，配置见 `pyproject.toml`）；
-- `codespell` —— 拼写检查；
-- `bandit` —— `src/` 安全静态扫描；
-- `zizmor` —— GitHub Actions 安全审计。
+执行 `git commit` 时，pre-commit 会依次跑：
 
-还有几个钩子挂在**别的阶段**，不在 `git commit` 的主流程里：
+- 行尾与空白 —— 统一 LF、去掉行尾空白、保证文件末尾有且只有一个换行（自动修）；
+- 冲突标记 —— 拦住没清干净的 `<<<<<<<`；
+- `ruff check` —— lint，带 `--fix`（自动修）。
 
-- `conventional-pre-commit` —— 挂在 `commit-msg` 阶段，校验提交信息符合 Conventional Commits；
-- `ruff format` —— **只在 manual 阶段**（`.pre-commit-config.yaml` 里写死 `stages: [manual]`）：
-  团队约定暂不重排既有排版，要跑得显式调
-  `uv run pre-commit run ruff-format --hook-stage manual --all-files`；
-- `pip-audit` 与 `mkdocs-build` —— 同样是 manual 阶段；`pytest` 挂在 `pre-push`。
+还有一个挂在 `commit-msg` 阶段：
 
-任何一项失败，提交就会被拦下。这是**预期行为**，不是环境坏了：
+- `conventional-pre-commit` —— 校验提交信息符合 Conventional Commits。
 
-- hook 自动改了文件（`ruff check --fix` / 行尾修正）⇒ 改动留在工作区，
-  你确认后再 `git add` 一次、重新提交即可；
-- hook 报了无法自动修的问题 ⇒ 按提示改代码，然后重新提交。
+`ruff format` 只在 **manual 阶段**（配置里写死 `stages: [manual]`）：团队约定暂不重排既有
+排版，要跑得显式调 `uv run pre-commit run ruff-format --hook-stage manual --all-files`。
 
-**不要用 `git commit --no-verify` 绕过 hooks。** CI 会再跑一遍同样的检查，
-绕过去只会把问题推迟到 PR 上。
+**本地不跑的，CI 会跑**：mypy、pytest + 覆盖率、codespell、markdownlint、bandit、
+pip-audit、zizmor、gitleaks，以及大文件 / 私钥 / YAML / TOML / JSON 的语法检查。
+想提交前自查，照 §2 的命令逐个跑即可。
+
+hook 自动改了文件（`ruff check --fix` / 行尾修正）⇒ 改动留在工作区，你确认后再
+`git add` 一次、重新提交即可。
+
+**不要用 `git commit --no-verify` 绕过钩子。** CI 会再跑一遍同样的检查，绕过去只是把问题
+推迟到 PR 上。
 
 ### 3.3 手动跑
 

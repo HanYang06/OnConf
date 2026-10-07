@@ -1,29 +1,22 @@
 # ============================================================================
 # pre-commit —— 提交前把关
 #
-# 设计取舍（为什么是现在这个样子）：
+# **本地只留「秒级 + 能自动修」的钩子。** 完整检查在 CI 里跑一遍就够了
+# （ruff check / ruff format --check / codespell / markdownlint / notices /
+# actionlint / mypy / pytest + 覆盖率 / bandit / pip-audit / zizmor / gitleaks，
+# 见 .github/workflows/ci.yml）——本地再跑一遍只会让提交变慢、把贡献者劝退。
 #
-# 1. **工具全部走 `uv run`（repo: local + language: system）**
-#    本项目已经在 pyproject.toml 的 dev 组里锁定了 ruff / mypy / codespell /
-#    bandit / zizmor 的版本。如果再用 pre-commit 的独立 hook 仓库，会出现
-#    「hook 用的 ruff 版本 ≠ uv.lock 里的 ruff 版本」这种最难查的不一致。
-#    走 `uv run` 后，版本只有一个来源：uv.lock。
+# 留下的两类：
+#   1. 提交信息的格式：一条消息就是 PR 标题的来源，值得当场校验；
+#   2. 秒级且**能自己修好**的：ruff lint、行尾 / 空白、冲突标记。
 #
-# 2. **actionlint 与 gitleaks 不放这里**
-#    这两个 hook 的官方 pre-commit 实现是 `language: golang`，而本机没有 Go
-#    工具链（也没有 Docker 兜底），写进来会让第一次 `pre-commit install` 就失败。
-#    它们改在 CI 里通过官方 Action 运行，见 .github/workflows/ci.yml。
+# 刻意不在这里的（CI 已经覆盖）：
+#   - mypy / pytest / bandit / pip-audit / zizmor / codespell / markdownlint
+#     —— 慢，或者要联网；
+#   - 大文件 / 私钥 / YAML / TOML / JSON 语法 —— 不是高频事故；
+#   - `ruff format` 只在 manual 阶段：团队约定暂不重排既有排版。
 #
-# 3. **ruff format 只在 manual 阶段**
-#    现有 7 个文件尚未按 ruff format 排版，团队决定暂不重排（会产生与在途开发
-#    冲突的大 diff）。所以它只在你显式调用时运行：
-#        uv run pre-commit run ruff-format --hook-stage manual --all-files
-#    CI 侧的 `ruff format --check` 同样是非阻塞的。
-#
-# 4. **没有 no-commit-to-branch**
-#    分支保护在服务端：ruleset `main` 禁止删除与强推，并要求 CodeQL 对目标提交给出
-#    结果 ⇒ `main` 直推会被 GitHub 拒（GH013）。本地钩子再加一道只会拦住「按规范切
-#    分支干活」的正常流程，所以不加。改动一律走「推分支 → 开 PR」，见 CONTRIBUTING §5。
+# 工具一律走 `uv run`（repo: local + language: system）：版本只有一个来源 uv.lock。
 # ============================================================================
 
 minimum_pre_commit_version: "4.0.0"
@@ -31,51 +24,6 @@ fail_fast: false
 default_stages: [pre-commit]
 
 repos:
-  # --------------------------------------------------------------------------
-  # 通用防线：由 pre-commit 官方维护，纯 Python，无额外工具链依赖
-  # --------------------------------------------------------------------------
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # v6.0.0
-    hooks:
-      - id: check-added-large-files
-        name: check-added-large-files（禁止提交大文件）
-        args: [--maxkb=1024]
-      - id: check-case-conflict
-        name: check-case-conflict（大小写不敏感文件系统上的重名冲突）
-      - id: check-illegal-windows-names
-        name: check-illegal-windows-names（Windows 非法文件名）
-      - id: check-merge-conflict
-        name: check-merge-conflict（合并冲突残留）
-      - id: check-symlinks
-        name: check-symlinks（指向不存在目标的符号链接）
-      - id: destroyed-symlinks
-        name: destroyed-symlinks（被当成普通文件提交的符号链接）
-      - id: check-toml
-        name: check-toml
-      - id: check-yaml
-        name: check-yaml
-        args: [--allow-multiple-documents]
-        # mkdocs.yml 被排除是必须的，而且**不能**靠加 --unsafe 解决：
-        # MkDocs Material 的 pymdownx.superfences 自定义围栏依赖
-        # `!!python/name:pymdownx.superfences.fence_code_format` 标签，安全加载器
-        # 解析不了；而 --unsafe 会让这个钩子对任意 YAML 执行构造器
-        # （!!python/object/apply 之类），等于把校验钩子变成代码执行面。
-        # 权威校验交给文件末尾的 mkdocs-build 钩子（manual 阶段）
-        # 与 .github/workflows/docs.yml 里的 `mkdocs build --strict`。
-        exclude: ^mkdocs\.yml$
-      - id: check-json
-        name: check-json
-      - id: detect-private-key
-        name: detect-private-key（私钥绝不入库）
-      - id: end-of-file-fixer
-        name: end-of-file-fixer（末尾单换行）
-      - id: mixed-line-ending
-        name: mixed-line-ending（统一 LF —— 与 .gitattributes 一致）
-        args: [--fix=lf]
-      - id: trailing-whitespace
-        name: trailing-whitespace（Markdown 行尾双空格保留）
-        args: [--markdown-linebreak-ext=md]
-
   # --------------------------------------------------------------------------
   # 提交信息规范：Conventional Commits，允许中文 subject
   # --------------------------------------------------------------------------
@@ -102,6 +50,23 @@ repos:
           - style
 
   # --------------------------------------------------------------------------
+  # 文件卫生：毫秒级，且失败时自己就把文件改好了
+  # --------------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # v6.0.0
+    hooks:
+      - id: check-merge-conflict
+        name: check-merge-conflict（合并冲突残留）
+      - id: end-of-file-fixer
+        name: end-of-file-fixer（文件末尾单换行）
+      - id: mixed-line-ending
+        name: mixed-line-ending（统一 LF —— 与 .gitattributes 一致）
+        args: [--fix=lf]
+      - id: trailing-whitespace
+        name: trailing-whitespace（行尾空白；Markdown 行尾双空格保留）
+        args: [--markdown-linebreak-ext=md]
+
+  # --------------------------------------------------------------------------
   # 项目自有检查：一律 `uv run`，版本由 uv.lock 单一事实来源决定
   # --------------------------------------------------------------------------
   - repo: local
@@ -118,55 +83,4 @@ repos:
         entry: uv run ruff format --force-exclude
         language: system
         types_or: [python, pyi]
-        stages: [manual]
-
-      - id: mypy
-        name: mypy --strict（配置来自 pyproject.toml 的 [tool.mypy]）
-        entry: uv run mypy
-        language: system
-        types_or: [python, pyi]
-        pass_filenames: false
-        require_serial: true
-
-      - id: codespell
-        name: codespell（拼写检查）
-        entry: uv run codespell
-        language: system
-        types: [text]
-
-      - id: bandit
-        name: bandit（src/ 安全静态扫描）
-        entry: uv run bandit -c pyproject.toml -r src -q
-        language: system
-        files: ^src/.*\.py$
-        pass_filenames: false
-
-      - id: zizmor
-        name: zizmor（GitHub Actions 安全审计）
-        entry: uv run zizmor .github/workflows
-        language: system
-        files: ^\.github/workflows/.*\.ya?ml$
-        pass_filenames: false
-
-      - id: pytest
-        name: pytest（推送前跑一遍单测）
-        entry: uv run pytest -q
-        language: system
-        types: [python]
-        pass_filenames: false
-        stages: [pre-push]
-
-      - id: pip-audit
-        name: pip-audit（依赖漏洞审计，手动阶段：需要联网）
-        entry: uv run pip-audit
-        language: system
-        pass_filenames: false
-        stages: [manual]
-
-      - id: mkdocs-build
-        name: mkdocs build --strict（手动阶段：需要 docs 依赖组）
-        entry: uv run mkdocs build --strict
-        language: system
-        files: ^(docs/|mkdocs\.yml)
-        pass_filenames: false
         stages: [manual]
