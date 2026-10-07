@@ -108,11 +108,11 @@ _MAX_POSITIONAL = 3
 
 #: 一条 ``sync`` 计划里的动作类型 → 人类可读的动词
 _ACTION_LABEL = {
-    "clean": "删除",
-    "fill": "补写",
-    "register": "登记",
-    "update_meta": "更新词表",
-    "skip": "尊重文件",
+    "clean": "delete",
+    "fill": "fill",
+    "register": "register",
+    "update_meta": "update-meta",
+    "skip": "keep",
 }
 
 
@@ -223,23 +223,23 @@ def _read_call(node: ast.Call, where: str) -> Finding | str | None:
 
     ok, key = _literal(key_node)
     if not ok:
-        return f"key 不是字面量（第 {key_node.lineno} 行）"
+        return f"key is not a literal (line {key_node.lineno})"
     if not isinstance(key, str):
-        return f"key 不是字符串（第 {key_node.lineno} 行拿到 {type(key).__name__}）"
+        return f"key is not a string (line {key_node.lineno}: got {type(key).__name__})"
 
     value: Any = MISSING
     if value_node is not None:
         ok, value = _literal(value_node)
         if not ok:
-            return f"键 {key!r} 的值不是字面量（第 {value_node.lineno} 行）"
+            return f"value of {key!r} is not a literal (line {value_node.lineno})"
 
     doc: str | None = None
     if doc_node is not None:
         ok, raw_doc = _literal(doc_node)
         if not ok:
-            return f"键 {key!r} 的 doc 不是字面量（第 {doc_node.lineno} 行）"
+            return f"doc of {key!r} is not a literal (line {doc_node.lineno})"
         if raw_doc is not None and not isinstance(raw_doc, str):
-            return f"键 {key!r} 的 doc 不是字符串（拿到 {type(raw_doc).__name__}）"
+            return f"doc of {key!r} is not a string (got {type(raw_doc).__name__})"
         doc = raw_doc
 
     return Finding(key=key, value=value, doc=doc, where=where)
@@ -252,23 +252,23 @@ def _call_nodes(node: ast.Call) -> tuple[ast.expr, ast.expr | None, ast.expr | N
     关键字写法只在**没写位置参数**时才顶上来（两者同时给就是写法冲突）。
     """
     if any(kw.arg is None for kw in node.keywords):
-        return "带 `**kwargs` 的调用无法静态解读"
+        return "a call with `**kwargs` cannot be read statically"
     keyword: dict[str, ast.expr] = {}
     for kw in node.keywords:
         if kw.arg is None:  # pragma: no cover - 上面那行已经挡了
-            return "带 `**kwargs` 的调用无法静态解读"
+            return "a call with `**kwargs` cannot be read statically"
         keyword[kw.arg] = kw.value
     unknown = set(keyword) - _CONF_KEYWORDS
     if unknown:
-        return f"不认识的参数 {sorted(unknown)}"
+        return f"unknown parameter(s) {sorted(unknown)}"
     if len(node.args) > _MAX_POSITIONAL:
-        return f"位置参数超过 {_MAX_POSITIONAL} 个（拿到 {len(node.args)} 个）"
+        return f"more than {_MAX_POSITIONAL} positional arguments ({len(node.args)} given)"
     if "value" in keyword and len(node.args) > _VALUE_POSITION:
-        return "value 同时给了位置参数与关键字参数"
+        return "value given both positionally and as a keyword"
 
     key_node = node.args[0] if node.args else keyword.get("key")
     if key_node is None:
-        return "没有 key"
+        return "no key"
     value_node = keyword.get("value")
     if value_node is None and len(node.args) > _VALUE_POSITION:
         value_node = node.args[_VALUE_POSITION]
@@ -288,12 +288,14 @@ def scan_project(root: Path) -> Scan:
             # 而 ``ast.parse`` 收到带 BOM 的**字符串**会直接报语法错误 —— 这里对齐前者。
             source = path.read_text(encoding="utf-8-sig")
         except (OSError, UnicodeDecodeError) as exc:
-            scan.problems.append(f"{_relative(path, root)}: 读不出来（{exc}）")
+            scan.problems.append(f"{_relative(path, root)}: cannot be read ({exc})")
             continue
         try:
             tree = ast.parse(source, filename=str(path))
         except SyntaxError as exc:
-            scan.problems.append(f"{_relative(path, root)}:{exc.lineno}: 语法错误，无法扫描")
+            scan.problems.append(
+                f"{_relative(path, root)}:{exc.lineno}: syntax error, cannot be scanned"
+            )
             continue
 
         direct, modules = _conf_aliases(tree)
@@ -320,7 +322,8 @@ def scan_project(root: Path) -> Scan:
                 continue
             if previous.value != outcome.value:
                 scan.notes.append(
-                    f"键 {outcome.key!r} 声明了多次，以 {where} 为准（前一次在 {previous.where}）"
+                    f"{outcome.key!r} is declared more than once; {where} wins "
+                    f"(previous: {previous.where})"
                 )
             merged[outcome.key] = outcome
 
@@ -498,28 +501,28 @@ def _run_sync(
 
 def _print_human(payload: dict[str, Any]) -> None:
     print(f"onconf {payload['command']}")  # noqa: T201 - 命令行的输出就是它的职责
-    print(f"  配置目录 : {payload['home']}")  # noqa: T201
-    print(f"  值文件   : {payload['file_name']}{payload['file_suffix']}")  # noqa: T201
+    print(f"  home        : {payload['home']}")  # noqa: T201
+    print(f"  values      : {payload['file_name']}{payload['file_suffix']}")  # noqa: T201
     if payload["multi_file"]:
-        print("  多文件   : 开（键里的 `<路径>:` 决定落点）")  # noqa: T201
+        print("  multi-file  : on (the `<path>:` prefix in a key decides the file)")  # noqa: T201
     if payload.get("output"):
-        print(f"  重建到   : {payload['output']}")  # noqa: T201
+        print(f"  output      : {payload['output']}")  # noqa: T201
     for item in payload["declarations"]:
-        value = repr(item["value"]) if item["has_value"] else "（只登记，无值）"
-        print(f"  声明     : {item['key']} = {value}   [{item['where']}]")  # noqa: T201
+        value = repr(item["value"]) if item["has_value"] else "(registered, no value)"
+        print(f"  declared    : {item['key']} = {value}   [{item['where']}]")  # noqa: T201
     for item in payload["plan"]:
         if "key" in item:
             label = _ACTION_LABEL.get(item["kind"], item["kind"])
-            print(f"  {label:<6} : {item['key']}  {item.get('reason', '')}".rstrip())  # noqa: T201
+            print(f"  {label:<12}: {item['key']}  {item.get('reason', '')}".rstrip())  # noqa: T201
         else:
-            print(f"  {item['kind']:<6} : {item['file']}  键 {item['keys']} 条")  # noqa: T201
+            print(f"  {item['kind']:<12}: {item['file']}  ({item['keys']} keys)")  # noqa: T201
     for problem in payload["problems"]:
-        print(f"  ! 读不懂 : {problem}")  # noqa: T201
+        print(f"  ! unreadable: {problem}")  # noqa: T201
     for note in payload["notes"]:
-        print(f"  · 提醒   : {note}")  # noqa: T201
+        print(f"  · note      : {note}")  # noqa: T201
     if payload["dry_run"]:
-        print("  （--dry-run：一个字节都没写）")  # noqa: T201
-    print(f"  合计     : {payload['summary']}")  # noqa: T201
+        print("  (--dry-run: nothing was written)")  # noqa: T201
+    print(f"  total       : {payload['summary']}")  # noqa: T201
 
 
 def _emit(payload: dict[str, Any], *, as_json: bool) -> None:
@@ -547,25 +550,35 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="onconf", description="本地文件配置引擎的命令行")
+    parser = argparse.ArgumentParser(prog="onconf", description="the OnConf command line")
     sub = parser.add_subparsers(dest="command", required=True)
 
     def common(target: argparse.ArgumentParser) -> None:
-        target.add_argument("--home", default=None, help="配置目录（缺省 ./conf 或 ONCONF_HOME）")
-        target.add_argument("--file-name", default=DEFAULT_FILE_NAME, help="值文件名主干")
-        target.add_argument("--file-type", default=DEFAULT_FILE_TYPE, help="值文件类型")
-        target.add_argument("--no-one-file", action="store_true", help="多文件：键里内嵌路径")
-        target.add_argument("--dry-run", action="store_true", help="只打印要做什么，不写一个字节")
-        target.add_argument("--json", action="store_true", help="机器可读输出")
+        target.add_argument(
+            "--home", default=None, help="config directory (default ./conf or ONCONF_HOME)"
+        )
+        target.add_argument("--file-name", default=DEFAULT_FILE_NAME, help="value file name stem")
+        target.add_argument("--file-type", default=DEFAULT_FILE_TYPE, help="value file type")
+        target.add_argument(
+            "--no-one-file", action="store_true", help="multi-file: a key carries its path"
+        )
+        target.add_argument(
+            "--dry-run", action="store_true", help="print what would happen; write nothing"
+        )
+        target.add_argument("--json", action="store_true", help="machine-readable output")
 
-    build = sub.add_parser("build", help="完整重建值文件与词表")
+    build = sub.add_parser("build", help="rebuild the value file(s) and the vocabulary")
     common(build)
-    build.add_argument("--path", default=None, help="重建产物的输出目录（原目录一个字节不动）")
+    build.add_argument(
+        "--path", default=None, help="write the rebuild here; the original stays untouched"
+    )
     build.set_defaults(handler=_cmd_build)
 
-    sync = sub.add_parser("sync", help="收敛到声明集：补缺（缺省还删除未声明的键）")
+    sync = sub.add_parser(
+        "sync", help="converge to the declarations: fill, and delete undeclared keys"
+    )
     common(sync)
-    sync.add_argument("--no-clean", action="store_true", help="只补缺，不删除任何键")
+    sync.add_argument("--no-clean", action="store_true", help="fill only; delete nothing")
     sync.set_defaults(handler=_cmd_sync)
     return parser
 
@@ -613,8 +626,8 @@ def _cmd_build(args: argparse.Namespace) -> int:
     )
     files = sum(1 for item in payload["plan"] if item["kind"] == "rebuild")
     payload["summary"] = (
-        f"重建 {len(decls)} 条声明、{files} 个值文件 → {out}"
-        + ("（--dry-run 预览）" if args.dry_run else "")
+        f"rebuilt {len(decls)} declaration(s) into {files} value file(s) -> {out}"
+        + (" (--dry-run preview)" if args.dry_run else "")
     )
     _emit(payload, as_json=args.json)
     return 0
@@ -628,8 +641,8 @@ def _cmd_sync(args: argparse.Namespace) -> int:
 
     if clean and scan.problems:
         payload["summary"] = (
-            f"期望集不完整（{len(scan.problems)} 处读不懂）：拒绝删除任何键；"
-            "确认无误请加 --no-clean，或把那些调用改成字面量"
+            f"incomplete declaration set ({len(scan.problems)} unreadable call(s)): "
+            "refusing to delete any key; add --no-clean, or make those calls literal"
         )
         _emit(payload, as_json=args.json)
         return 1
@@ -648,8 +661,9 @@ def _cmd_sync(args: argparse.Namespace) -> int:
     payload["plan"] = [_action_json(action) for action in actions]
     payload["clean"] = clean
     payload["summary"] = (
-        f"{_count_kinds(actions)}；{'删除未声明的键' if clean else '不删任何键（--no-clean）'}"
-        + ("（--dry-run 预览）" if args.dry_run else "")
+        f"{_count_kinds(actions)}; "
+        + ("deleted undeclared keys" if clean else "deleted nothing (--no-clean)")
+        + (" (--dry-run preview)" if args.dry_run else "")
     )
     _emit(payload, as_json=args.json)
     return 0
@@ -657,11 +671,11 @@ def _cmd_sync(args: argparse.Namespace) -> int:
 
 def _count_kinds(actions: Sequence[Action]) -> str:
     if not actions:
-        return "无事可做"
+        return "nothing to do"
     counts: dict[str, int] = {}
     for action in actions:
         counts[action.kind] = counts.get(action.kind, 0) + 1
-    return "、".join(f"{kind}×{count}" for kind, count in sorted(counts.items()))
+    return ", ".join(f"{kind} x{count}" for kind, count in sorted(counts.items()))
 
 
 if __name__ == "__main__":  # pragma: no cover - 控制台脚本走 entry point

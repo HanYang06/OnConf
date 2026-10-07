@@ -117,7 +117,7 @@ class TestScan:
         scan = scan_project(tmp_path)
         assert scan.decls == []
         assert len(scan.problems) == 1
-        assert "不是字面量" in scan.problems[0]
+        assert "is not a literal" in scan.problems[0]
 
     def test_a_variable_key_read_is_not_a_problem(self, tmp_path: Path) -> None:
         """**读取**不受「声明处必须字面量」约束，``conf(APP)`` 不进问题清单。
@@ -139,7 +139,7 @@ class TestScan:
         scan = scan_project(tmp_path)
         assert scan.decls == []
         assert len(scan.problems) == 1
-        assert "不是字面量" in scan.problems[0]
+        assert "is not a literal" in scan.problems[0]
 
     def test_a_doc_none_call_reads_instead_of_declaring(self, tmp_path: Path) -> None:
         """``doc=None`` 与没写 ``doc`` 等价 ⇒ 读 —— 与运行期的判据同源。"""
@@ -170,24 +170,24 @@ class TestScan:
         _write(tmp_path, "from onconf import conf\nconf('a.b'\n")
         scan = scan_project(tmp_path)
         assert scan.decls == []
-        assert any("语法错误" in item for item in scan.problems)
+        assert any("syntax error" in item for item in scan.problems)
 
     def test_an_undecodable_file_is_a_problem(self, tmp_path: Path) -> None:
         (tmp_path / "broken.py").write_bytes(b"from onconf import conf\n# \xff\xfe\n")
         scan = scan_project(tmp_path)
         assert scan.decls == []
-        assert any("读不出来" in item for item in scan.problems)
+        assert any("cannot be read" in item for item in scan.problems)
 
     @pytest.mark.parametrize(
         ("source", "needle"),
         [
-            ("from onconf import conf\nconf()\n", "没有 key"),
-            ("from onconf import conf\nconf('a', 1, 'd', 'extra')\n", "位置参数超过"),
-            ("from onconf import conf\nconf('a', 1, value=2)\n", "同时给了"),
-            ("from onconf import conf\nconf('a', 1, unknown=2)\n", "不认识的参数"),
-            ("from onconf import conf\nconf(key='a', doc=1)\n", "doc 不是字符串"),
+            ("from onconf import conf\nconf()\n", "no key"),
+            ("from onconf import conf\nconf('a', 1, 'd', 'extra')\n", "positional arguments"),
+            ("from onconf import conf\nconf('a', 1, value=2)\n", "both positionally"),
+            ("from onconf import conf\nconf('a', 1, unknown=2)\n", "unknown parameter"),
+            ("from onconf import conf\nconf(key='a', doc=1)\n", "doc of 'a' is not a string"),
             ("from onconf import conf\nconf(**{'a': 1})\n", "**kwargs"),
-            ("from onconf import conf\nconf(2, 1)\n", "key 不是字符串"),
+            ("from onconf import conf\nconf(2, 1)\n", "key is not a string"),
         ],
     )
     def test_malformed_calls_become_problems(
@@ -414,6 +414,20 @@ class TestSync:
         assert payload["declarations"][0]["key"] == "a.port"
         assert payload["declarations"][0]["doc"] == "端口"
         assert payload["dry_run"] is True
+
+    def test_human_output_is_english(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """命令行**自己写的**文本一律英文（路线图 2-077）。
+
+        库产出的文本不在这条口径里：异常消息与计划里的 ``reason=`` 是库的数据。
+        """
+        _write(tmp_path, "from onconf import conf\nconf('a.port', 8080, '端口')\n")
+        assert _run(tmp_path, monkeypatch, "build", "--dry-run") == 0
+        out = capsys.readouterr().out
+        assert "declared    : a.port" in out
+        assert "total       : rebuilt 1 declaration(s)" in out
+        assert not any("\u4e00" <= char <= "\u9fff" for char in out)
 
     def test_help_writes_nothing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
