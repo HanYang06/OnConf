@@ -226,7 +226,7 @@ conf(build_key(), 8080)              # ❌
 | **日志就是审计** —— 一份记录流、两个出口。**文件**出口恒写（`log_path`，缺省 `<home>/audit.log`）：只追加、`0600`、紧凑 `key=value`、完整日期、**永不截断**。**控制台**出口（`stderr`）可以关（`log_console=False`）；TTY 上由 `rich` 着色——只在那个分支里惰性导入，所以强制路径与管道既不多付代价、也永远看不到 ANSI。级别是 `[Read]` / `[Write]` / `[Change]` / `[Error]` 外加 `[Start]`；写全量（含 `op=skip`「想改没改」与 `op=noop`「本批声明已满足」），读按事务去重（`n=1000`）；每条写记录带调用点（`at=app/config.py:12`）、pid 与可选 `identity=`。三个可选钩子——`log_rotate`（下一批写到哪个文件；**轮转只换落点，绝不 rename 文件**）、`log_scrub`（落盘前脱敏）、`log_encode`（最终落盘的字节）——默认全是「什么都不做」。见[日志](docs/design/log.md) | ✅ |
 | **运行期不删键** —— 只补缺、只补元数据；删除归 `onconf sync`（离线、单次、对着完整的声明集） | ✅ |
 | 测试 —— 每个模块一个测试文件，外加安全不变量 | ✅ 本地全绿；CI 在 ubuntu / windows / macos 上跑 |
-| **命令行（头两条命令）** —— `onconf build` 按声明完整重建值文件与词表（`--path` 把整份重建写到新目录，原目录不动）；`onconf sync` 补缺并删除声明里没有的键（`--no-clean` 则一个键都不删）。声明靠**扫描项目里的 `conf(...)` 调用**、解读参数得到 —— 单函数 API 正是这件事的前提。两条命令都支持 `--dry-run`（一个字节都不写）与 `--json`；扫不动的调用会让 `sync` 拒绝删除任何键 | ✅ `build` / `sync`；其余七条命令尚未实现 |
+| **命令行（头两条命令）** —— `onconf build` 按声明完整重建值文件与词表（`--path` 把整份重建写到新目录，原目录不动）；`onconf sync` 补缺并删除声明里没有的键（`--no-clean` 则一个键都不删）。声明靠**扫描项目里的 `conf(...)` 调用**、解读参数得到 —— 单函数 API 正是这件事的前提。两条命令都支持 `--dry-run`（一个字节都不写）与 `--json`；扫不动的调用会让 `sync` 拒绝删除任何键 | ✅ `build` / `sync`；其余六条命令尚未实现 |
 
 ## 路线图 —— 当前不可用
 
@@ -239,13 +239,15 @@ conf(build_key(), 8080)              # ❌
 | 把系统环境变量当作配置**来源**（`ONCONF_HOME` 只用来定位配置目录） | — |
 | 按格式导出词表 | — |
 | `.env` 的 `dict` / `list` 值 —— 由 `env_file_dict` / `env_file_list` 两个布尔开关开启（默认都关）；标量仍是字符串 | 2.2（计划） |
-| 其余七条命令行 —— `check` / `format` / `diff` / `read` / `get` / `set` / `add` | M5 |
+| 其余六条命令行 —— `check` / `get` / `set` / `diff` / `format` / `add` | M5 |
+| `read`（文件级原始读取）—— 后移：只有日志能按二进制落盘（`log_encode`）才需要它，否则没有原始字节要读回来 | — |
 | 命令行按 `pyproject.toml` / `.gitignore` 收敛扫描范围（现在是固定跳过名单 + 整个项目） | — |
 
 完整清单见[路线图](docs/roadmap/README.md) —— 它是**范围与版本的唯一事实源**（条目编号 +
 决策状态 + 版本分配）；[1.0.x](docs/roadmap/1.0.x/roadmap.md) 是已发布那一版的冻结记录。设计文档在
 [`docs/design/`](docs/design/index.md)：[`init_config.md`](docs/design/init_config.md)、
-[`file_support.md`](docs/design/file_support.md) 与 [`log.md`](docs/design/log.md)。
+[`file_support.md`](docs/design/file_support.md)、[`concurrency.md`](docs/design/concurrency.md)、
+[`log.md`](docs/design/log.md) 与 [`cli.md`](docs/design/cli.md)。
 
 ## 质量门槛
 
@@ -337,6 +339,7 @@ docs/                # 文档站源码（中文）
   design/file_support.md  # 值文件选定、返回类型、后端、词表
   design/concurrency.md   # 谁能写、读看到什么、引擎明确不做的事
   design/log.md           # 日志与审计
+  design/cli.md           # 命令矩阵：九条命令的语义、退出码、写不写字节
 ```
 
 模块会随后端增加而变多，以 `src/onconf/` 本身为准。
