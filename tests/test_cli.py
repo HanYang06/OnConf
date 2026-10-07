@@ -119,6 +119,35 @@ class TestScan:
         assert len(scan.problems) == 1
         assert "不是字面量" in scan.problems[0]
 
+    def test_a_variable_key_read_is_not_a_problem(self, tmp_path: Path) -> None:
+        """**读取**不受「声明处必须字面量」约束，``conf(APP)`` 不进问题清单。
+
+        期望集只由声明形态构成，读取不进期望集 —— 因此它的键是不是字面量与
+        「期望集完不完整」无关。误报的代价不只是多一行输出：``sync`` 会因为
+        问题清单非空而平白拒绝清理。
+        """
+        _write(tmp_path, 'from onconf import conf\nAPP = "app.post"\nconf(APP)\n')
+        scan = scan_project(tmp_path)
+        assert scan.decls == []
+        assert scan.problems == []
+
+    def test_a_doc_only_declaration_with_a_variable_key_is_a_problem(
+        self, tmp_path: Path
+    ) -> None:
+        """``conf(APP, doc=…)`` 是**声明**（模式 2），所以变量键照样进问题清单。"""
+        _write(tmp_path, 'from onconf import conf\nAPP = "app.post"\nconf(APP, doc="端口")\n')
+        scan = scan_project(tmp_path)
+        assert scan.decls == []
+        assert len(scan.problems) == 1
+        assert "不是字面量" in scan.problems[0]
+
+    def test_a_doc_none_call_reads_instead_of_declaring(self, tmp_path: Path) -> None:
+        """``doc=None`` 与没写 ``doc`` 等价 ⇒ 读 —— 与运行期的判据同源。"""
+        _write(tmp_path, 'from onconf import conf\nconf("app.post", doc=None)\n')
+        scan = scan_project(tmp_path)
+        assert scan.decls == []
+        assert scan.problems == []
+
     def test_duplicate_declarations_last_one_wins(self, tmp_path: Path) -> None:
         _write(
             tmp_path,

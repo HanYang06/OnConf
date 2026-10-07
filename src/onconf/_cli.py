@@ -22,8 +22,10 @@
 
 ``doc=`` 与第二个位置参数的区别，判据与使用口完全一致：**写没写 ``doc=``**。
 
-只有字面量能解读：``ast.literal_eval`` 求不出来的实参（变量、表达式、循环里拼出来的
-键）**无法进入期望集**，会被逐条列出来。这不是缺陷，是静态扫描的边界，摆清楚即可。
+**声明形态**里只有字面量能解读：``ast.literal_eval`` 求不出来的实参（变量、表达式、
+循环里拼出来的键）**无法进入期望集**，会被逐条列出来。这不是缺陷，是静态扫描的边界，
+摆清楚即可。**读取不受这条限制**：读取不产生任何持久状态，``conf(变量)`` 不进问题清单
+（``docs/design/init_config.md`` §8）。
 
 ## 期望集不完整时怎么办
 
@@ -36,7 +38,7 @@
 ## 默认范围：当前项目
 
 不要求调用方告诉命令行「声明代码在哪」：既然在这个项目里，就默认整个项目都是候选。
-``pyproject.toml`` / ``.gitignore`` 的收敛留给后续版本（见 ``docs/roadmap.md``）；
+``pyproject.toml`` / ``.gitignore`` 的收敛留给后续版本（见 ``docs/roadmap/2.x.md`` 的 2-056）；
 现在只有一份固定的跳过名单（``.git`` / ``.venv`` / 缓存目录……），免得扫进依赖树。
 这**不是**执行用户代码：只做 ``ast.parse``，不 import、不 eval。
 """
@@ -188,15 +190,36 @@ def _literal(node: ast.expr) -> tuple[bool, Any]:
         return False, None
 
 
+def _is_declaration(value_node: ast.expr | None, doc_node: ast.expr | None) -> bool:
+    """这次调用是不是**声明形态** —— 与运行期的判据同源。
+
+    运行期只看 ``value`` 位填没填（``value is MISSING and doc is None`` ⇒ 读，见
+    ``docs/design/init_config.md`` §4）。这里在求值之前先做同一个判断：``value``
+    有实参就是声明；``doc`` 有实参且不是字面 ``None`` 也算 —— ``doc=None`` 与没写
+    ``doc`` 等价。
+    """
+    if value_node is not None:
+        return True
+    if doc_node is None:
+        return False
+    ok, raw = _literal(doc_node)
+    return not (ok and raw is None)
+
+
 def _read_call(node: ast.Call, where: str) -> Finding | str | None:
     """解读一次 ``conf(...)``：声明 / 读 / 一句问题。
 
-    返回 ``None`` 表示这是**读**（``conf(key)``），不进期望集。
+    返回 ``None`` 表示这是**读**。读取不产生任何持久状态，因此**不受「声明处必须
+    字面量」约束**，也不进期望集 —— 只有声明形态才需要那串键在声明点看得见
+    （``docs/design/init_config.md`` §8）。
     """
     shape = _call_nodes(node)
     if isinstance(shape, str):
         return shape
     key_node, value_node, doc_node = shape
+
+    if not _is_declaration(value_node, doc_node):
+        return None  # 读：不进期望集，也不要求字面量
 
     ok, key = _literal(key_node)
     if not ok:
@@ -219,8 +242,6 @@ def _read_call(node: ast.Call, where: str) -> Finding | str | None:
             return f"键 {key!r} 的 doc 不是字符串（拿到 {type(raw_doc).__name__}）"
         doc = raw_doc
 
-    if value is MISSING and doc is None:
-        return None  # 模式 3：读，不是声明
     return Finding(key=key, value=value, doc=doc, where=where)
 
 
