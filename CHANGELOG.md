@@ -11,6 +11,8 @@
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-07
+
 ### Changed
 
 - **`EngineParams` 新增 `file_name` / `no_one_file`，`file_type` 的缺省值改为字面 `"json"`**
@@ -39,6 +41,10 @@
 - **命令行输出统一英文**：命令自己写的文本（标签、计划、摘要、参数帮助、扫描报告）一律英文，
   不再混中文。库产出的文本（`ConfError` 消息、计划里的 `reason=`）原样透传 —— 后者还要落进
   审计文件，属于数据而不是 CLI 文案。
+- **本地 pre-commit 钩子精简到「秒级 + 能自动修」**：`git commit` 时只跑行尾 / 空白 /
+  冲突标记与 `ruff check --fix`，外加 `commit-msg` 的约定式提交校验。mypy、pytest、
+  codespell、markdownlint、bandit、pip-audit、zizmor 与各类语法检查一概交给 CI ——
+  本地再跑一遍只会让提交变慢、把贡献者劝退。
 
 ### Added
 
@@ -268,7 +274,8 @@ classifier 仍是 `Development Status :: 2 - Pre-Alpha`，页面正文也还写�
 
 - 指令键（`$` 开头）豁免对账，`$schema` 不会被规则 1 清掉（`787360e`）。
 
-[Unreleased]: https://github.com/HanYang06/OnConf/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/HanYang06/OnConf/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/HanYang06/OnConf/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/HanYang06/OnConf/compare/3ef3f4f...v1.0.0
 [0.1.0]: https://github.com/HanYang06/OnConf/compare/3ef3f4f...d166050
 
