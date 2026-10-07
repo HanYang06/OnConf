@@ -25,7 +25,7 @@
 |---|---|
 | [`_core.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/_core.py) | 纯内存核心：对账四条规则、读取、声明集哈希 |
 | [`_paths.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/_paths.py) | 外部字符串 → 路径的唯一入口：包含性校验（纯文件名 / 相对路径、无分隔符、无 `..`、非绝对、解析后仍在 `<home>` 内） |
-| [`_cli.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/_cli.py) | 命令行：`build` / `sync`；声明靠 `ast` 扫描 `conf(...)` 调用（不 import、不 eval） |
+| [`_cli.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/_cli.py) | 命令行：`build` / `sync` / `check`；声明靠 `ast` 扫描 `conf(...)` 调用（不 import、不 eval） |
 | [`_vocab.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/_vocab.py) | 词表：三态持久化、JSON Schema 往返、哈希短路 |
 | [`_json_backend.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/_json_backend.py) | JSON 值后端：外科手术式回写 |
 | [`_yaml_backend.py`](https://github.com/HanYang06/OnConf/blob/main/src/onconf/_yaml_backend.py) | YAML 值后端：注释、缩进、键序逐字保留 |
@@ -40,7 +40,7 @@
 **并发已经出清**：没有锁、没有独立写者进程、没有 IPC —— 写权限由进程树定（创建实例的
 进程是属主，`fork` 出来的只读），同一时刻只有一个写者是调用方的部署责任。口径见
 [并发模型](../design/concurrency.md)。
-**命令行已交付头两条**（`build` / `sync`），`check` / `get` / `set` / `diff` / `format` 与
+**命令行已交付头三条**（`build` / `sync` / `check`），`get` / `set` / `diff` / `format` 与
 `add` / `log` 未实现；`read` 后移（只有日志能按二进制落盘才需要它，路线图 2-073）。
 落盘形式与轮转参数、按格式导出词表、把系统环境变量
 当作配置源仍在增量的未来段里 —— 当前不可用。范围与版本以[路线图](../roadmap/README.md)

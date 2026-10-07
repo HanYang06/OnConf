@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 HanYang06
 # SPDX-License-Identifier: Apache-2.0
-"""命令行：``onconf build`` / ``onconf sync``。
+"""命令行：``onconf build`` / ``onconf sync`` / ``onconf check``。
 
 ## 声明从哪里来：**找 ``conf`` 这个函数，分析它的参数构成**
 
@@ -55,7 +55,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import _paths
-from ._core import MISSING, NO_VALUE, Action, Decl, declaration_hash, undeclared
+from ._core import (
+    MISSING,
+    NO_VALUE,
+    Action,
+    Decl,
+    VocabEntry,
+    declaration_hash,
+    is_directive,
+    meta_diff,
+    undeclared,
+)
 from ._engine import (
     _BACKENDS,
     _POINTER_CAPABLE,
@@ -495,6 +505,217 @@ def _run_sync(
 
 
 # --------------------------------------------------------------------------- #
+# check：三个口径的对比
+# --------------------------------------------------------------------------- #
+
+#: 六类差异。顺序即报告里的稳定顺序（同一个键有多条时按它排）。
+CHECK_KINDS = ("missing", "stale", "default", "doc", "unfilled", "undeclared")
+
+#: ``kind`` 列的宽度：正好放得下 ``undeclared``。
+_KIND_WIDTH = max(len(kind) for kind in CHECK_KINDS)
+
+#: 需要两侧取值的类别。
+_BOTH_SIDES = frozenset({"default", "doc"})
+
+#: 发现问题的退出码（见 ``docs/design/cli.md`` §6）。
+CHECK_FAILED = 5
+
+
+@dataclass(frozen=True)
+class Issue:
+    """三个口径对不上的一处。
+
+    ``path`` 是落点文件（相对 ``home``）；词表侧的残留（``stale``）没有落点。
+    ``code`` / ``vocabulary`` 只有 :data:`_BOTH_SIDES` 里的类别才有意义。
+    """
+
+    kind: str
+    key: str
+    path: str | None = None
+    code: Any = None
+    vocabulary: Any = None
+
+
+def _vocabulary_at(home: Path, file_name: str) -> dict[str, VocabEntry]:
+    """读词表。**不建引擎** —— ``check`` 走的就是那条只读路径。"""
+    path = _schema_path(home, file_name)
+    if not path.exists():
+        return {}
+    return Vocabulary.from_schema(json.loads(path.read_text(encoding="utf-8"))).as_dict()
+
+
+def _decl_paths(
+    decls: Sequence[Decl], *, home: Path, file_name: str, suffix: str, multi: bool
+) -> dict[str, str]:
+    """声明键 → 它落在哪个值文件（相对 ``home`` 的显示路径）。"""
+    paths: dict[str, str] = {}
+    for decl in decls:
+        path_part, _ = _split(decl.key, multi=multi)
+        paths[decl.key] = _relative(_values_path(home, path_part or file_name, suffix), home)
+    return paths
+
+
+def _facts_at(
+    decls: Sequence[Decl], *, home: Path, file_name: str, suffix: str, multi: bool
+) -> dict[str, tuple[Any, str]]:
+    """读**声明集引用到的**值文件 → ``全键 -> (值, 落点)``。
+
+    范围与 ``sync`` 的加载范围一致：``check`` 报的每一类都得能被 ``sync`` 收掉，
+    否则末行推荐的收敛工具收不掉它。没有被任何声明引用的值文件不在这里。
+    """
+    backend = _BACKENDS[suffix]
+    facts: dict[str, tuple[Any, str]] = {}
+    seen: set[str] = set()
+    for decl in decls:
+        path_part, _ = _split(decl.key, multi=multi)
+        if path_part in seen:
+            continue
+        seen.add(path_part)
+        path = _values_path(home, path_part or file_name, suffix)
+        if not path.exists():
+            continue
+        where = _relative(path, home)
+        for inner, value in backend.loads(path.read_text(encoding="utf-8")).items():
+            facts[f"{path_part}:{inner}" if path_part else inner] = (value, where)
+    return facts
+
+
+def _check_issues(
+    decls: Sequence[Decl],
+    vocab: dict[str, VocabEntry],
+    facts: dict[str, tuple[Any, str]],
+    *,
+    paths: dict[str, str],
+    multi: bool,
+) -> list[Issue]:
+    """三个口径对出来的差异，按 ``key`` 的码位序排（同一个键再按 ``kind``）。"""
+    issues: list[Issue] = []
+    declared = {decl.key for decl in decls}
+
+    for decl in decls:
+        where = paths.get(decl.key)
+        entry = vocab.get(decl.key)
+        if entry is None:
+            issues.append(Issue("missing", decl.key, path=where))
+        else:
+            default_differs, doc_differs = meta_diff(entry, decl)
+            if default_differs:
+                want: Any = NO_VALUE if decl.value is MISSING else decl.value
+                issues.append(
+                    Issue(
+                        "default",
+                        decl.key,
+                        path=where,
+                        code=_show(want),
+                        vocabulary=_show(entry.default),
+                    )
+                )
+            if doc_differs:
+                issues.append(
+                    Issue("doc", decl.key, path=where, code=decl.doc, vocabulary=entry.doc)
+                )
+        if decl.key not in facts:
+            issues.append(Issue("unfilled", decl.key, path=where))
+
+    issues.extend(Issue("stale", key) for key in vocab if key not in declared)
+    issues.extend(
+        Issue("undeclared", key, path=where)
+        for key, (_, where) in facts.items()
+        # 指令键（`$` 开头）不是配置项：豁免按**文件内**的键名判，与引擎同源。
+        if key not in declared and not is_directive(_split(key, multi=multi)[1])
+    )
+
+    return sorted(issues, key=lambda issue: (issue.key, issue.kind))
+
+
+def _issue_json(issue: Issue) -> dict[str, Any]:
+    return {
+        "kind": issue.kind,
+        "key": issue.key,
+        "path": issue.path,
+        "code": issue.code,
+        "vocabulary": issue.vocabulary,
+    }
+
+
+def _warning_json(problem: str) -> dict[str, Any]:
+    """扫描问题串 → ``{"kind", "where", "message"}``。
+
+    串的形状由扫描器给定（``<file>[:<line>]: <message>``），这里只拆一次位置。
+    """
+    where, separator, message = problem.partition(": ")
+    if not separator:
+        return {"kind": "scan", "where": "", "message": problem}
+    return {"kind": "scan", "where": where, "message": message}
+
+
+def _render(value: Any) -> str:
+    """人读输出里的一侧取值：没有值就是 ``(none)``，其余按 JSON 字面量写。"""
+    if value is None or value is MISSING or value is NO_VALUE:
+        return "(none)"
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _print_check(payload: dict[str, Any], *, verbose: bool) -> None:
+    if payload["ok"]:
+        print("All config items are OK.")  # noqa: T201
+    else:
+        for issue in payload["findings"]:
+            parts = [f"{issue['kind']:<{_KIND_WIDTH}}", f"{issue['key']:<12}"]
+            if verbose and issue["path"]:
+                parts.append(issue["path"])
+            if issue["kind"] in _BOTH_SIDES:
+                parts.append(f"{_render(issue['code'])} => {_render(issue['vocabulary'])}")
+            print("  ".join(parts).rstrip())  # noqa: T201
+    # warning 不改变通过判定，但**不能因此看不见** —— 通过时也照打。
+    for warning in payload["warnings"]:
+        prefix = f"{warning['where']}: " if warning["where"] else ""
+        print(f"warning: {prefix}{warning['message']}")  # noqa: T201
+    if payload["findings"]:
+        print('Run "onconf sync" to align the vocabulary and the value files.')  # noqa: T201
+
+
+def _cmd_check(args: argparse.Namespace) -> int:
+    """只读体检：代码 / 词表 / 值文件三个口径对比，给报告，一个字节都不写。"""
+    scan = scan_project(Path.cwd())
+    decls = _to_decls(scan, multi=args.no_one_file)
+    home = Path(args.home).resolve() if args.home else default_home()
+    suffix = _file_suffix(args.file_type)
+
+    vocab = _vocabulary_at(home, args.file_name)
+    facts = _facts_at(
+        decls, home=home, file_name=args.file_name, suffix=suffix, multi=args.no_one_file
+    )
+    issues = _check_issues(
+        decls,
+        vocab,
+        facts,
+        paths=_decl_paths(
+            decls, home=home, file_name=args.file_name, suffix=suffix, multi=args.no_one_file
+        ),
+        multi=args.no_one_file,
+    )
+
+    findings = [_issue_json(issue) for issue in issues]
+    warnings = [_warning_json(problem) for problem in scan.problems]
+    failed = bool(findings) or (bool(args.strict) and bool(warnings))
+    payload: dict[str, Any] = {
+        "command": "check",
+        "ok": not failed,
+        "summary": {
+            kind: sum(1 for issue in issues if issue.kind == kind) for kind in CHECK_KINDS
+        },
+        "findings": findings,
+        "warnings": warnings,
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))  # noqa: T201
+    else:
+        _print_check(payload, verbose=bool(args.verbose))
+    return CHECK_FAILED if failed else 0
+
+
+# --------------------------------------------------------------------------- #
 # 输出与入口
 # --------------------------------------------------------------------------- #
 
@@ -533,11 +754,14 @@ def _emit(payload: dict[str, Any], *, as_json: bool) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """``onconf`` 的入口：目前只有 ``build`` / ``sync``（其余命令尚未实现）。
+    """``onconf`` 的入口：``build`` / ``sync`` / ``check``（其余命令尚未实现）。
 
     命令行是**人 / CI 发起的配置管理者**，所以它清掉 ``ONCONF_OWNER_PID``：被一个属主
     进程 shell 出来跑的时候，它不该被当成那个属主的派生进程而只读 —— 「想更新，拿命令行去」
     这句话得成立。命令行不跟运行中的进程协调（那是调用方的部署责任）。
+
+    退出码按 ``docs/design/cli.md`` §6 的分类表：``ConfError`` 是 1，
+    值文件读不出来（读期的 ``ValueError`` 子类）是 3。
     """
     os.environ.pop(OWNER_ENV, None)
     args = _parser().parse_args(argv)
@@ -547,13 +771,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfError as exc:
         print(f"onconf: {exc}", file=sys.stderr)  # noqa: T201
         return 1
+    except ValueError as exc:
+        # 值文件读不出来（JSON 语法错、`.env` / YAML / TOML 的读期异常）。
+        print(f"onconf: {exc}", file=sys.stderr)  # noqa: T201
+        return 3
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="onconf", description="the OnConf command line")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    def common(target: argparse.ArgumentParser) -> None:
+    def common(target: argparse.ArgumentParser, *, destructive: bool = True) -> None:
         target.add_argument(
             "--home", default=None, help="config directory (default ./conf or ONCONF_HOME)"
         )
@@ -562,9 +790,10 @@ def _parser() -> argparse.ArgumentParser:
         target.add_argument(
             "--no-one-file", action="store_true", help="multi-file: a key carries its path"
         )
-        target.add_argument(
-            "--dry-run", action="store_true", help="print what would happen; write nothing"
-        )
+        if destructive:
+            target.add_argument(
+                "--dry-run", action="store_true", help="print what would happen; write nothing"
+            )
         target.add_argument("--json", action="store_true", help="machine-readable output")
 
     build = sub.add_parser("build", help="rebuild the value file(s) and the vocabulary")
@@ -580,6 +809,14 @@ def _parser() -> argparse.ArgumentParser:
     common(sync)
     sync.add_argument("--no-clean", action="store_true", help="fill only; delete nothing")
     sync.set_defaults(handler=_cmd_sync)
+
+    check = sub.add_parser("check", help="compare the code, the vocabulary and the value files")
+    common(check, destructive=False)
+    check.add_argument(
+        "--verbose", action="store_true", help="full report; by default only the CI status"
+    )
+    check.add_argument("--strict", action="store_true", help="count warnings as failures too")
+    check.set_defaults(handler=_cmd_check)
     return parser
 
 

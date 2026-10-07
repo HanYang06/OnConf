@@ -48,6 +48,11 @@
   `sync` 补缺并删除声明里没有的键（`--no-clean` 只补缺）。两者都支持 `--dry-run`（一个字节
   都不写）与 `--json`；扫不动的调用会被逐条列出，此时 `sync` **拒绝删除任何键**。
   控制台入口从「只打印配置目录」的占位改为 `onconf._cli:main`。
+- **命令行 `onconf check`**：一个字节都不写地对比**三个口径** —— 代码里扫到的声明、词表、
+  值文件 —— 报六类差异（`missing` / `stale` / `default` / `doc` / `unfilled` / `undeclared`），
+  按 `key` 的码位序排。缺省只给 CI 状态（通过回一行、不通过逐条报），`--verbose` 补上落点
+  文件，`--strict` 把 warning 也算作失败；发现问题时以退出码 5 结束。它**不带 `--fix`**：
+  不通过时末行推荐 `onconf sync`。值文件读不出来时以退出码 3 报错，不再抛栈。
 - 新增 `src/onconf/_paths.py`：外部字符串 → 路径的**唯一入口**（五条包含性规则）。
 - `EngineParams` 补上 `lock_timeout` —— 它以前对公开 API 完全不可达（传了会抛
   `UnknownEngineParamError`）。

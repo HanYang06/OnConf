@@ -437,3 +437,140 @@ class TestSync:
             main(["sync", "--help"])
         assert excinfo.value.code == 0
         assert list(tmp_path.iterdir()) == []
+
+
+class TestCheck:
+    """``check``：三个口径（代码 / 词表 / 值文件）的对比与报告。"""
+
+    def _built(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+    ) -> None:
+        """写一份声明并 ``build`` 一次 —— 让词表与值文件都跟上声明。"""
+        _write(tmp_path, source)
+        assert _run(tmp_path, monkeypatch, "build") == 0
+
+    def test_a_clean_project_passes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._built(
+            tmp_path, monkeypatch, "from onconf import conf\nconf('a.port', 8080, 'port')\n"
+        )
+        capsys.readouterr()
+        assert _run(tmp_path, monkeypatch, "check") == 0
+        assert capsys.readouterr().out.splitlines() == ["All config items are OK."]
+
+    def test_nothing_built_yet_reports_missing_and_unfilled(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write(tmp_path, "from onconf import conf\nconf('a.port', 8080)\n")
+        assert _run(tmp_path, monkeypatch, "check") == 5
+        assert capsys.readouterr().out.splitlines() == [
+            "missing     a.port",
+            "unfilled    a.port",
+            'Run "onconf sync" to align the vocabulary and the value files.',
+        ]
+
+    def test_drift_is_reported_in_all_four_ways(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """少一条声明、改值、改说明、再手塞一个未声明的键 —— 四类一起报。"""
+        self._built(
+            tmp_path,
+            monkeypatch,
+            "from onconf import conf\nconf('a.port', 8080, 'port')\nconf('a.host', 'localhost')\n",
+        )
+        _write(tmp_path, "from onconf import conf\nconf('a.port', 9090, 'the port')\n")
+        values = tmp_path / "conf" / "settings.json"
+        data = json.loads(values.read_text(encoding="utf-8"))
+        data["a.legacy"] = 1
+        values.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+
+        assert _run(tmp_path, monkeypatch, "check") == 5
+        out = capsys.readouterr().out
+        assert "stale       a.host" in out
+        assert "undeclared  a.legacy" in out
+        assert "default     a.port        9090 => 8080" in out
+        assert 'doc         a.port        "the port" => "port"' in out
+
+    def test_directives_are_not_config_items(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``$schema`` 是指令键：值文件里有它，但它既不是配置项，也不该被报成未声明。"""
+        self._built(tmp_path, monkeypatch, "from onconf import conf\nconf('a.port', 8080)\n")
+        values = tmp_path / "conf" / "settings.json"
+        assert "$schema" in json.loads(values.read_text(encoding="utf-8"))
+        assert _run(tmp_path, monkeypatch, "check") == 0
+
+    def test_verbose_adds_the_value_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write(tmp_path, "from onconf import conf\nconf('a.port', 8080)\n")
+        assert _run(tmp_path, monkeypatch, "check") == 5
+        assert "settings.json" not in capsys.readouterr().out
+        assert _run(tmp_path, monkeypatch, "check", "--verbose") == 5
+        assert "settings.json" in capsys.readouterr().out
+
+    def test_json_is_the_same_data(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write(tmp_path, "from onconf import conf\nconf('a.port', 8080)\n")
+        assert _run(tmp_path, monkeypatch, "check", "--json") == 5
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["command"] == "check"
+        assert payload["ok"] is False
+        assert payload["summary"] == {
+            "missing": 1,
+            "stale": 0,
+            "default": 0,
+            "doc": 0,
+            "unfilled": 1,
+            "undeclared": 0,
+        }
+        assert payload["findings"][0] == {
+            "kind": "missing",
+            "key": "a.port",
+            "path": "settings.json",
+            "code": None,
+            "vocabulary": None,
+        }
+        assert payload["warnings"] == []
+
+    def test_check_writes_nothing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._built(tmp_path, monkeypatch, "from onconf import conf\nconf('a.port', 8080)\n")
+        home = tmp_path / "conf"
+
+        def snapshot() -> dict[str, tuple[bytes, int]]:
+            return {
+                path.relative_to(tmp_path).as_posix(): (path.read_bytes(), path.stat().st_mtime_ns)
+                for path in sorted(home.rglob("*"))
+                if path.is_file()
+            }
+
+        before = snapshot()
+        assert _run(tmp_path, monkeypatch, "check") == 0
+        assert snapshot() == before
+
+    def test_a_non_literal_declaration_warns_without_failing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """警告不改变通过判定 —— 但也不能因此看不见；``--strict`` 才把它升级为失败。"""
+        _write(tmp_path, "from onconf import conf\nAPP = 'a.port'\nconf(APP, 8080)\n")
+        assert _run(tmp_path, monkeypatch, "check") == 0
+        out = capsys.readouterr().out
+        assert "All config items are OK." in out
+        assert "warning:" in out
+        assert "is not a literal" in out
+        assert _run(tmp_path, monkeypatch, "check", "--strict") == 5
+
+    def test_check_has_no_dry_run_and_no_fix(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """它只做检查与报告：既不写文件（没有 `--dry-run`），也不改文件（没有 `--fix`）。"""
+        monkeypatch.chdir(tmp_path)
+        for flag in ("--dry-run", "--fix"):
+            with pytest.raises(SystemExit) as excinfo:
+                main(["check", flag])
+            assert excinfo.value.code == 2
+        assert list(tmp_path.iterdir()) == []

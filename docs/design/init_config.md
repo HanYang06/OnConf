@@ -176,7 +176,7 @@ onconf sync  [--home DIR] [--file-name NAME] [--file-type TYPE] [--no-one-file]
 `--dry-run` 一个字节都不写。扫描范围默认为当前项目（固定跳过 `.git` / `.venv` /
 缓存目录等），`pyproject.toml` / `.gitignore` 的收敛留待后续版本。
 
-> 其余六条命令（`check` / `get` / `set` / `diff` / `format` / `add`）
+> 其余五条命令（`get` / `set` / `diff` / `format` / `add`）
 > **尚未实现**（`read` 后移，取决于日志能否二进制落盘）。**运行期不清理未声明的键**已经落地：
 > 删除只走 `onconf sync` 这一条离线路径。口径见[并发模型](concurrency.md)。
 
