@@ -574,3 +574,165 @@ class TestCheck:
                 main(["check", flag])
             assert excinfo.value.code == 2
         assert list(tmp_path.iterdir()) == []
+
+
+class TestGet:
+    def test_four_columns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write(tmp_path, "from onconf import conf\nconf('a.port', 8080, 'port')\n")
+        assert _run(tmp_path, monkeypatch, "build") == 0
+        capsys.readouterr()
+        assert _run(tmp_path, monkeypatch, "get", "a.port") == 0
+        lines = capsys.readouterr().out.splitlines()
+        assert lines[0].split() == ["key", "value", "path", "doc"]
+        assert lines[1].split() == ["a.port", "8080", "settings.json", "port"]
+
+    def test_multi_file_reports_every_hit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """同名的键落在多个文件里 —— 有多少刷多少，这正是 `path` 那一列的用处。"""
+        _write(
+            tmp_path,
+            "from onconf import conf\n"
+            "conf('a:app.port', 1, 'in a')\nconf('b:app.port', 2, 'in b')\n",
+        )
+        assert _run(tmp_path, monkeypatch, "build", "--no-one-file") == 0
+        capsys.readouterr()
+        assert _run(tmp_path, monkeypatch, "get", "app.port", "--no-one-file") == 0
+        out = capsys.readouterr().out
+        assert "a.json" in out
+        assert "b.json" in out
+        assert len(out.splitlines()) == 3  # 表头 + 两行
+
+    def test_file_without_multi_file_mode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """`--file` 只在多文件模式下有意义；关闭时给它是用法错误，不静默忽略。"""
+        _write(tmp_path, "from onconf import conf\nconf('a.port', 8080)\n")
+        assert _run(tmp_path, monkeypatch, "get", "a.port", "--file", "x") == 2
+        assert "--file only applies" in capsys.readouterr().err
+
+    def test_an_unregistered_key_is_an_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _write(tmp_path, "from onconf import conf\nconf('a.port', 8080)\n")
+        assert _run(tmp_path, monkeypatch, "get", "nope") == 1
+
+
+class TestSet:
+    def test_it_changes_the_value_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write(tmp_path, "from onconf import conf\nconf('a.port', 8080)\n")
+        assert _run(tmp_path, monkeypatch, "build") == 0
+        capsys.readouterr()
+        assert _run(tmp_path, monkeypatch, "set", "a.port", "9090") == 0
+        assert capsys.readouterr().out.strip() == "OK"
+        values = json.loads((tmp_path / "conf" / "settings.json").read_text(encoding="utf-8"))
+        assert values["a.port"] == 9090
+
+    def test_it_refuses_to_create_a_new_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _write(tmp_path, "from onconf import conf\nconf('a.port', 8080)\n")
+        assert _run(tmp_path, monkeypatch, "build") == 0
+        assert _run(tmp_path, monkeypatch, "set", "nope", "1") == 1
+
+    def test_an_ambiguous_key_is_refused_with_the_candidates(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write(
+            tmp_path,
+            "from onconf import conf\n"
+            "conf('a:app.port', 1, 'in a')\nconf('b:app.port', 2, 'in b')\n",
+        )
+        assert _run(tmp_path, monkeypatch, "build", "--no-one-file") == 0
+        capsys.readouterr()
+        assert _run(tmp_path, monkeypatch, "set", "app.port", "9", "--no-one-file") == 2
+        err = capsys.readouterr().err
+        assert "exists in more than one file" in err
+        assert "1: app.port" in err
+        assert "2: app.port" in err
+        assert "Please specify the file" in err
+
+    def test_default_writes_the_vocabulary_and_names_the_declaration(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write(tmp_path, "from onconf import conf\nconf('a.port', 8080, 'port')\n")
+        assert _run(tmp_path, monkeypatch, "build") == 0
+        capsys.readouterr()
+        assert _run(tmp_path, monkeypatch, "set", "--default", "a.port", "7070") == 0
+        out = capsys.readouterr().out
+        assert out.splitlines()[0] == "OK"
+        assert "declared at main.py:2" in out
+        schema = (tmp_path / "conf" / "schema" / "settings.json").read_text(encoding="utf-8")
+        assert "7070" in schema
+
+    def test_dry_run_writes_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _write(tmp_path, "from onconf import conf\nconf('a.port', 8080)\n")
+        assert _run(tmp_path, monkeypatch, "build") == 0
+        before = (tmp_path / "conf" / "settings.json").read_bytes()
+        assert _run(tmp_path, monkeypatch, "set", "a.port", "9090", "--dry-run") == 0
+        assert (tmp_path / "conf" / "settings.json").read_bytes() == before
+
+
+class TestDiff:
+    def test_a_change_is_one_row(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write(
+            tmp_path,
+            "from onconf import conf\n"
+            "conf('a.port', 8080, 'port')\nconf('a.host', 'local', 'host')\n",
+        )
+        assert _run(tmp_path, monkeypatch, "build") == 0
+        values = tmp_path / "conf" / "settings.json"
+        data = json.loads(values.read_text(encoding="utf-8"))
+        data.pop("a.host")
+        values.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        assert _run(tmp_path, monkeypatch, "sync") == 0  # 补回 a.host ⇒ 一条 [Change]
+        capsys.readouterr()
+
+        assert _run(tmp_path, monkeypatch, "diff") == 0
+        out = capsys.readouterr().out
+        assert "settings.json : a.host" in out
+        assert "=>" in out
+        assert "a.port" not in out
+
+    def test_no_change_is_said_out_loud(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write(tmp_path, "from onconf import conf\nconf('a.port', 8080)\n")
+        assert _run(tmp_path, monkeypatch, "diff") == 0
+        assert capsys.readouterr().out.strip() == "No changes recorded."
+
+
+class TestFormat:
+    def test_without_indent_nothing_is_written(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write(tmp_path, "from onconf import conf\nconf('a.port', 8080)\n")
+        assert _run(tmp_path, monkeypatch, "build") == 0
+        values = tmp_path / "conf" / "settings.json"
+        # 先压成一行，好看出「没给 --indent 就一个字节都不写」
+        values.write_text('{"a.port": 8080}\n', encoding="utf-8")
+        before = values.read_bytes()
+        capsys.readouterr()
+        assert _run(tmp_path, monkeypatch, "format") == 0
+        assert "nothing was written" in capsys.readouterr().out
+        assert values.read_bytes() == before
+
+    def test_indent_reformats_and_keeps_the_keys(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _write(tmp_path, "from onconf import conf\nconf('a.port', 8080)\n")
+        assert _run(tmp_path, monkeypatch, "build") == 0
+        values = tmp_path / "conf" / "settings.json"
+        values.write_text('{"$schema": "schema/settings.json", "a.port": 8080}\n', encoding="utf-8")
+        assert _run(tmp_path, monkeypatch, "format", "--indent", "4") == 0
+        text = values.read_text(encoding="utf-8")
+        assert '\n    "a.port": 8080' in text
+        assert json.loads(text) == {"$schema": "schema/settings.json", "a.port": 8080}

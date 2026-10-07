@@ -10,7 +10,8 @@
 
 **已发布到 PyPI**，发布名 [`OnConf`](https://pypi.org/project/OnConf/)。当前版本 `1.0.0`，
 首个稳定版：公开 API 与磁盘格式从 1.0 起遵循语义化版本，只在**主版本号**变更时才做
-破坏性变更；命令行已交付头三条（`build` / `sync` / `check`），其余五条尚未实现
+破坏性变更；命令行已交付头七条（`build` / `sync` / `check` / `get` / `set` / `diff` / `format`），
+其余两条尚未实现
 （以[路线图](roadmap/README.md)为准）。
 
 定位句的两个半句现在**都有机制支撑**：「不丢一个字节」由外科手术式回写保证；
@@ -47,7 +48,8 @@
   `(home, file_name)` 一份词表。值文件名（`file_name`）与内嵌路径都过包含性校验。
 - **命令行**：`onconf build`（按声明完整重建）与 `onconf sync`（补缺 + 删未声明的键），
   声明靠静态扫描 `conf(...)` 调用得到；`onconf check` 不写一个字节地对比代码 / 词表 /
-  值文件三个口径。其余五条命令尚未实现（`read` 后移，见路线图 2-073）。
+  值文件三个口径；`get` / `set` / `diff` / `format` 分别取值、改值、查变更历史、重排缩进。
+  其余两条（`add` / `log`）尚未实现（`read` 后移，见路线图 2-073）。
 - **用值当键**：支持 `conf(conf("app.key_name"))` 这类间接寻址。
 - **`$schema` 指针**：每次落盘都保证值文件里有指向词表的指针（**能吃下成员的后端**才写；
   `.env` 与 TOML 放不下成员，跳过）。
@@ -69,7 +71,7 @@
   （`EnvSyntaxError` / `YamlFlatRequiredError` / `TomlFlatRequiredError`，
   `except ConfError` 接不住它们）。见[快速开始](getting-started.md)的常见问题。
 
-尚未实现的能力（把系统环境变量当作配置源、除 `build` / `sync` / `check` 之外的五条命令行）
+尚未实现的能力（把系统环境变量当作配置源、`add` / `log` 两条命令行）
 **当前不可用**，一份完整清单见[路线图](roadmap/README.md)。
 
 ## 最小示例

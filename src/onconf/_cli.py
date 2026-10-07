@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: 2026 HanYang06
 # SPDX-License-Identifier: Apache-2.0
-"""命令行：``onconf build`` / ``onconf sync`` / ``onconf check``。
+"""命令行：``build`` / ``sync`` / ``check`` / ``get`` / ``set`` / ``diff`` / ``format``。
+
+``add`` / ``log`` / ``read`` 尚未实现（见 ``docs/design/cli.md``）。
 
 ## 声明从哪里来：**找 ``conf`` 这个函数，分析它的参数构成**
 
@@ -49,6 +51,7 @@ import argparse
 import ast
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -81,8 +84,9 @@ from ._engine import (
     _values_path,
     default_home,
 )
+from ._log import LEVEL_CHANGE, LOG_NAME
 from ._vocab import Vocabulary
-from .errors import ConfError
+from .errors import ConfError, KeyHasNoValueError, KeyNotRegisteredError
 
 
 if TYPE_CHECKING:
@@ -716,6 +720,328 @@ def _cmd_check(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# get / set / diff / format
+# --------------------------------------------------------------------------- #
+
+#: 日志行头：``[级别]-[时间戳]-[txn=… pid=…]``
+_LOG_HEAD = re.compile(r"^\[(?P<level>\w+)\]-\[(?P<stamp>[^\]]+)\]-")
+
+#: 日志行里的一个 ``key=value`` 单元格的开头（顺序固定，见 ``_log._cells``）
+_LOG_CELL = re.compile(r"(?:^|\s)([a-z_]+)=")
+
+
+class _UsageError(Exception):
+    """用法错误：退出码 2（沿用 argparse 的约定）。"""
+
+
+def _home(args: argparse.Namespace) -> Path:
+    home: Path = Path(args.home).resolve() if args.home else default_home()
+    return home
+
+
+def _reject_file_without_multi(args: argparse.Namespace) -> None:
+    """``--file`` 只在多文件模式下有意义 —— 关闭时给它是用法错误（路线图 2-064 已定）。
+
+    不静默忽略：那会让脚本以为「我限定了文件」，而实际上没有。
+    """
+    if args.file and not args.no_one_file:
+        raise _UsageError("--file only applies in multi-file mode (--no-one-file)")
+
+
+def _value_files(home: Path, file_name: str, suffix: str, *, multi: bool) -> list[Path]:
+    """**值文件全集**：单文件模式只有默认那一份，多文件模式把 ``<home>`` 下的都算上。"""
+    default = _values_path(home, file_name, suffix)
+    if not multi or not home.is_dir():
+        return [default]
+    found = [
+        path
+        for path in sorted(home.rglob(f"*{suffix}"))
+        if path.is_file() and SCHEMA_DIR not in path.relative_to(home).parts
+    ]
+    return found or [default]
+
+
+def _path_part_of(path: Path, home: Path, file_name: str, suffix: str) -> str:
+    """值文件 → 它的路径段（默认文件是空串）。"""
+    relative = _relative(path, home)
+    stem = relative[: -len(suffix)] if suffix else relative
+    return "" if stem == file_name else stem
+
+
+def _members_at(path: Path, suffix: str) -> dict[str, Any]:
+    """读一个值文件的全部成员（**不建引擎**）。"""
+    members: dict[str, Any] = _BACKENDS[suffix].loads(path.read_text(encoding="utf-8"))
+    return members
+
+
+def _vocabulary(home: Path, file_name: str) -> Vocabulary:
+    path = _schema_path(home, file_name)
+    if not path.exists():
+        return Vocabulary()
+    return Vocabulary.from_schema(json.loads(path.read_text(encoding="utf-8")))
+
+
+def _parse_value(text: str) -> Any:
+    """命令行给的值：能当 JSON 字面量读出来就是它，读不出来就是字符串。
+
+    ``set app.port 8080`` 写的是数字 8080，``set app.host localhost`` 写的是字符串。
+    """
+    try:
+        return json.loads(text)
+    except ValueError:
+        return text
+
+
+def _candidates(args: argparse.Namespace, home: Path, suffix: str, path_part: str) -> list[Path]:
+    """这次命令要看的文件：给了落点就那一份，否则是全集。"""
+    if path_part:
+        return [_values_path(home, path_part, suffix)]
+    return _value_files(home, args.file_name, suffix, multi=args.no_one_file)
+
+
+def _print_get(rows: Sequence[dict[str, Any]]) -> None:
+    headers = ("key", "value", "path", "doc")
+    cells = [
+        [
+            str(row["key"]),
+            _render(row["value"]),
+            str(row["path"]),
+            "" if row["doc"] is None else str(row["doc"]),
+        ]
+        for row in rows
+    ]
+    widths = [
+        max(len(header), *(len(cell[index]) for cell in cells))
+        for index, header in enumerate(headers)
+    ]
+    for line in [headers, *cells]:
+        rendered = "  ".join(
+            f"{cell:<{width}}" for cell, width in zip(line, widths, strict=True)
+        )
+        print(rendered.rstrip())  # noqa: T201
+
+
+def _cmd_get(args: argparse.Namespace) -> int:
+    """键级取值：``key`` / ``value`` / ``path`` / ``doc`` 四列，同名的键有多少刷多少。"""
+    _reject_file_without_multi(args)
+    home = _home(args)
+    suffix = _file_suffix(args.file_type)
+    path_part, inner_key = _split(args.key, multi=args.no_one_file)
+    if args.file:
+        _paths.relative_parts(args.file)
+        path_part = args.file
+
+    vocab = _vocabulary_at(home, args.file_name)
+    rows: list[dict[str, Any]] = []
+    for path in _candidates(args, home, suffix, path_part):
+        if not path.exists():
+            continue
+        found = path_part or _path_part_of(path, home, args.file_name, suffix)
+        prefix = f"{found}:" if found else ""
+        for inner, value in _members_at(path, suffix).items():
+            if inner != inner_key:
+                continue
+            entry = vocab.get(f"{prefix}{inner}")
+            rows.append(
+                {
+                    "key": f"{prefix}{inner}",
+                    "value": _show(value),
+                    "path": _relative(path, home),
+                    "doc": None if entry is None else entry.doc,
+                }
+            )
+
+    if not rows:
+        raise _missing_key(vocab, inner_key, path_part)
+
+    if args.json:
+        print(json.dumps({"command": "get", "items": rows}, ensure_ascii=False, indent=2))  # noqa: T201
+    else:
+        _print_get(rows)
+    return 0
+
+
+def _missing_key(
+    vocab: dict[str, VocabEntry], inner_key: str, path_part: str
+) -> ConfError:
+    """没有命中：按责任方分成「键名写错」与「部署漏配」两类（与读取口径同源）。"""
+    if path_part:
+        registered = f"{path_part}:{inner_key}" in vocab
+    else:
+        registered = any(
+            key == inner_key or key.endswith(f":{inner_key}") for key in vocab
+        )
+    if registered:
+        return KeyHasNoValueError(f"key {inner_key!r} is registered but no value file holds it")
+    return KeyNotRegisteredError(f"key {inner_key!r} is not registered")
+
+
+def _ambiguous(args: argparse.Namespace, hits: list[tuple[Path, str]], home: Path) -> None:
+    """命中多个文件：逐条列出候选，要求显式给出落点（不进入交互选择）。"""
+    print(f'Error: key "{args.key}" exists in more than one file', file=sys.stderr)  # noqa: T201
+    for index, (path, _) in enumerate(hits, start=1):
+        print(f"  {index}: {args.key}   {_relative(path, home)}", file=sys.stderr)  # noqa: T201
+    print("Please specify the file with --file, or write the key as <path>:<key>.", file=sys.stderr)  # noqa: T201
+
+
+def _cmd_set(args: argparse.Namespace) -> int:
+    """改**已有**键的值：缺省改值文件，``--default`` 改词表里的默认值。"""
+    _reject_file_without_multi(args)
+    if args.default:
+        return _set_default(args)
+    return _set_in_file(args)
+
+
+def _set_in_file(args: argparse.Namespace) -> int:
+    home = _home(args)
+    suffix = _file_suffix(args.file_type)
+    path_part, inner_key = _split(args.key, multi=args.no_one_file)
+    if args.file:
+        _paths.relative_parts(args.file)
+        path_part = args.file
+
+    # 歧义先判：同名的键落在多个文件里时，先给出候选，再谈登记。
+    hits: list[tuple[Path, str]] = [
+        (path, path_part or _path_part_of(path, home, args.file_name, suffix))
+        for path in _candidates(args, home, suffix, path_part)
+        if path.exists() and inner_key in _members_at(path, suffix)
+    ]
+    if len(hits) > 1:
+        _ambiguous(args, hits, home)
+        return 2
+
+    resolved = hits[0][1] if hits else path_part
+    flat = f"{resolved}:{inner_key}" if resolved else inner_key
+    if flat not in _vocabulary_at(home, args.file_name):
+        raise KeyNotRegisteredError(
+            f"key {flat!r} is not registered — set only changes existing keys; "
+            "declare it in code first"
+        )
+    if not hits:
+        raise KeyHasNoValueError(f"key {flat!r} is registered but no value file holds it")
+
+    target = hits[0][0]
+    text = target.read_text(encoding="utf-8")
+    updated = _BACKENDS[suffix].set_value(text, inner_key, _parse_value(args.value))
+    if args.dry_run:
+        print("OK (--dry-run: nothing was written)")  # noqa: T201
+        return 0
+    _atomic_write_text(target, updated, newline=_detect_newline(target.read_bytes()))
+    print("OK")  # noqa: T201
+    return 0
+
+
+def _set_default(args: argparse.Namespace) -> int:
+    """改词表里的默认值。**不改代码** —— 只去追踪声明点，并把代价说清楚。"""
+    home = _home(args)
+    flat = f"{args.file}:{args.key}" if args.file else args.key
+    vocab = _vocabulary(home, args.file_name)
+    if flat not in vocab:
+        raise KeyNotRegisteredError(f"key {flat!r} is not in the vocabulary")
+
+    vocab.set_default(flat, _parse_value(args.value))
+    if not args.dry_run:
+        _atomic_write_text(
+            _schema_path(home, args.file_name),
+            json.dumps(vocab.to_schema(), indent=2, ensure_ascii=False) + "\n",
+            newline="\n",
+        )
+    print("OK")  # noqa: T201
+
+    declared = [finding.where for finding in scan_project(Path.cwd()).decls if finding.key == flat]
+    if declared:
+        print(f"note: declared at {', '.join(declared)} — change it there to keep this default")  # noqa: T201
+    else:
+        print(f"warning: no declaration of {flat!r} found; this default is not backed by code")  # noqa: T201
+    return 0
+
+
+def _cmd_format(args: argparse.Namespace) -> int:
+    """只对 JSON 值文件重排缩进；``--indent`` 是唯一的触发参数。"""
+    if _file_suffix(args.file_type) != ".json":
+        raise _UsageError("format only supports JSON value files")
+    if args.indent is None:
+        print("OK (no --indent given: nothing was written)")  # noqa: T201
+        return 0
+
+    home = _home(args)
+    suffix = _file_suffix(args.file_type)
+    for path in _value_files(home, args.file_name, suffix, multi=args.no_one_file):
+        if not path.exists():
+            continue
+        original = path.read_text(encoding="utf-8")
+        formatted = json.dumps(json.loads(original), indent=args.indent, ensure_ascii=False) + "\n"
+        if formatted == original:
+            continue
+        print(f"OK {_relative(path, home)}")  # noqa: T201
+        if not args.dry_run:
+            _atomic_write_text(path, formatted, newline=_detect_newline(path.read_bytes()))
+    return 0
+
+
+def _log_files(home: Path) -> list[Path]:
+    """日志落点：默认那一份，加上轮转出来的分片（按文件名序）。"""
+    shards = sorted(home.glob("audit-*.log")) if home.is_dir() else []
+    return [path for path in [home / LOG_NAME, *shards] if path.is_file()]
+
+
+def _log_cells(line: str) -> dict[str, str]:
+    """一行日志 → ``key=value`` 单元格。
+
+    单元格的顺序固定（见 ``_log._cells``），所以「下一个单元格的开头」就是上一个值的
+    结尾 —— 值里带空格也不会被拆散。
+    """
+    marks = list(_LOG_CELL.finditer(line))
+    cells: dict[str, str] = {}
+    for index, mark in enumerate(marks):
+        start = mark.end()
+        end = marks[index + 1].start() if index + 1 < len(marks) else len(line)
+        cells[mark.group(1)] = line[start:end].strip()
+    return cells
+
+
+def _cmd_diff(args: argparse.Namespace) -> int:
+    """扫日志里全部 ``Change`` 记录，一行一条变更。**不读哈希、不建索引。**"""
+    home = _home(args)
+    vocab = _vocabulary_at(home, args.file_name)
+    changes: list[dict[str, Any]] = []
+    for path in _log_files(home):
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            head = _LOG_HEAD.match(line)
+            if head is None or head.group("level") != LEVEL_CHANGE:
+                continue
+            cells = _log_cells(line)
+            item = cells.get("item", "")
+            if not item or item == "-":
+                continue
+            entry = vocab.get(item)
+            changes.append(
+                {
+                    "stamp": head.group("stamp"),
+                    "path": cells.get("file", ""),
+                    "key": item,
+                    "vocabulary": None if entry is None else _show(entry.default),
+                    "doc": None if entry is None else entry.doc,
+                    "logged": cells.get("new", "-"),
+                }
+            )
+    changes.sort(key=lambda change: (change["stamp"], change["key"]))
+
+    if args.json:
+        print(json.dumps({"command": "diff", "changes": changes}, ensure_ascii=False, indent=2))  # noqa: T201
+        return 0
+    if not changes:
+        print("No changes recorded.")  # noqa: T201
+        return 0
+    for change in changes:
+        left = f"{change['key']}  {_render(change['vocabulary'])}  {_render(change['doc'])}"
+        # 右侧的 doc 没有来源：日志的 Record 不记 doc（路线图 2-076）。
+        right = f"{change['key']}  {change['logged']}  (none)"
+        print(f"{change['path'] or '-'} : {left}  =>  {right}")  # noqa: T201
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # 输出与入口
 # --------------------------------------------------------------------------- #
 
@@ -754,7 +1080,10 @@ def _emit(payload: dict[str, Any], *, as_json: bool) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """``onconf`` 的入口：``build`` / ``sync`` / ``check``（其余命令尚未实现）。
+    """``onconf`` 的入口。
+
+    ``build`` / ``sync`` / ``check`` / ``get`` / ``set`` / ``diff`` / ``format`` 已实现，
+    其余命令尚未实现。
 
     命令行是**人 / CI 发起的配置管理者**，所以它清掉 ``ONCONF_OWNER_PID``：被一个属主
     进程 shell 出来跑的时候，它不该被当成那个属主的派生进程而只读 —— 「想更新，拿命令行去」
@@ -775,6 +1104,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         # 值文件读不出来（JSON 语法错、`.env` / YAML / TOML 的读期异常）。
         print(f"onconf: {exc}", file=sys.stderr)  # noqa: T201
         return 3
+    except _UsageError as exc:
+        print(f"onconf: {exc}", file=sys.stderr)  # noqa: T201
+        return 2
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -817,6 +1149,33 @@ def _parser() -> argparse.ArgumentParser:
     )
     check.add_argument("--strict", action="store_true", help="count warnings as failures too")
     check.set_defaults(handler=_cmd_check)
+
+    get = sub.add_parser("get", help="read one key: key, value, path, doc")
+    common(get, destructive=False)
+    get.add_argument("key", help="the key (multi-file mode also accepts <path>:<key>)")
+    get.add_argument("--file", default=None, help="restrict to one value file (multi-file only)")
+    get.set_defaults(handler=_cmd_get)
+
+    set_ = sub.add_parser("set", help="change the value of an existing key")
+    common(set_)
+    set_.add_argument("key", help="the key (multi-file mode also accepts <path>:<key>)")
+    set_.add_argument("value", help="the new value: JSON literal, or a bare string")
+    set_.add_argument("--file", default=None, help="restrict to one value file (multi-file only)")
+    set_.add_argument(
+        "--default", action="store_true", help="change the vocabulary default instead of a file"
+    )
+    set_.set_defaults(handler=_cmd_set)
+
+    diff = sub.add_parser("diff", help="list every recorded change")
+    common(diff, destructive=False)
+    diff.set_defaults(handler=_cmd_diff)
+
+    fmt = sub.add_parser("format", help="re-indent JSON value files")
+    common(fmt)
+    fmt.add_argument(
+        "--indent", type=int, default=None, help="indent width; without it nothing is written"
+    )
+    fmt.set_defaults(handler=_cmd_format)
     return parser
 
 

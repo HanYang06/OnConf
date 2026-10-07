@@ -78,6 +78,17 @@ class Vocabulary:
     def drop(self, key: str) -> None:
         self.entries.pop(key, None)
 
+    def set_default(self, key: str, value: Any) -> VocabEntry:
+        """改一个**已有**条目的默认值：``doc`` 与声明集哈希都不动。
+
+        命令行 ``set --default`` 用它 —— 它只改词表、不改代码，所以哈希不该跟着变：
+        哈希一对上，引擎下一次会短路整个写入阶段，这个默认值才留得住。
+        """
+        entry = self.entries[key]
+        updated = VocabEntry(key=entry.key, doc=entry.doc, default=value)
+        self.entries[key] = updated
+        return updated
+
     def apply(self, actions: Iterable[Action], decls: list[Decl]) -> None:
         """把对账动作落到词表上，并刷新哈希 —— 这是「提交」的落点。
 
