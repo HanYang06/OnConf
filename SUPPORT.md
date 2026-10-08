@@ -8,7 +8,7 @@
 - 在 [Issues](https://github.com/HanYang06/OnConf/issues) 与
   [Discussions](https://github.com/HanYang06/OnConf/discussions) 里搜一下关键词
   （报错全文、键名、文件名都值得搜）；
-- 确认你用的是**最新版本**，并确认 Python 版本是 **3.14 或更高**；
+- 确认你用的是**最新版本**，并确认 Python 版本是 **3.11 或更高**；
 - 把「最小复现」缩到不能再小 —— 大多数问题在缩小复现的过程中就自己现形了。
 
 ---

@@ -52,8 +52,10 @@ jobs:
           version: "0.12.22"
           enable-cache: true
 
-      # 3.14 与 requires-python >=3.14 一致；setup-python 放在 setup-uv 之后，
-      # 由它把解释器装好并加入 PATH，随后 uv sync 直接复用这个解释器。
+      # 静态检查用**最新受支持**的 3.14；兼容下界不靠它守 ——
+      # 语法由 ruff 的 target-version = py311 拦，`test` 矩阵里还有真的 3.11。
+      # setup-python 放在 setup-uv 之后，由它把解释器装好并加入 PATH，
+      # 随后 uv sync 直接复用这个解释器。
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -68,8 +70,9 @@ jobs:
       - name: Ruff check
         run: uv run ruff check .
 
-      # 非阻塞项（continue-on-error）：仓库现有 7 个文件未按 ruff format 排版，
-      # 团队决定暂不重排。此步仅作为提示性信号保留，等排版统一后再改为阻塞。
+      # 非阻塞项（continue-on-error）：仓库里仍有一批文件未按 ruff format 排版，
+      # 团队决定暂不重排（AGENTS §5 坑 1）。此步仅作为提示性信号保留，
+      # 等排版统一后再改为阻塞 —— 数字不写死在这里，否则一改就过期。
       - name: Ruff format check (non-blocking, team deferred reformatting)
         continue-on-error: true
         run: uv run ruff format --check .
@@ -132,19 +135,23 @@ jobs:
         run: uv run mypy
 
   # --------------------------------------------------------------------------
-  # 测试：三平台 × Python 3.14，上报覆盖率
+  # 测试：三平台 × 受支持的四个 Python，上报覆盖率
+  #
+  # 下界 3.11 与 requires-python / ruff target-version / mypy python_version 一致，
+  # 上界 3.14 是最新稳定版；四种组合都要真跑，所以 matrix 是完整的笛卡尔积。
+  # 这条「配置口径一致」的约束由 tests/test_python_support.py 守着。
   # --------------------------------------------------------------------------
   test:
-    name: Test (${{ matrix.os }})
+    name: Test (${{ matrix.os }}, ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
-      # fail-fast: false —— 一个平台失败后仍要看其余平台的结论，
-      # 否则跨平台差异会被"第一个失败"掩盖掉。
+      # fail-fast: false —— 一个平台或版本失败后仍要看其余组合的结论，
+      # 否则跨平台 / 跨版本差异会被"第一个失败"掩盖掉。
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ["3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -173,8 +180,9 @@ jobs:
       - name: Upload coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          # artifact 名带上 os，三平台各自留一份互不覆盖。
-          name: coverage-${{ matrix.os }}
+          # artifact 名带上 os 与版本：三平台 × 四版本共 12 个组合，
+          # 只带 os 会让同一平台的不同版本互相覆盖。
+          name: coverage-${{ matrix.os }}-py${{ matrix.python-version }}
           # 正斜杠路径在 Linux/macOS/Windows 三种 runner 上都被 upload-artifact 接受。
           path: coverage.xml
           # 覆盖率文件本该必然存在；缺失说明测试步骤异常，应当显式报错而不是静默 warn。

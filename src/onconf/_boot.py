@@ -275,7 +275,7 @@ def _literal(node: ast.expr) -> tuple[bool, Any]:
     """能不能静态求值；求不出来**不报错**，交给调用方去子进程里问。"""
     try:
         return True, ast.literal_eval(node)
-    except ValueError, TypeError, SyntaxError, MemoryError, RecursionError:
+    except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
         return False, None
 
 
@@ -517,7 +517,7 @@ def _run_child(script: str) -> tuple[bool, Any, str]:
         return False, None, f"the resolver failed: {detail}"
     try:
         value = json.loads(done.stdout.strip().splitlines()[-1])["value"]
-    except ValueError, KeyError, IndexError:
+    except (ValueError, KeyError, IndexError):
         return False, None, "the resolver did not return a value"
     return True, value, ""
 
@@ -568,7 +568,7 @@ def read_snapshot(home: Path) -> Snapshot | None:
     """读 ``<home>/.onconf.json``；**坏表、旧版本、地址对不上，都当没有这张表**。"""
     try:
         raw = json.loads((home / SNAPSHOT_NAME).read_text(encoding="utf-8"))
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return None
     if not isinstance(raw, dict) or raw.get("version") != SNAPSHOT_VERSION:
         return None

@@ -171,7 +171,7 @@ template: |
   uv add onconf
   ```
 
-  需要 Python >= 3.14。完整说明见[文档站](https://hanyang06.github.io/OnConf/)。
+  需要 Python >= 3.11（受测 3.11–3.14）。完整说明见[文档站](https://hanyang06.github.io/OnConf/)。
 
   ## 贡献者
 
