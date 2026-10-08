@@ -10,12 +10,12 @@ name = "OnConf"
 # 版本号的**唯一来源**。发版只走 `uv version --bump …`（它会连 uv.lock 里的本项目版本
 # 一起改好），手工改这一个字符串会让两处不一致、CI 的 --frozen 直接失败。
 # 必须保持静态：改成 dynamic 之后 `uv version` 就用不了了。见 CONTRIBUTING §4.4。
-version = "2.1.0a1"
+version = "2.1.0"
 description = "Configuration has no verbs: one name reads and writes it, in both directions, without losing a byte or an update."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 authors = [{ name = "HanYang06", email = "jihanyang123@163.com" }]
 maintainers = [{ name = "HanYang06", email = "jihanyang123@163.com" }]
 keywords = [
@@ -40,6 +40,9 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: System :: Systems Administration",
@@ -104,7 +107,9 @@ required-version = ">=0.12.22"
 # ============================================================================
 [tool.ruff]
 line-length = 100
-target-version = "py314"
+# target-version 取**支持下界**（3.11），不是本机解释器版本：
+# 它决定 ruff 按哪个版本判「可用/不可用」，取上界会放过只在 3.14 上成立的写法。
+target-version = "py311"
 src = ["src", "tests", "scripts"]
 extend-exclude = [".venv", "site", "docs/design"]
 output-format = "concise"
@@ -231,7 +236,9 @@ skip-magic-trailing-comma = false
 # mypy —— 严格模式
 # ============================================================================
 [tool.mypy]
-python_version = "3.14"
+# 与 requires-python 的**下界**一致：mypy 用这个版本决定哪些 typing 特性可用，
+# 写 3.14 会让只在 3.12+ 成立的注解（如 TypedDict 型 `**kwargs`）静默过关。
+python_version = "3.11"
 strict = true
 files = ["src", "tests"]
 warn_unreachable = true
@@ -260,6 +267,7 @@ module = [
     "test_env_backend",
     "test_json_backend",
     "test_paths",
+    "test_python_support",
     "test_security_invariants",
     "test_style",
     "test_toml_backend",
@@ -302,7 +310,7 @@ show_missing = true
 skip_covered = false
 precision = 2
 # fail_under 由 pytest-cov 在报告阶段强制（CI 的 test job 会因此变红）。
-# 当前实测 93.95%（门槛 90%）；基线说明见 README「Quality gates」。
+# 当前实测 95.44%（门槛 90%）；基线说明见 README「Quality gates」。
 fail_under = 90
 exclude_lines = [
     "pragma: no cover",
