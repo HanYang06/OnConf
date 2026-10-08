@@ -7,7 +7,8 @@
 
 对应的不变量：
 
-* 默认路径不开网络端口、不 spawn 子进程
+* 默认路径不开网络端口、不 spawn 子进程（**射程是引擎**：命令行那个"人发起的工具
+  进程"可以起一个一次性子进程，见 ``test_subprocess_is_out_of_the_engine_path``）
 * 只用 ``yaml.safe_load``，绝不 ``yaml.load``
 * 不对配置内容做 ``eval`` / ``exec`` / ``pickle``
 * **外部字符串（值文件名、键内嵌路径）到路径只经包含性校验**
@@ -22,7 +23,7 @@ import pytest
 
 import onconf
 from onconf import AutoConf, Engine, conf
-from onconf._engine import default_home
+from onconf._engine import SNAPSHOT_NAME, default_home
 
 
 _SRC_DIR = Path(onconf.__file__).parent
@@ -31,6 +32,9 @@ _SRC_DIR = Path(onconf.__file__).parent
 _FORBIDDEN_MODULES = frozenset(
     {"socket", "socketserver", "pickle", "cPickle", "shelve", "marshal", "subprocess", "ctypes"}
 )
+#: **唯一**允许 ``import subprocess`` 的模块：命令行的引导层求值助手。
+#: 它必须在引擎路径之外，且白名单是它唯一的门（见 ``docs/security/threat-model.md`` T13）。
+_SUBPROCESS_ALLOWED = frozenset({"_boot.py"})
 #: 不得使用的 yaml 入口（``safe_load`` / ``safe_load_all`` 是允许的）
 _FORBIDDEN_YAML_ATTRS = frozenset({"load", "load_all", "FullLoader", "UnsafeLoader", "CLoader"})
 #: 不得出现的内建调用
@@ -62,13 +66,57 @@ def _files_under(root: Path) -> list[Path]:
 
 
 def test_no_forbidden_modules_are_imported() -> None:
-    """不开网络 / 不反序列化 / 不起子进程 —— 这三条是身份问题。"""
+    """不开网络 / 不反序列化 / 不碰 ctypes —— 这三条是身份问题。
+
+    ``subprocess`` 只在 :data:`_SUBPROCESS_ALLOWED` 里放行（命令行的一次性求值助手）；
+    它不在引擎路径上是另一条用例的事。
+    """
     offenders: list[str] = []
     for path, tree in _module_asts():
         bad = _imported_roots(tree) & _FORBIDDEN_MODULES
+        if path.name in _SUBPROCESS_ALLOWED:
+            bad -= {"subprocess"}
         if bad:
             offenders.append(f"{path.name}: {sorted(bad)}")
     assert not offenders, "源码引入了被禁模块：\n" + "\n".join(offenders)
+
+
+def _relative_closure(trees: dict[str, ast.Module], root: str) -> set[str]:
+    """从 ``root``（模块文件名）出发，沿**相对导入**走一遍，返回闭包里的模块文件名。"""
+    seen = {root}
+    pending = [root]
+    while pending:
+        tree = trees.get(pending.pop())
+        if tree is None:  # pragma: no cover - 闭包里的模块一定都在
+            continue
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.ImportFrom) and node.level):
+                continue
+            names = [node.module.split(".")[0]] if node.module else [a.name for a in node.names]
+            for name in names:
+                candidate = f"{name}.py"
+                if candidate not in seen:
+                    seen.add(candidate)
+                    pending.append(candidate)
+    return seen
+
+
+def test_subprocess_is_out_of_the_engine_path() -> None:
+    """「不起子进程」的射程是**引擎**：``import onconf`` 的闭包里不许出现它。
+
+    命令行是**人 / CI 发起的工具进程**，它自己就是被 shell 起出来的，再拉一个一次性
+    子进程求值属于同一件事；但那条能力必须与引擎隔开 —— 这里用**可达性**卡，
+    不是文本扫描：``_boot`` 一旦被 ``__init__`` 的闭包捎上，这条就红。
+    """
+    trees = {path.name: tree for path, tree in _module_asts()}
+    reachable = _relative_closure(trees, "__init__.py")
+    assert "_boot.py" not in reachable, "引擎路径捎上了 _boot：子进程面会跟着 import onconf 打开"
+    offenders = [
+        name
+        for name in sorted(reachable)
+        if "subprocess" in _imported_roots(trees[name])
+    ]
+    assert not offenders, f"引擎路径上出现了子进程：{offenders}"
 
 
 def test_yaml_is_only_ever_loaded_safely() -> None:
@@ -149,8 +197,10 @@ def test_key_name_cannot_escape_the_config_home(tmp_path: Path) -> None:
     # （schema/settings.json 与 settings.json 同名），而且 parts 不看平台分隔符。
     written = sorted(p.relative_to(home) for p in home.rglob("*") if p.is_file())
     assert Path("settings.json") in written
-    # 审计文件是**恒写**的第三个成员（前两个是值文件与词表），它同样落在 home 之内。
-    assert all(p.parts[0] in {"settings.json", "schema", "audit.log"} for p in written)
+    # 审计文件是**恒写**的第三个成员，派生快照是第四个（前两个是值文件与词表），
+    # 它们同样落在 home 之内。
+    allowed = {"settings.json", "schema", "audit.log", SNAPSHOT_NAME}
+    assert all(p.parts[0] in allowed for p in written)
     assert all(".." not in p.parts for p in written)
 
     # 配置目录之外不得出现任何新文件
@@ -175,7 +225,7 @@ def test_multi_file_path_cannot_escape_the_config_home(tmp_path: Path, bad: str)
         conf(bad, 1)
 
     assert _files_under(outside) == []
-    assert list(home.glob("**/*.json")) == []
+    assert [p for p in home.glob("**/*.json") if p.name != SNAPSHOT_NAME] == []
     onconf._reset()
 
 
@@ -193,7 +243,12 @@ def test_a_drive_letter_looking_key_stays_inside_the_home(tmp_path: Path) -> Non
     conf("C:/x:k", 1)
 
     written = _files_under(home)
-    assert [p.name for p in written if p.suffix == ".json" and p.parent == home] == ["C.json"]
+    value_files = [
+        p.name
+        for p in written
+        if p.suffix == ".json" and p.parent == home and p.name != SNAPSHOT_NAME
+    ]
+    assert value_files == ["C.json"]
     assert all(p.resolve().is_relative_to(home.resolve()) for p in written)
     onconf._reset()
 

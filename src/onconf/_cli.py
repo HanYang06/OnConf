@@ -58,6 +58,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import _paths, _style
+from ._boot import (
+    python_files as _python_files,
+)
+from ._boot import (
+    read_module as _read_module,
+)
+from ._boot import (
+    relative as _relative,
+)
+from ._boot import resolve_boot
 from ._core import (
     MISSING,
     NO_VALUE,
@@ -76,41 +86,25 @@ from ._engine import (
     DEFAULT_FILE_TYPE,
     OWNER_ENV,
     SCHEMA_DIR,
+    SNAPSHOT_NAME,
     Engine,
     _atomic_write_text,
     _detect_newline,
     _file_suffix,
+    _log_path,
     _schema_pointer,
     _values_path,
     default_home,
+    write_snapshot,
 )
-from ._log import LEVEL_CHANGE, LOG_NAME
+from ._log import LEVEL_CHANGE
 from ._vocab import Vocabulary
 from .errors import ConfError, KeyHasNoValueError, KeyNotRegisteredError
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Sequence
+    from collections.abc import Callable, Sequence
 
-
-#: 扫描时永远跳过的目录名（依赖树、缓存、站点产物）。这不是「忽略规则」，
-#: 只是免得把 ``.venv`` 里几十万个文件读一遍 —— 真正的收敛规则后续版本再谈。
-_SKIP_DIRS = frozenset(
-    {
-        ".git",
-        ".venv",
-        "venv",
-        "__pycache__",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".eggs",
-        "node_modules",
-        "site",
-        "build",
-        "dist",
-    }
-)
 
 #: ``conf(...)`` 能认的参数名
 _CONF_KEYWORDS = frozenset({"key", "value", "doc"})
@@ -165,15 +159,6 @@ class Scan:
 # --------------------------------------------------------------------------- #
 # 扫描
 # --------------------------------------------------------------------------- #
-
-
-def _python_files(root: Path) -> Iterator[Path]:
-    """项目里的 ``*.py``：目录与文件都按字典序，跳过 :data:`_SKIP_DIRS`。"""
-    for current, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(name for name in dirnames if name not in _SKIP_DIRS)
-        for name in sorted(filenames):
-            if name.endswith(".py"):
-                yield Path(current) / name
 
 
 def _conf_aliases(tree: ast.Module) -> tuple[set[str], set[str]]:
@@ -306,19 +291,9 @@ def scan_project(root: Path) -> Scan:
     scan = Scan()
     merged: dict[str, Finding] = {}
     for path in _python_files(root):
-        try:
-            # ``utf-8-sig``：带 BOM 的源文件在 CPython 里是合法的（tokenizer 会剥掉），
-            # 而 ``ast.parse`` 收到带 BOM 的**字符串**会直接报语法错误 —— 这里对齐前者。
-            source = path.read_text(encoding="utf-8-sig")
-        except (OSError, UnicodeDecodeError) as exc:
-            scan.problems.append(f"{_relative(path, root)}: cannot be read ({exc})")
-            continue
-        try:
-            tree = ast.parse(source, filename=str(path))
-        except SyntaxError as exc:
-            scan.problems.append(
-                f"{_relative(path, root)}:{exc.lineno}: syntax error, cannot be scanned"
-            )
+        tree, problem = _read_module(path, root)
+        if tree is None:
+            scan.problems.append(problem)
             continue
 
         direct, modules = _conf_aliases(tree)
@@ -352,13 +327,6 @@ def scan_project(root: Path) -> Scan:
 
     scan.decls = list(merged.values())
     return scan
-
-
-def _relative(path: Path, root: Path) -> str:
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:  # pragma: no cover - 扫描到的路径都来自 root 之下
-        return path.as_posix()
 
 
 # --------------------------------------------------------------------------- #
@@ -676,7 +644,22 @@ def _render(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _home_origin(boot: dict[str, Any]) -> str:
+    """``home`` 这一格的出处，一句话（给人读）。"""
+    source = boot["sources"].get("home", "")
+    if source == "flag":
+        return "--home"
+    if source == "code":
+        return f"from {boot['origin']}" if boot["origin"] else "from AutoConf(...)"
+    if source == "env":
+        return "ONCONF_HOME"
+    return "by convention"
+
+
 def _print_check(payload: dict[str, Any], *, verbose: bool) -> None:
+    if verbose:
+        # 细节模式是「完整报告」，先把这份报告对着哪个配置目录说清楚。
+        print(f"  home        : {payload['boot']['home']}  ({_home_origin(payload['boot'])})")  # noqa: T201
     if payload["ok"]:
         print(_style.paint("All config items are OK.", _style.STYLE_OK))  # noqa: T201
     else:
@@ -697,15 +680,22 @@ def _print_check(payload: dict[str, Any], *, verbose: bool) -> None:
         prefix = f"{warning['where']}: " if warning["where"] else ""
         label = _style.paint("warning:", _style.STYLE_WARNING)
         print(f"{label} {prefix}{warning['message']}")  # noqa: T201
+    for note in payload["notes"]:
+        label = _style.paint("note:", _style.STYLE_NOTE)
+        print(f"{label} {note}")  # noqa: T201
     if payload["findings"]:
         print('Run "onconf sync" to align the vocabulary and the value files.')  # noqa: T201
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
-    """只读体检：代码 / 词表 / 值文件三个口径对比，给报告，一个字节都不写。"""
+    """只读体检：代码 / 词表 / 值文件三个口径对比，给报告，一个字节都不写。
+
+    **引导层的问题也算 warning**：`home` 都定不下来时说"通过"等于骗人 —— 它不改变
+    缺省的通过判定（与声明扫描的 warning 同级），`--strict` 会把它升级成失败。
+    """
     scan = scan_project(Path.cwd())
     decls = _to_decls(scan, multi=args.no_one_file)
-    home = Path(args.home).resolve() if args.home else default_home()
+    home = _home(args)
     suffix = _file_suffix(args.file_type)
 
     vocab = _vocabulary_at(home, args.file_name)
@@ -723,16 +713,18 @@ def _cmd_check(args: argparse.Namespace) -> int:
     )
 
     findings = [_issue_json(issue) for issue in issues]
-    warnings = [_warning_json(problem) for problem in scan.problems]
+    warnings = [_warning_json(problem) for problem in [*scan.problems, *args.boot.problems]]
     failed = bool(findings) or (bool(args.strict) and bool(warnings))
     payload: dict[str, Any] = {
         "command": "check",
         "ok": not failed,
+        "boot": args.boot.as_json(),
         "summary": {
             kind: sum(1 for issue in issues if issue.kind == kind) for kind in CHECK_KINDS
         },
         "findings": findings,
         "warnings": warnings,
+        "notes": list(args.boot.notes),
     }
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))  # noqa: T201
@@ -771,14 +763,20 @@ def _reject_file_without_multi(args: argparse.Namespace) -> None:
 
 
 def _value_files(home: Path, file_name: str, suffix: str, *, multi: bool) -> list[Path]:
-    """**值文件全集**：单文件模式只有默认那一份，多文件模式把 ``<home>`` 下的都算上。"""
+    """**值文件全集**：单文件模式只有默认那一份，多文件模式把 ``<home>`` 下的都算上。
+
+    排除两类：``schema/``（词表是库自己的资产）与 :data:`SNAPSHOT_NAME`（引擎落的
+    派生快照，后缀恰好也是 ``.json``）—— 后者漏排就会让多文件寻址把快照当成值文件。
+    """
     default = _values_path(home, file_name, suffix)
     if not multi or not home.is_dir():
         return [default]
     found = [
         path
         for path in sorted(home.rglob(f"*{suffix}"))
-        if path.is_file() and SCHEMA_DIR not in path.relative_to(home).parts
+        if path.is_file()
+        and path.name != SNAPSHOT_NAME
+        and SCHEMA_DIR not in path.relative_to(home).parts
     ]
     return found or [default]
 
@@ -1004,10 +1002,18 @@ def _cmd_format(args: argparse.Namespace) -> int:
     return 0
 
 
-def _log_files(home: Path) -> list[Path]:
-    """日志落点：默认那一份，加上轮转出来的分片（按文件名序）。"""
-    shards = sorted(home.glob("audit-*.log")) if home.is_dir() else []
-    return [path for path in [home / LOG_NAME, *shards] if path.is_file()]
+def _log_files(home: Path, log_path: str = "") -> list[Path]:
+    """日志落点：主文件，加上轮转出来的分片（按文件名序）。
+
+    落点按引导层的 ``log_path`` 解析（空串 = ``<home>/audit.log``，相对路径按 ``<home>``）；
+    分片只能按"同一目录、同名前缀"去猜 —— 轮转策略是运行期的钩子，落表不了，所以
+    这里是**尽力而为**（见 ``docs/design/log.md`` §5）。
+    """
+    target = _log_path(home, log_path)
+    if not target.parent.is_dir():
+        return []
+    shards = sorted(target.parent.glob(f"{target.stem}-*{target.suffix}"))
+    return [path for path in [target, *shards] if path.is_file()]
 
 
 def _log_cells(line: str) -> dict[str, str]:
@@ -1030,7 +1036,7 @@ def _cmd_diff(args: argparse.Namespace) -> int:
     home = _home(args)
     vocab = _vocabulary_at(home, args.file_name)
     changes: list[dict[str, Any]] = []
-    for path in _log_files(home):
+    for path in _log_files(home, args.boot.log_path):
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             head = _LOG_HEAD.match(line)
             if head is None or head.group("level") != LEVEL_CHANGE:
@@ -1072,8 +1078,16 @@ def _cmd_diff(args: argparse.Namespace) -> int:
 
 
 def _print_human(payload: dict[str, Any]) -> None:
+    boot = payload["boot"]
     print(f"onconf {payload['command']}")  # noqa: T201 - 命令行的输出就是它的职责
-    print(f"  home        : {payload['home']}")  # noqa: T201
+    print(f"  home        : {payload['home']}  ({_home_origin(boot)})")  # noqa: T201
+    marked = ", ".join(
+        f"{name}={boot[name]}"
+        for name in ("file_name", "file_type", "no_one_file", "log_path")
+        if boot["sources"].get(name) != "default"
+    )
+    if marked:
+        print(f"  boot        : {marked}")  # noqa: T201
     print(f"  values      : {payload['file_name']}{payload['file_suffix']}")  # noqa: T201
     if payload["multi_file"]:
         print("  multi-file  : on (the `<path>:` prefix in a key decides the file)")  # noqa: T201
@@ -1114,6 +1128,56 @@ def _error(message: object) -> None:
     print(f"{label} {message}", file=sys.stderr)  # noqa: T201
 
 
+def _apply_boot_layer(args: argparse.Namespace) -> None:
+    """解析这一次的引导层，并把结果**就地写回** ``args``。
+
+    优先级（见 :mod:`onconf._boot`）：显式参数 > 项目代码里的 ``AutoConf(...)`` >
+    ``<home>/.onconf.json`` > 约定。下游那几百行照旧读 ``args.home`` 之类，不必知道
+    这件事；出处记在 ``args.boot`` 上，由报告打出来。
+    """
+    args.boot = resolve_boot(
+        Path.cwd(),
+        home=args.home,
+        file_name=args.file_name,
+        file_type=args.file_type,
+        no_one_file=args.no_one_file,
+    )
+    args.home = str(args.boot.home)
+    args.file_name = args.boot.file_name
+    args.file_type = args.boot.file_type
+    args.no_one_file = args.boot.no_one_file
+
+
+#: 跑完这些命令（且**真的写了字节**）才刷新派生快照；读路径一个字节都不碰。
+_SNAPSHOT_COMMANDS = frozenset({"build", "sync", "set", "format"})
+
+
+def _refresh_snapshot(args: argparse.Namespace) -> None:
+    """把**代码说的**引导层事实补回 ``<home>/.onconf.json``（``cli.md`` §1.2）。
+
+    只在可写命令**真的写了字节**、并且以 0 退出时发生：`--dry-run`、`format` 不给
+    `--indent`、`build --path`（契约是"原目录一个字节不动"）都不算。写进去的只有
+    代码 / 表 / 缺省三者拼出来的 ``boot.durable`` —— 显式参数是一次性的，不进表。
+    """
+    if args.command not in _SNAPSHOT_COMMANDS:
+        return
+    if getattr(args, "dry_run", False):
+        return
+    if args.command == "format" and args.indent is None:
+        return
+    if args.command == "build" and args.path:
+        return
+    boot = args.boot
+    write_snapshot(
+        boot.home,
+        file_name=boot.durable["file_name"],
+        file_type=boot.durable["file_type"],
+        no_one_file=boot.durable["no_one_file"],
+        log_path=boot.durable["log_path"],
+        declared_at=boot.origin,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """``onconf`` 的入口。
 
@@ -1130,9 +1194,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     os.environ.pop(OWNER_ENV, None)
     args = _parser().parse_args(argv)
     _style.configure(args.color)
+    _apply_boot_layer(args)
     handler: Callable[[argparse.Namespace], int] = args.handler
     try:
-        return handler(args)
+        result = handler(args)
     except ConfError as exc:
         _error(exc)
         return 1
@@ -1143,6 +1208,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except _UsageError as exc:
         _error(exc)
         return 2
+    if result == 0:
+        _refresh_snapshot(args)
+    return result
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -1150,13 +1218,28 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     def common(target: argparse.ArgumentParser, *, destructive: bool = True) -> None:
+        # 缺省一律 None：**「没给」与「给了缺省值」要分得开** —— 前者的取值归引导层
+        # （代码 / 快照 / 约定），后者是人说的话，必须压过一切。
         target.add_argument(
-            "--home", default=None, help="config directory (default ./conf or ONCONF_HOME)"
+            "--home",
+            default=None,
+            help="config directory (default: what the code says, else ./conf or ONCONF_HOME)",
         )
-        target.add_argument("--file-name", default=DEFAULT_FILE_NAME, help="value file name stem")
-        target.add_argument("--file-type", default=DEFAULT_FILE_TYPE, help="value file type")
         target.add_argument(
-            "--no-one-file", action="store_true", help="multi-file: a key carries its path"
+            "--file-name",
+            default=None,
+            help=f"value file name stem (default: what the code says, else {DEFAULT_FILE_NAME})",
+        )
+        target.add_argument(
+            "--file-type",
+            default=None,
+            help=f"value file type (default: what the code says, else {DEFAULT_FILE_TYPE})",
+        )
+        target.add_argument(
+            "--no-one-file",
+            action="store_true",
+            default=None,
+            help="multi-file: a key carries its path (default: what the code says)",
         )
         if destructive:
             target.add_argument(
@@ -1222,10 +1305,11 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _base_payload(args: argparse.Namespace) -> dict[str, Any]:
-    home = Path(args.home).resolve() if args.home else default_home()
+    home = _home(args)
     return {
         "command": args.command,
         "home": str(home),
+        "boot": args.boot.as_json(),
         "file_name": args.file_name,
         "file_type": args.file_type,
         "file_suffix": _file_suffix(args.file_type),
@@ -1240,10 +1324,16 @@ def _base_payload(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _scan_payload(payload: dict[str, Any]) -> Scan:
+    """扫声明，并把**引导层读不懂的地方**并进同一份问题清单。
+
+    两条路的问题合流是有意的：`sync` 的"期望集不完整就不删"与"配置目录都没定下来"
+    是同一个判断的两面 —— 后者更严重，更不该猜。
+    """
     scan = scan_project(Path.cwd())
+    boot = payload["boot"]
     payload["declarations"] = [_finding_json(item) for item in scan.decls]
-    payload["problems"] = scan.problems
-    payload["notes"] = scan.notes
+    payload["problems"] = [*scan.problems, *boot["problems"]]
+    payload["notes"] = [*scan.notes, *boot["notes"]]
     return scan
 
 
@@ -1277,10 +1367,17 @@ def _cmd_sync(args: argparse.Namespace) -> int:
     decls = _to_decls(scan, multi=args.no_one_file)
     clean = not args.no_clean
 
-    if clean and scan.problems:
+    if clean and payload["problems"]:
+        unreadable = len(scan.problems)
+        boot = len(payload["problems"]) - unreadable
+        reason = (
+            f"incomplete declaration set ({unreadable} unreadable call(s))"
+            if not boot
+            else f"the boot layer is not settled ({boot} problem(s))"
+        )
         payload["summary"] = (
-            f"incomplete declaration set ({len(scan.problems)} unreadable call(s)): "
-            "refusing to delete any key; add --no-clean, or make those calls literal"
+            f"{reason}: refusing to delete any key; "
+            "pass --home / --file-name …, add --no-clean, or run the app once"
         )
         _emit(payload, as_json=args.json)
         return 1

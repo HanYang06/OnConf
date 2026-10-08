@@ -737,6 +737,8 @@ class TestFormat:
         text = values.read_text(encoding="utf-8")
         assert '\n    "a.port": 8080' in text
         assert json.loads(text) == {"$schema": "schema/settings.json", "a.port": 8080}
+
+
 class TestColor:
     """``--color`` 是命令行的渲染闸门：**非 TTY 逐字稳定，``--json`` 永不着色**。
 
@@ -826,3 +828,180 @@ class TestColor:
         with pytest.raises(SystemExit) as caught:
             main(["check", "--color=blue"])
         assert caught.value.code == 2
+
+
+class TestBootLayer:
+    """命令行怎么知道引导层：代码 > 缺省，显式参数最大，算不出来的不猜。"""
+
+    def test_the_code_decides_the_config_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write(
+            tmp_path,
+            "from onconf import AutoConf, conf\n"
+            "AutoConf(home='conf')\n"
+            "conf('a.port', 8080)\n",
+        )
+        assert _run(tmp_path, monkeypatch, "build") == 0
+        assert (tmp_path / "conf" / "settings.json").is_file()
+        capsys.readouterr()
+        assert _run(tmp_path, monkeypatch, "check") == 0
+        assert capsys.readouterr().out.strip() == "All config items are OK."
+
+    def test_the_flag_beats_the_code(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        _write(
+            tmp_path,
+            "from onconf import AutoConf, conf\nAutoConf(home='conf')\nconf('a.port', 8080)\n",
+        )
+        other = tmp_path / "other"
+        assert _run(tmp_path, monkeypatch, "build", "--home", str(other)) == 0
+        assert (other / "settings.json").is_file()
+        assert not (tmp_path / "conf").exists()
+
+    def test_a_computed_home_is_resolved_in_a_child(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``home=config_root()`` 这种"先算再配"的形态：命令行拿得到真值。"""
+        (tmp_path / "src" / "pkg").mkdir(parents=True)
+        _write(
+            tmp_path,
+            "import os\nfrom pathlib import Path\n\nfrom onconf import AutoConf, conf\n\n"
+            "CONFIG_DIRNAME = 'config'\n\n\n"
+            "def config_root() -> Path:\n"
+            "    from_env = os.environ.get('CAIRN_CONFIG')\n"
+            "    if from_env:\n"
+            "        return Path(from_env)\n"
+            "    return Path(__file__).resolve().parents[2] / CONFIG_DIRNAME\n\n\n"
+            "AutoConf(home=config_root())\n"
+            "conf('a.port', 8080)\n",
+            name="src/pkg/conf.py",
+        )
+        monkeypatch.delenv("CAIRN_CONFIG", raising=False)
+        assert _run(tmp_path, monkeypatch, "check", "--json") == 5
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["boot"]["home"] == str(tmp_path / "config")
+        assert payload["boot"]["sources"]["home"] == "code"
+        assert payload["boot"]["origin"].endswith("src/pkg/conf.py:16")
+
+    def test_the_boot_sources_are_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write(
+            tmp_path,
+            "from onconf import AutoConf, conf\n"
+            "AutoConf(home='conf', file_name='app')\n"
+            "conf('a.port', 8080)\n",
+        )
+        assert _run(tmp_path, monkeypatch, "build", "--json") == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["boot"]["sources"] == {
+            "home": "code",
+            "file_name": "code",
+            "file_type": "default",
+            "no_one_file": "default",
+            "log_path": "default",
+        }
+        assert payload["file_name"] == "app"
+
+    def test_an_unresolvable_home_warns_and_strict_makes_it_fail(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write(
+            tmp_path,
+            "import os\nfrom onconf import AutoConf, conf\n\n\n"
+            "def here():\n    return os.environ['ONCONF_NOPE_NOT_SET']\n\n\n"
+            "AutoConf(home=here())\n"
+            "conf('a.port', 8080)\n",
+        )
+        monkeypatch.delenv("ONCONF_NOPE_NOT_SET", raising=False)
+        assert _run(tmp_path, monkeypatch, "check") == 5  # 声明没 build，本身就不过
+        assert "cannot resolve" in capsys.readouterr().out
+        assert _run(tmp_path, monkeypatch, "check", "--strict") == 5
+
+    def test_sync_refuses_to_clean_when_the_boot_layer_is_unsettled(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write(
+            tmp_path,
+            "import os\nfrom onconf import AutoConf, conf\n\n\n"
+            "def here():\n    return os.environ['ONCONF_NOPE_NOT_SET']\n\n\n"
+            "AutoConf(home=here())\n"
+            "conf('a.port', 8080)\n",
+        )
+        monkeypatch.delenv("ONCONF_NOPE_NOT_SET", raising=False)
+        assert _run(tmp_path, monkeypatch, "sync") == 1
+        assert "boot layer" in capsys.readouterr().out
+        assert _run(tmp_path, monkeypatch, "sync", "--no-clean") == 0
+
+    def test_the_snapshot_is_not_a_value_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """派生快照的后缀也是 ``.json``，多文件模式**不能**把它当成值文件。"""
+        _write(
+            tmp_path,
+            "from onconf import AutoConf, conf\nAutoConf(home='conf')\nconf('a.port', 8080)\n",
+        )
+        assert _run(tmp_path, monkeypatch, "build", "--no-one-file") == 0
+        table = tmp_path / "conf" / ".onconf.json"
+        assert table.is_file(), "可写命令跑完就该有这张表"
+        before = table.read_bytes()
+        # 表是按 indent=2 写的：要是 format 把它当值文件，那一行就会变成 indent=4。
+        assert _run(tmp_path, monkeypatch, "format", "--indent", "4", "--no-one-file") == 0
+        assert table.read_bytes() == before
+
+    def test_a_write_command_refreshes_the_snapshot(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """「代码是事实标准」：代码改了，下一次可写命令把表改成代码说的。"""
+        _write(
+            tmp_path,
+            "from onconf import AutoConf, conf\nAutoConf(home='conf')\nconf('a.port', 8080)\n",
+        )
+        assert _run(tmp_path, monkeypatch, "build") == 0
+        table = tmp_path / "conf" / ".onconf.json"
+        assert json.loads(table.read_text(encoding="utf-8"))["file_name"] == "settings"
+        _write(
+            tmp_path,
+            "from onconf import AutoConf, conf\n"
+            "AutoConf(home='conf', file_name='app')\nconf('a.port', 8080)\n",
+        )
+        assert _run(tmp_path, monkeypatch, "sync", "--no-clean") == 0
+        assert json.loads(table.read_text(encoding="utf-8"))["file_name"] == "app"
+
+    def test_the_flags_never_leak_into_the_snapshot(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """显式参数是**这一趟**的意图：它会改写值文件，但不改写下一次命令的缺省。"""
+        _write(
+            tmp_path,
+            "from onconf import AutoConf, conf\nAutoConf(home='conf')\nconf('a.port', 8080)\n",
+        )
+        assert _run(tmp_path, monkeypatch, "build", "--file-name", "other") == 0
+        assert (tmp_path / "conf" / "other.json").is_file()
+        table = tmp_path / "conf" / ".onconf.json"
+        assert json.loads(table.read_text(encoding="utf-8"))["file_name"] == "settings"
+
+    def test_a_dry_run_and_a_read_only_command_leave_no_table(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _write(
+            tmp_path,
+            "from onconf import AutoConf, conf\nAutoConf(home='conf')\nconf('a.port', 8080)\n",
+        )
+        assert _run(tmp_path, monkeypatch, "build", "--dry-run") == 0
+        assert not (tmp_path / "conf" / ".onconf.json").exists()
+        assert _run(tmp_path, monkeypatch, "check") == 5  # 没建过，报 missing / unfilled
+        assert not (tmp_path / "conf").exists(), "读路径连目录都不该造"
+
+    def test_check_does_not_refresh_an_existing_table(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _write(
+            tmp_path,
+            "from onconf import AutoConf, conf\nAutoConf(home='conf')\nconf('a.port', 8080)\n",
+        )
+        assert _run(tmp_path, monkeypatch, "build") == 0
+        table = tmp_path / "conf" / ".onconf.json"
+        before = (table.read_bytes(), table.stat().st_mtime_ns)
+        assert _run(tmp_path, monkeypatch, "check") == 0
+        assert (table.read_bytes(), table.stat().st_mtime_ns) == before

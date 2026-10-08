@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
 from ._core import MISSING
 from ._engine import Engine
+from ._log import call_site
 from .errors import (
     ConfError,
     KeyHasNoValueError,
@@ -117,6 +118,9 @@ def AutoConf(**engine: Unpack[EngineParams]) -> Engine:  # noqa: N802 - 公开 A
 
     if _engine is None:
         _engine = Engine(**engine)
+        # 装配完顺手落一张**派生快照**（`<home>/.onconf.json`）：命令行靠它知道这个目录
+        # 是被谁、按哪套引导层参数用的，因此不必执行项目代码。见 `docs/design/init_config.md`。
+        _engine.record_snapshot(declared_at=call_site())
     elif engine:
         raise ConfError(
             "引擎已经启动：引导层参数（配置目录 / 值文件名 / 值文件类型 / 多文件开关 / "

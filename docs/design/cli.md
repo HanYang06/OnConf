@@ -32,6 +32,42 @@
 
 美化 `--help` 只动渲染层，不动解析层，因此不构成换框架的理由。
 
+### 1.2 引导层从哪来：读代码，不猜
+
+命令行的 `--home` / `--file-name` / `--file-type` / `--no-one-file` 与 `AutoConf` 同名参数
+一一对应（§2.1），它们的**缺省值不是写死的那四个**：项目代码说了什么，命令行就用什么。
+四个来源，优先级从高到低：
+
+1. **显式参数** —— 人说的一定算；
+2. **项目代码** —— 静态读 `AutoConf(...)` 的关键字。字面量直接取值；算出来的
+   （`home=config_root()` 这种"配置之前得先算"的）在**一次性子进程**里求值；
+3. **派生快照** —— 引擎装配时落在 `<home>/.onconf.json` 的那次事实；
+4. **约定** —— `ONCONF_HOME` / `./conf` / 各参数自己的缺省值。
+
+**`home` 是例外**：快照就住在 `<home>` 里，所以它不可能反过来当 `home` 的来源（自举只走
+1 / 2 / 4）；表里那个 `home` 字段只做**自检** —— 与它所在的目录对不上，整张表不采信
+（被搬过来的、别人提交进来的，都会在这里被挡掉）。`log_path` 也在引导层里：`diff`（以及
+后续的 `log`）按它找审计落点，不再假定 `<home>/audit.log`。
+
+**求值的门是白名单，不是沙箱。** 摘出来的片段只有路径与环境计算：节点类型、模块、名字、
+属性各有一张白名单（循环、推导式、`lambda`、`try` / `with`、下划线开头的属性、白名单外的
+模块与 `os` 属性一律拒绝），跑在 `python -I -S -B -c` 起的一次性子进程里，`stdin` 关掉、
+超时收口、只回一行 JSON。**库进程里没有 `eval` / `exec` / `compile` / `__import__`**；
+`import onconf` 那条路碰不到这一切（[威胁模型](../security/threat-model.md) T13）。
+
+**表由引擎写，命令行只在"真的写了字节"之后刷新。** `AutoConf(...)` 装配完落一张
+`<home>/.onconf.json`（`home` 不在时不造目录，留到第一次真的写下去再补）；命令行走
+`build` / `sync` / `set` / `format` 且**确实动了字节**（`--dry-run`、`format` 不给
+`--indent`、`build --path` 都不算）并成功退出时，把**代码说的**那一份刷回去 —— 这就是
+"代码是事实标准"的落地。**写进去的只有代码 / 表 / 缺省三者拼出来的值，显式参数永不进表**：
+一次 `--file-name x` 是这一趟的意图，不该改写下一次命令的缺省。读路径（`check` /
+`get` / `diff`）与一切"没写"的调用都不碰它。
+
+**读不懂就说，不猜。** 代码里的 `home=` 算不出来、又没有任何候选时，命令行**用回退值并
+出声**（`check` 把它算 warning，`--strict` 下升级为失败；`sync` 要删键时直接**拒绝清理**）。
+每个命令都会回显 `home` 的**出处**（`--home` / `from <文件>:<行>` / `ONCONF_HOME` /
+`by convention`），`--json` 里是 `boot.sources` 与 `boot.origin`。
+
 ## 2. 命令表
 
 主干九条 —— `build` / `sync` / `check` / `read` / `get` / `set` / `diff` / `format` / `add`
@@ -60,10 +96,10 @@
 
 | 参数 | 命令 | 语义 |
 |---|---|---|
-| `--home DIR` | 全部 | 配置目录；缺省 `./conf` 或 `ONCONF_HOME` |
-| `--file-name NAME` | 全部 | 值文件名主干；缺省 `settings` |
-| `--file-type TYPE` | 全部 | 值文件类型；缺省 `json`（2.0 只保证 JSON，见 §2.2） |
-| `--no-one-file` | 全部 | 多文件：键里的 `<路径>:` 决定落点 |
+| `--home DIR` | 全部 | 配置目录；缺省取**代码 / 快照 / `ONCONF_HOME` / `./conf`**（§1.2） |
+| `--file-name NAME` | 全部 | 值文件名主干；缺省取代码 / 快照，再退到 `settings` |
+| `--file-type TYPE` | 全部 | 值文件类型；缺省取代码 / 快照，再退到 `json`（2.0 只保证 JSON，见 §2.2） |
+| `--no-one-file` | 全部 | 多文件：键里的 `<路径>:` 决定落点；**给了才是给**（缺省跟代码 / 快照） |
 | `--dry-run` | 破坏性命令 | 只打印要做什么，不写一个字节 |
 | `--json` | 全部 | 机器可读输出 |
 | `--color` | 全部 | 人读输出的着色闸门：`auto`（缺省）/ `always` / `never`（见 §6） |
@@ -79,7 +115,9 @@
 | `--level` / `--since` / `--until` / `--key` / `--id` | `log` | 四个筛选维度 |
 
 `--home` / `--file-name` / `--file-type` / `--no-one-file` 与 `AutoConf` 的同名参数一一对应：
-命令行不引入第二套配置目录约定。`check` **不带 `--fix`** —— 它只检查与报告，收敛是 `sync` 的活。
+命令行不引入第二套配置目录约定。**「没给」与「给了缺省值」分得开**：前者的取值归引导层
+（代码 / 快照 / 约定，见 §1.2），后者是人说的话，压过一切。`check` **不带 `--fix`** ——
+它只检查与报告，收敛是 `sync` 的活。
 
 ### 2.2 2.0 只保证纯 JSON
 
@@ -186,7 +224,10 @@ undeclared  legacy.key  settings.json
 - **顺序稳定**：全部发现按 `key` 的**码位序**排（`sorted()`：数字 < 大写 < 小写），
   同一份输入跑两次必须逐字相同 —— CI 里要比对两次输出。
 - 扫不动的**声明**（第一实参不是字符串字面量）出 warning，不改变通过判定
-  （[初始化配置](init_config.md) §8）；`--strict` 把 warning 也算进通过判定。
+  （[初始化配置](init_config.md) §8）；**引导层没定下来**（`home=` 算不出来又无候选）
+  同样是 warning（§1.2）；`--strict` 把 warning 也算进通过判定。
+- `--verbose` 是「完整报告」：先回一行**这份报告对着哪个配置目录说的**（含出处），
+  再逐条列 finding。
 - 走一条**专门的只读路径**：不建引擎实例，因此不产生记录、不落盘、不建目录。它读三个口径，
   **一个字节都不写**。
 - 只读性是硬约束，写成回归断言：跑完 `check` 后工作区内既有文件的 mtime 与内容不变，
@@ -199,6 +240,20 @@ undeclared  legacy.key  settings.json
   {
     "command": "check",
     "ok": false,
+    "boot": {
+      "home": "…/config",
+      "file_name": "settings",
+      "file_type": "json",
+      "no_one_file": false,
+      "log_path": "",
+      "sources": {
+        "home": "code", "file_name": "default", "file_type": "default",
+        "no_one_file": "default", "log_path": "default"
+      },
+      "origin": "app/conf.py:12",
+      "notes": [],
+      "problems": []
+    },
     "summary": {
       "missing": 1, "stale": 1, "default": 1, "doc": 0, "unfilled": 1, "undeclared": 1
     },
@@ -209,9 +264,14 @@ undeclared  legacy.key  settings.json
     ],
     "warnings": [
       {"kind": "convention", "where": "app/conf.py:12", "message": "key is not a string literal"}
-    ]
+    ],
+    "notes": []
   }
   ```
+
+  `boot` 是这份报告采用的引导层与**每个值的出处**（§1.2）；`notes` 是提示（例如派生快照
+  过期），它与 `warnings` 分开：**不参与 `--strict` 的判定**。`build` / `sync` 的 `--json`
+  同样带 `boot`，与 `problems` / `notes` 同源。
 
 ### 4.3 `get`
 
@@ -287,6 +347,8 @@ app.post       8080    settings.json     服务端口
 - 右侧的 `doc` 在 2.0 里**没有来源**：日志的 `Record` 不记 `doc`，所以先占位显示 `(none)`，
   等日志把 `doc` 记上（路线图 2-076）才有真值 —— 列位不变，格式不用跟着改。
 - 数据来源就是**日志文件的 `Change` 记录**：扫一遍全部落点，按**键**给出变更历史。
+  落点按引导层的 `log_path` 找（§1.2）；分片只能按"同目录、同名前缀"猜，因为轮转策略是
+  运行期的钩子、落不进表 —— 这一处是**尽力而为**。
 - **不读哈希、不建索引、不产跟踪文件**：索引那条路要么新增一种落盘形态，要么与 git
   配合，复杂度与收益不成比例（路线图 2-050 已定）。
 - 与 `log` 的分工按**问题类型**分：变更历史归 `diff`，原始记录筛选归 `log`
@@ -404,6 +466,7 @@ app.post       8080    settings.json     服务端口
 | 命令行范围 | 2-070 | 已定：2.0 只保证纯 JSON |
 | 输出语言 | 2-077 | 已定：一律英文，`build` / `sync` 的标签也要换 |
 | 人读渲染与色彩 | 2-078 | 已交付（2.1.0）：只给语义上色、非 TTY 逐字稳定 |
+| 引导层发现（读代码 / 快照 / 求值） | 2-079 | 已交付（2.1.0）：`AutoConf(...)` 静态读 + 白名单子进程求值 + `<home>/.onconf.json` |
 
 ### 8.2 已定（路线图条目）
 
