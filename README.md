@@ -4,7 +4,7 @@
 [![CodeQL](https://github.com/HanYang06/OnConf/actions/workflows/codeql.yml/badge.svg)](https://github.com/HanYang06/OnConf/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/HanYang06/OnConf/badge)](https://securityscorecards.dev/viewer/?uri=github.com/HanYang06/OnConf)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![mypy: strict](https://img.shields.io/badge/mypy-strict-blue.svg)](pyproject.toml)
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](.pre-commit-config.yaml)
 
@@ -287,8 +287,9 @@ uv run pip-audit
 uv run zizmor .github/workflows
 ```
 
-CI runs on **ubuntu / windows / macos × Python 3.14** and enforces: `ruff check`, `codespell`, the
-third-party notices check (`python scripts/gen_third_party_notices.py --check`), `mypy --strict`,
+CI runs on **ubuntu / windows / macos × Python 3.11, 3.12, 3.13 and 3.14** and enforces:
+`ruff check`, `codespell`, the third-party notices check
+(`python scripts/gen_third_party_notices.py --check`), `mypy --strict`,
 `pytest` with a coverage floor, `bandit`, `pip-audit`, `zizmor`, `actionlint`, `gitleaks`,
 CodeQL, dependency review and OpenSSF Scorecard.
 

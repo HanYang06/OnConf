@@ -7,7 +7,7 @@
 
 | 项 | 要求 | 依据 |
 |---|---|---|
-| Python | 3.14 或更高 | `pyproject.toml` 的 `requires-python = ">=3.14"` |
+| Python | 3.11 或更高（受测 3.11–3.14） | `pyproject.toml` 的 `requires-python = ">=3.11"` |
 | 包管理与构建 | uv（构建后端是 `uv_build`） | `pyproject.toml` 的 `[build-system]` |
 
 项目只用 uv 管理依赖与构建，没有 pip 工作流。

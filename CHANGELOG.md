@@ -9,7 +9,7 @@
 （`git log --oneline --no-merges`，整理范围至 `988d5df`），每一条都对应一个真实提交，
 不是事后补写的愿景。尚未发布的能力与进度见[路线图](docs/roadmap/index.md)。
 
-## [Unreleased]
+## [2.1.0] - 2026-10-09
 
 ### Added
 
@@ -34,6 +34,17 @@
     `TERM=dumb` → `FORCE_COLOR` → 是不是终端 → Windows 上控制台支不支持 VT，
     **「关」排在「开」前面**。
   - `--json` 与一切落盘字节**永不经过**渲染层；`--help` 的着色仍归 `argparse`。
+
+### Changed
+
+- **Python 支持范围从单点 `3.14` 扩到 `3.11`–`3.14`**（[路线图 2-080](docs/roadmap/2.x.md)）：
+  `requires-python = ">=3.11"`，classifier 补齐 3.11 / 3.12 / 3.13；`ruff` 的 `target-version`
+  与 `mypy` 的 `python_version` 都取**下界**（取上界会放过只在 3.14 上成立的写法）；
+  CI 的 `test` 矩阵在 ubuntu / windows / macos 上把四个版本各跑一遍（12 个组合）。
+  - `onconf._boot` 里三处「多个异常类型不写括号」的 `except`（3.14 才有的语法）补回括号 ——
+    这是本次唯一影响 3.11 的语法点。
+  - 新增 `tests/test_python_support.py`：把 `requires-python`、classifiers、`ruff` / `mypy`
+    的目标版本与 CI 矩阵四处口径钉在一起，任何一处单独漂移都会被挡下。
 
 ## [2.0.0] - 2026-10-07
 
@@ -298,7 +309,8 @@ classifier 仍是 `Development Status :: 2 - Pre-Alpha`，页面正文也还写�
 
 - 指令键（`$` 开头）豁免对账，`$schema` 不会被规则 1 清掉（`787360e`）。
 
-[Unreleased]: https://github.com/HanYang06/OnConf/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/HanYang06/OnConf/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/HanYang06/OnConf/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/HanYang06/OnConf/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/HanYang06/OnConf/compare/3ef3f4f...v1.0.0
 [0.1.0]: https://github.com/HanYang06/OnConf/compare/3ef3f4f...d166050
@@ -306,4 +318,4 @@ classifier 仍是 `Development Status :: 2 - Pre-Alpha`，页面正文也还写�
 `v0.1.0` **从未打过 tag、也从未发布**，所以它只能按提交区间比对（`3ef3f4f...d166050`）；
 `v1.0.0` 的对比基准因此也退回同一个起点。详见 `CONTRIBUTING.md` §4.4 的版本闸门。
 
-未发布能力见 [2.0.x 路线图](docs/roadmap/2.0.x/roadmap.md)。
+未发布能力见 [2.x 路线图](docs/roadmap/2.x.md)。

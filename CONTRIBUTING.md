@@ -24,7 +24,7 @@ onconf 是一个**基于本地文件的、进程内使用的配置引擎**，对
 | 发布名（PyPI） | `onconf` |
 | import 名 | `onconf` |
 | CLI 入口 | `onconf` |
-| Python 版本 | `>=3.14` |
+| Python 版本 | `>=3.11`（受测 3.11–3.14） |
 | 构建后端 | `uv_build` |
 | 包与虚拟环境管理 | `uv`（`uv.lock` 已提交） |
 | 开源协议 | Apache-2.0（见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)） |
@@ -70,15 +70,17 @@ uv sync --all-groups
 
 `uv sync --all-groups` 会安装**全部依赖**（含 `dev` 与 `docs` 组）。
 
-Python 版本由仓库根目录的 `.python-version` 钉死为 `3.14`。如果你本机没有这个解释器，
-让 uv 自己装一个即可：
+Python 版本由仓库根目录的 `.python-version` 钉死为 `3.14`（本地开发用最新稳定版）。
+如果你本机没有这个解释器，让 uv 自己装一个即可：
 
 ```bash
 uv python install 3.14
 ```
 
-`requires-python = ">=3.14"`。请不要为了兼容更低的 Python 版本而写兼容分支：
-本项目**只支持 3.14 及以上**。
+支持范围是 **3.11 到 3.14**：`requires-python = ">=3.11"`，`ruff` 的 `target-version` 与
+`mypy` 的 `python_version` 都取这个**下界**（取上界会放过只在 3.14 上成立的写法），
+CI 的 `test` 矩阵在三个平台上把四个版本全跑一遍。请不要为 3.11 以下的版本写兼容分支。
+这四处口径由 `tests/test_python_support.py` 对着 `pyproject.toml` 与 CI 配置逐条校验。
 
 ### 2.3 三个平台各自的注意事项
 
@@ -110,9 +112,9 @@ uv python install 3.14
 
 | 平台 | Python |
 |---|---|
-| `ubuntu-latest` | 3.14 |
-| `windows-latest` | 3.14 |
-| `macos-latest` | 3.14 |
+| `ubuntu-latest` | 3.11 / 3.12 / 3.13 / 3.14 |
+| `windows-latest` | 3.11 / 3.12 / 3.13 / 3.14 |
+| `macos-latest` | 3.11 / 3.12 / 3.13 / 3.14 |
 
 ---
 
@@ -443,8 +445,8 @@ $schema 这类以 $ 开头的指令键不参与「清理未知数据」，
   uv run pytest --cov --cov-report=term-missing
   ```
 
-- **覆盖率门槛由 CI 强制**：`test` job 在三个平台 × Python 3.14 上跑测试并校验覆盖率，
-  低于门槛直接失败。不要通过排除文件或加 `# pragma: no cover` 来凑数。
+- **覆盖率门槛由 CI 强制**：`test` job 在三个平台 × Python 3.11 / 3.12 / 3.13 / 3.14 上跑
+  测试并校验覆盖率，低于门槛直接失败。不要通过排除文件或加 `# pragma: no cover` 来凑数。
 
 ---
 

@@ -4,7 +4,7 @@
 [![CodeQL](https://github.com/HanYang06/OnConf/actions/workflows/codeql.yml/badge.svg)](https://github.com/HanYang06/OnConf/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/HanYang06/OnConf/badge)](https://securityscorecards.dev/viewer/?uri=github.com/HanYang06/OnConf)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![mypy: strict](https://img.shields.io/badge/mypy-strict-blue.svg)](pyproject.toml)
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](.pre-commit-config.yaml)
 
@@ -262,10 +262,10 @@ uv run pip-audit
 uv run zizmor .github/workflows
 ```
 
-CI 跑 **ubuntu / windows / macos × Python 3.14**，并强制：`ruff check`、`codespell`、
-第三方许可清单检查（`python scripts/gen_third_party_notices.py --check`）、`mypy --strict`、
-带覆盖率下限的 `pytest`、`bandit`、`pip-audit`、`zizmor`、`actionlint`、`gitleaks`、
-CodeQL、依赖审查与 OpenSSF Scorecard。
+CI 跑 **ubuntu / windows / macos × Python 3.11 / 3.12 / 3.13 / 3.14**，并强制：`ruff check`、
+`codespell`、第三方许可清单检查（`python scripts/gen_third_party_notices.py --check`）、
+`mypy --strict`、带覆盖率下限的 `pytest`、`bandit`、`pip-audit`、`zizmor`、`actionlint`、
+`gitleaks`、CodeQL、依赖审查与 OpenSSF Scorecard。
 
 `ruff format --check` 目前是**非阻塞**的（CI 里 `continue-on-error`）：团队决定在库还在写的
 阶段不去重排既有文件。
