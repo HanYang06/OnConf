@@ -10,7 +10,7 @@ name = "OnConf"
 # 版本号的**唯一来源**。发版只走 `uv version --bump …`（它会连 uv.lock 里的本项目版本
 # 一起改好），手工改这一个字符串会让两处不一致、CI 的 --frozen 直接失败。
 # 必须保持静态：改成 dynamic 之后 `uv version` 就用不了了。见 CONTRIBUTING §4.4。
-version = "2.0.0"
+version = "2.1.0a1"
 description = "Configuration has no verbs: one name reads and writes it, in both directions, without losing a byte or an update."
 readme = "README.md"
 license = "Apache-2.0"
