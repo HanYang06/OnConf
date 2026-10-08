@@ -13,6 +13,20 @@
 
 ### Added
 
+- **命令行会读项目代码，知道引导层配在了哪儿**（[路线图 2-079](docs/roadmap/2.x.md)）：`--home` /
+  `--file-name` / `--file-type` / `--no-one-file` 的缺省值不再是写死的那几个，而是按
+  **显式参数 > 代码里的 `AutoConf(...)` > `<home>/.onconf.json` > 约定**取。
+  - 字面量直接读；`home=config_root()` 这种"配置之前得先算"的形态，在**白名单过滤**之后交给
+    `python -I -S -B -c` 起的一次性子进程求值（节点类型 / 模块 / 名字 / 属性各一张白名单，
+    超时收口，只回一行 JSON）。库进程里依旧没有 `eval` / `exec` / `compile` / `__import__`，
+    `_boot` 也不在 `import onconf` 的闭包里。
+  - 引擎装配完在 `<home>/.onconf.json` 落一张**派生快照**（引导层参数 + 调用点 + 时间）；
+    `home` 不由快照决定（自举例外），表里那个 `home` 只做自检；可写命令（`build` / `sync` /
+    `set` / `format`）在**真的写了字节**之后把**代码说的**那一份刷回去 —— **显式参数不进表**，
+    读路径（`check` / `get` / `diff`）与 `--dry-run` 一个字节都不碰它。
+  - 每个命令回显 `home` 的出处（`--home` / `from <文件>:<行>` / `ONCONF_HOME` / `by convention`），
+    `--json` 给 `boot.sources` 与 `boot.origin`；算不出来的 `home=` 出声而不猜，
+    `sync` 要删键时直接拒绝清理。
 - **命令行的人读输出有了色彩**（[路线图 2-078](docs/roadmap/2.x.md)）：新增 `--color=auto|always|never`
   这一处闸门，只给**语义**上色 —— `check` 的 finding 类别、`OK` / `Error:`、计划里的删除与新增
   动词；键名、路径、值与列宽一个都不动。

@@ -253,6 +253,7 @@ disallow_any_explicit = false
 [[tool.mypy.overrides]]
 module = [
     "test_log",
+    "test_boot",
     "test_cli",
     "test_core",
     "test_engine",
@@ -324,7 +325,12 @@ targets = ["src"]
 exclude_dirs = [".venv", "tests", "docs", "scripts", "site"]
 # 本项目的运行语义本身就包含文件读写与环境变量读取，
 # 相应规则的逐条豁免理由记录在 docs/security/threat-model.md。
-skips = []
+#
+# B404 / B603 只服务一处：`_boot._run_child` 求值命令行引导层时起的一次性子进程。
+# 参数是列表（shell 不参与）、脚本内容经**白名单**过滤、`stdin` 关掉、带超时；
+# 「`subprocess` 只在 `_boot.py` 里出现，且不在 `import onconf` 的闭包里」由
+# `tests/test_security_invariants.py` 守着。见威胁模型 T13。
+skips = ["B404", "B603"]
 
 # ============================================================================
 # codespell —— 拼写检查
@@ -336,4 +342,5 @@ quiet-level = 2
 # 中文正文里的英文术语白名单。
 # `tipe` 不是笔误漏网：文档里**故意**用 `conf("a.b", 1, tipe=int)`
 # 当「参数拼错」的示例（就是那条防静默失效的规则）。
-ignore-words-list = "conf,creat,nd,ue,fo,ba,ot,te,ans,hel,meaned,ist,wich,thru,clas,datas,tipe"
+# `notin` 是 AST 的 `ast.NotIn` 节点名（引导层白名单要逐个列出允许的节点）。
+ignore-words-list = "conf,creat,nd,ue,fo,ba,ot,te,ans,hel,meaned,ist,wich,thru,clas,datas,tipe,notin"

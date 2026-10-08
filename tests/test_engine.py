@@ -15,7 +15,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -28,7 +28,7 @@ from onconf import (
     _reset,
     conf,
 )
-from onconf._engine import OWNER_ENV, SCHEMA_POINTER, Engine, default_home
+from onconf._engine import OWNER_ENV, SCHEMA_POINTER, SNAPSHOT_NAME, Engine, default_home
 
 
 if TYPE_CHECKING:
@@ -1001,3 +1001,65 @@ class TestInstanceConcurrency:
         for n in range(4):
             for i in range(10):
                 assert data[f"t{n}.{i}"] == i
+
+
+class TestDerivedSnapshot:
+    """``<home>/.onconf.json``：引擎落下的**派生快照**。
+
+    它由 ``AutoConf`` 起头的引擎写（命令行直接构造的 ``Engine`` 不写），落点必须在
+    ``<home>`` 之内，而且**不许自己造目录**、**内容没变不许重写**。
+    """
+
+    def _table(self, home: Path) -> dict[str, Any]:
+        return json.loads((home / SNAPSHOT_NAME).read_text(encoding="utf-8"))
+
+    def test_autoconf_records_the_table(self, tmp_path: Path) -> None:
+        home = tmp_path / "conf"
+        home.mkdir()
+        AutoConf(home=str(home), file_name="app", no_one_file=True)
+        table = self._table(home)
+        assert table["home"] == str(home.resolve())
+        assert (table["file_name"], table["no_one_file"]) == ("app", True)
+        assert "test_engine.py" in table["declared_at"], "调用点要抓成出处"
+
+    def test_a_plain_engine_never_writes_the_table(self, tmp_path: Path) -> None:
+        """命令行走的是直接构造 ``Engine`` 这条路 —— 它记的必须是**代码说的话**。"""
+        home = tmp_path / "conf"
+        home.mkdir()
+        engine = Engine(home)
+        try:
+            engine("a.port", 8080)
+        finally:
+            engine.close()
+        assert not (home / SNAPSHOT_NAME).exists()
+
+    def test_the_table_waits_for_the_first_write(self, tmp_path: Path) -> None:
+        """``<home>`` 还不存在时**不造目录**，等第一次真的写下去再补表。"""
+        home = tmp_path / "conf"
+        AutoConf(home=str(home))
+        assert not home.exists(), "快照不该是那个凭空造目录的人"
+        conf("a.port", 8080)
+        assert (home / SNAPSHOT_NAME).is_file()
+        assert self._table(home)["home"] == str(home.resolve())
+
+    def test_nothing_is_rewritten_when_the_facts_are_unchanged(self, tmp_path: Path) -> None:
+        home = tmp_path / "conf"
+        home.mkdir()
+
+        def record() -> None:
+            # 两次都从**同一行**装配：`declared_at` 是稳定字段之一，换行就等于换了事实。
+            _reset()
+            AutoConf(home=str(home))
+
+        record()
+        before = (home / ".onconf.json").stat().st_mtime_ns
+        record()
+        assert (home / ".onconf.json").stat().st_mtime_ns == before
+
+    def test_a_changed_fact_is_written_again(self, tmp_path: Path) -> None:
+        home = tmp_path / "conf"
+        home.mkdir()
+        AutoConf(home=str(home))
+        _reset()
+        AutoConf(home=str(home), file_name="app")
+        assert self._table(home)["file_name"] == "app"

@@ -50,9 +50,9 @@
   YAML / TOML / `.env` 是**可选后端**，不是与缺省并列的默认。
 - **值文件旁边有词表。** 引擎维护一份描述「有哪些键」的 JSON Schema，
   于是你的编辑器能给配置文件补全与校验。
-- **没有独立进程、没有守护进程、没有网络。** 它是一个跑在**你**进程里的库。唯一的机械是一个
-  **写者线程**，住在最先抢绑到配置目录的那个进程里；它通过本地管道服务其它进程，用 `schema/`
-  下的一把钥匙认证。不开任何端口，也不 spawn 子进程。
+- **没有独立进程、没有守护进程、没有网络。** 它是一个跑在**你**进程里的库：不开任何端口，
+  引擎路径上也不 spawn 子进程。（`onconf` 命令行是**你**起的工具，它可能为了求值一个算出来的
+  `AutoConf(home=…)` 拉起一个一次性助手进程。）
 
 ## 它不是什么
 
@@ -226,7 +226,7 @@ conf(build_key(), 8080)              # ❌
 | **日志就是审计** —— 一份记录流、两个出口。**文件**出口恒写（`log_path`，缺省 `<home>/audit.log`）：只追加、`0600`、紧凑 `key=value`、完整日期、**永不截断**。**控制台**出口（`stderr`）可以关（`log_console=False`）；TTY 上由 `rich` 着色——只在那个分支里惰性导入，所以强制路径与管道既不多付代价、也永远看不到 ANSI。级别是 `[Read]` / `[Write]` / `[Change]` / `[Error]` 外加 `[Start]`；写全量（含 `op=skip`「想改没改」与 `op=noop`「本批声明已满足」），读按事务去重（`n=1000`）；每条写记录带调用点（`at=app/config.py:12`）、pid 与可选 `identity=`。三个可选钩子——`log_rotate`（下一批写到哪个文件；**轮转只换落点，绝不 rename 文件**）、`log_scrub`（落盘前脱敏）、`log_encode`（最终落盘的字节）——默认全是「什么都不做」。见[日志](docs/design/log.md) | ✅ |
 | **运行期不删键** —— 只补缺、只补元数据；删除归 `onconf sync`（离线、单次、对着完整的声明集） | ✅ |
 | 测试 —— 每个模块一个测试文件，外加安全不变量 | ✅ 本地全绿；CI 在 ubuntu / windows / macos 上跑 |
-| **命令行（七条命令）** —— `onconf build` 按声明完整重建值文件与词表（`--path` 把整份重建写到新目录，原目录不动）；`onconf sync` 补缺并删除声明里没有的键（`--no-clean` 则一个键都不删）。声明靠**扫描项目里的 `conf(...)` 调用**、解读参数得到 —— 单函数 API 正是这件事的前提。两条命令都支持 `--dry-run`（一个字节都不写）与 `--json`；扫不动的调用会让 `sync` 拒绝删除任何键。`onconf check` 一个字节都不写地对比**三样** —— 代码里扫到的声明、词表、值文件 —— 按 `missing` / `stale` / `default` / `doc` / `unfilled` / `undeclared` 六类报；`--verbose` 补上每一处落在哪个文件，`--strict` 把 warning 也算作失败。`onconf get` 打出 `key` / `value` / `path` / `doc`（有几个文件存着这个键就打几行），`onconf set` 改已有键的值（`--default` 改词表里的默认值），`onconf diff` 列出审计日志里记下的变更，`onconf format --indent N` 重排 JSON 值文件的缩进。人读输出**只在终端上**着色，且只给有语义的地方上色（`--color=auto|always|never`）；`--json` 与一切落盘字节不会见到 ANSI 序列 | ✅ `build` / `sync` / `check` / `get` / `set` / `diff` / `format`；`add` / `log` 尚未实现 |
+| **命令行（七条命令）** —— `onconf build` 按声明完整重建值文件与词表（`--path` 把整份重建写到新目录，原目录不动）；`onconf sync` 补缺并删除声明里没有的键（`--no-clean` 则一个键都不删）。声明靠**扫描项目里的 `conf(...)` 调用**、解读参数得到 —— 单函数 API 正是这件事的前提。两条命令都支持 `--dry-run`（一个字节都不写）与 `--json`；扫不动的调用会让 `sync` 拒绝删除任何键。`onconf check` 一个字节都不写地对比**三样** —— 代码里扫到的声明、词表、值文件 —— 按 `missing` / `stale` / `default` / `doc` / `unfilled` / `undeclared` 六类报；`--verbose` 补上每一处落在哪个文件，`--strict` 把 warning 也算作失败。`onconf get` 打出 `key` / `value` / `path` / `doc`（有几个文件存着这个键就打几行），`onconf set` 改已有键的值（`--default` 改词表里的默认值），`onconf diff` 列出审计日志里记下的变更，`onconf format --indent N` 重排 JSON 值文件的缩进。引导层（`home` / `file_name` / `file_type` / `no_one_file` / `log_path`）的缺省取**项目里 `AutoConf(...)` 说的话**：字面量静态读，算出来的 `home=config_root()` 交给一个一次性子进程求值，其余由引擎落的 `<home>/.onconf.json` 快照补齐 —— 可写命令跑完会按**代码说的**刷新它（显式参数不进表），每个命令都会回显取值的出处。人读输出**只在终端上**着色，且只给有语义的地方上色（`--color=auto|always|never`）；`--json` 与一切落盘字节不会见到 ANSI 序列 | ✅ `build` / `sync` / `check` / `get` / `set` / `diff` / `format`；`add` / `log` 尚未实现 |
 
 ## 路线图 —— 当前不可用
 
@@ -277,12 +277,15 @@ CodeQL、依赖审查与 OpenSSF Scorecard。
 本项目承诺的不变量（每一条都有回归测试，见
 [`tests/test_security_invariants.py`](tests/test_security_invariants.py)）：
 
-- 默认路径**不开任何网络端口**、**不 spawn 子进程**
+- **引擎路径**不开任何网络端口、不 spawn 子进程（`subprocess` 只有 `onconf` 命令行够得着，
+  而 `_boot` 可以证明不在 `import onconf` 的闭包里）
 - YAML 配置只经 `yaml.safe_load` / `yaml.safe_load_all` 解析，绝不用 `yaml.load`（JSON 走 `json.loads`，TOML 走 `tomllib.loads`，`.env` 是纯文本逐行扫描）
 - **外部字符串（值文件的名字、多文件键内嵌的路径）只经一道包含性校验到达文件系统** ——
   纯文件名或相对路径、无分隔符、无 `..`、非绝对路径，且解析后仍在 `<home>` 之内（`src/onconf/_paths.py`）
-- 命令行**从不执行项目代码**：它用 `ast` 解析 `*.py`、读 `conf(...)` 的实参 —— 不 import、不 eval
-- 不对配置内容做 `eval` / `exec` / `pickle`
+- 引擎路径**从不执行项目代码**：声明用 `ast` 解析、从 `conf(...)` 的实参里读 —— 不 import、不 eval。
+  唯一的例外在命令行：不是字面量的 `AutoConf(home=…)` 在**白名单过滤**之后交给一个**一次性子进程**
+  求值（超时收口，只回一行 JSON）
+- 不对配置内容做 `eval` / `exec` / `pickle` —— `src/` 里也一个都没有
 - 审计文件（文件出口）只追加（`O_APPEND`）且按 `0600` 创建，父目录不由它创建；控制台出口可以关，文件出口关不掉
 
 ### 已知限制
@@ -292,6 +295,7 @@ CodeQL、依赖审查与 OpenSSF Scorecard。
 | **「一个目录一个写者」是部署责任** | 引擎不拿跨进程锁、不做协调。两个平级进程同时写会互相盖掉键 —— 起进程之前先用 `onconf sync` 把配置落好，运行期保持只读 |
 | **符号链接会被替换** | 写入走 `os.replace`：符号链接本身被替换成普通文件，链接目标一个字节都不会被写（链接就此断开） |
 | **`ONCONF_HOME` 与 `ONCONF_OWNER_PID` 是可信输入** | 前者决定配置目录，后者决定本进程能不能写；两者都不做包含性校验 |
+| **`<home>/.onconf.json` 是可信输入，且 `onconf` 会求值一小段项目代码** | 快照是引擎落下的引导层事实（参数 + 调用点），命令行读它 —— 能改它的人就能把 `onconf sync` 引到另一个目录，与 `ONCONF_HOME` 同一类信任。为了拿到**算出来的** `home=`，命令行会在白名单过滤之后用一个一次性子进程求值那一个表达式：在别人的仓库里跑 `onconf`，与在那儿跑 `pytest` 同级 |
 | **日志行原样记值** | `data=` / `old=` / `new=` 里就是真实值，而文件出口是**恒写**的 —— `<home>/audit.log`（只追加、`0600`）因此总带着真实值，没有开关可退。脱敏与加密是**你自己给的钩子**（`log_scrub` / `log_encode`），不是引擎自带的功能（威胁模型 T12） |
 | **审计文件可能被多个进程追加** | 每个进程记自己的操作，而 `txn` 是按进程编号的 —— 文件里可能出现两个同号的批次。每行都带 pid，读的人据此分辨 |
 | **代码改不了已经存在的值** | 文件里的值与代码声明的不一致时，运行期尊重文件（记一条 `op=skip`）并返回文件里的值。要改是**人**的决定：`onconf sync` 同样不碰既存值（只补缺、只删未声明的键），`onconf build` 则按声明**完整重建**值文件（先备份，或用 `--path`） |

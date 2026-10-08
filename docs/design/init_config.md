@@ -190,6 +190,7 @@ onconf sync  [--home DIR] [--file-name NAME] [--file-type TYPE] [--no-one-file]
 <home>/app/conf/net.json      多文件模式：键 `app/conf/net:…` 的落点（no_one_file=True）
 <home>/schema/<file_name>.json  词表（**库自己的资产**，随便重写；多文件下也只有这一份）
 <home>/audit.log              审计文件（append-only；落点由 log_path 决定）
+<home>/.onconf.json           派生快照（**引擎自动生成**：这次装配用的引导层参数与调用点）
 ```
 
 - `home` 缺省是 **`./conf`**；`ONCONF_HOME` 仍然可以把它指到任何地方。
@@ -197,6 +198,11 @@ onconf sync  [--home DIR] [--file-name NAME] [--file-type TYPE] [--no-one-file]
   （缺省 `"json"`）；两者都改了就是换一套值文件与簿记，必须重启。
 - 每个值文件的 `$schema` 指针按自己的层级算出相对路径（`app/conf/net.json` 写
   `../../schema/settings.json`）。
+- **`.onconf.json` 是元数据不是配置项**：`AutoConf(...)` 装配完落一次，命令行读它就知道
+  「这个目录是被谁、按哪套引导层参数用的」（[命令行](cli.md) §1.2）。它由引擎写；命令行只在
+  **真的写了字节**的可写命令之后、把**代码说的**那一份刷回去（显式参数不进表）。`<home>`
+  还不存在时**不造目录**，等第一次真的把配置写下去再补。手改会被下一次刷新覆盖 ——
+  它是派生的，没有只能由人维护的内容。
 
 ## 8. 使用范式：声明处必须字面量（**合法但不合理**）
 
