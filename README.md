@@ -55,10 +55,10 @@ A configuration engine for programs that keep their settings in **plain files th
   peers of the default.
 - **A vocabulary next to your values.** The engine maintains a JSON Schema describing
   which keys exist, so your editor can autocomplete and validate the config file.
-- **No separate process, no daemon, no network.** It is a library that runs in *your* process. The
-  one piece of machinery is a **writer thread** inside whichever process first claims the config
-  directory; it serves the others over a local pipe, authenticated with a key under `schema/`. No
-  ports are opened and no child process is spawned.
+- **No separate process, no daemon, no network.** It is a library that runs in *your* process: no
+  ports are opened, and on the engine path no child process is ever spawned. (The `onconf` command
+  line — a tool *you* start — may run one one-shot helper process to evaluate a computed
+  `AutoConf(home=…)`.)
 
 ## What it is not
 
@@ -249,7 +249,7 @@ whatever key was registered.
 | **Logging = audit** — one record stream, two sinks. The **file** sink is always on (`log_path`, default `<home>/audit.log`): append-only, `0600`, compact `key=value`, full dates, **never truncated**. The **console** sink (`stderr`) can be switched off (`log_console=False`) and, on a TTY, is coloured by `rich` — imported lazily in that branch only, so the mandatory path and pipes never pay for it and never see ANSI. Levels are `[Read]` / `[Write]` / `[Change]` / `[Error]` plus `[Start]`; writes are logged in full (including `op=skip` "wanted to change, respected the file" and `op=noop` "this batch's declaration was already satisfied"), reads are de-duplicated per transaction (`n=1000`); every write carries its call site (`at=app/config.py:12`), the pid and the optional `identity=`. Three optional hooks — `log_rotate` (which file the next batch goes to; **rotation changes the sink, it never renames a file**), `log_scrub` (redact a record before it lands) and `log_encode` (the final bytes on disk) — all default to *do nothing*. See the [log design](docs/design/log.md) | ✅ |
 | **No runtime cleanup** — the runtime only fills what is missing and updates vocabulary metadata; it never deletes a key. Deletion lives in `onconf sync` (offline, one shot, over a complete declaration set) | ✅ |
 | Test suite — one file per module plus security invariants | ✅ green locally; CI runs it on ubuntu / windows / macos |
-| **CLI (seven commands)** — `onconf build` rebuilds the value file(s) and the vocabulary from the declarations (`--path` writes the whole rebuild into a new directory instead); `onconf sync` fills what is missing and deletes keys the declarations do not know (`--no-clean` keeps them). Declarations are found by **scanning the project for `conf(...)` calls** and reading their arguments — the single-function API is what makes that possible. Both commands support `--dry-run` (writes nothing) and `--json`; `sync` refuses to delete anything when some call could not be read statically. `onconf check` compares **three** things without writing a single byte — the declarations found in code, the vocabulary and the value files — and reports `missing` / `stale` / `default` / `doc` / `unfilled` / `undeclared`; `--verbose` adds the file each finding lives in, `--strict` counts warnings as failures. `onconf get` prints `key` / `value` / `path` / `doc` for every file that holds the key, `onconf set` changes the value of an existing key (or the vocabulary default, with `--default`), `onconf diff` lists the changes recorded in the audit log, and `onconf format --indent N` re-indents JSON value files. Human-readable output is colourised **only on a terminal** and only where it carries meaning (`--color=auto|always|never`); `--json` and every byte written to disk never see an ANSI sequence | ✅ `build` / `sync` / `check` / `get` / `set` / `diff` / `format`; `add` / `log` are not implemented |
+| **CLI (seven commands)** — `onconf build` rebuilds the value file(s) and the vocabulary from the declarations (`--path` writes the whole rebuild into a new directory instead); `onconf sync` fills what is missing and deletes keys the declarations do not know (`--no-clean` keeps them). Declarations are found by **scanning the project for `conf(...)` calls** and reading their arguments — the single-function API is what makes that possible. Both commands support `--dry-run` (writes nothing) and `--json`; `sync` refuses to delete anything when some call could not be read statically. `onconf check` compares **three** things without writing a single byte — the declarations found in code, the vocabulary and the value files — and reports `missing` / `stale` / `default` / `doc` / `unfilled` / `undeclared`; `--verbose` adds the file each finding lives in, `--strict` counts warnings as failures. `onconf get` prints `key` / `value` / `path` / `doc` for every file that holds the key, `onconf set` changes the value of an existing key (or the vocabulary default, with `--default`), `onconf diff` lists the changes recorded in the audit log, and `onconf format --indent N` re-indents JSON value files. The boot layer (`home` / `file_name` / `file_type` / `no_one_file` / `log_path`) defaults to **what the project's `AutoConf(...)` says**: literals are read statically, a computed `home=config_root()` is evaluated in a one-shot subprocess, and the engine's `<home>/.onconf.json` snapshot fills in the rest — write commands refresh that snapshot from the code (explicit flags never land in it), and every command reports where each value came from. Human-readable output is colourised **only on a terminal** and only where it carries meaning (`--color=auto|always|never`); `--json` and every byte written to disk never see an ANSI sequence | ✅ `build` / `sync` / `check` / `get` / `set` / `diff` / `format`; `add` / `log` are not implemented |
 
 ## Roadmap — not available yet
 
@@ -302,14 +302,18 @@ Report vulnerabilities privately — see [`SECURITY.md`](SECURITY.md). Do not op
 Invariants this project commits to (each one has a regression test in
 [`tests/test_security_invariants.py`](tests/test_security_invariants.py)):
 
-- the default path opens **no network ports** and spawns **no subprocesses**
+- the **engine path** opens **no network ports** and spawns **no subprocesses** (`subprocess` is
+  reachable only from the `onconf` command line, and `_boot` is provably outside the
+  `import onconf` closure)
 - YAML configuration is only ever parsed with `yaml.safe_load` / `yaml.safe_load_all` — never `yaml.load` (JSON uses `json.loads`, TOML `tomllib.loads`, `.env` a plain line scan)
 - **external strings (the value-file name and the embedded paths of multi-file keys) reach the
   filesystem through one containment check only** — a plain name or relative path, no separators,
   no `..`, never absolute, resolved inside `<home>` (`src/onconf/_paths.py`)
-- the CLI **never executes project code**: it parses `*.py` with `ast` and reads `conf(...)`
-  call arguments — no `import`, no `eval`
-- no `eval` / `exec` / `pickle` on configuration content
+- the engine path **never executes project code**: declarations are parsed with `ast` and read from
+  `conf(...)` call arguments — no `import`, no `eval`. The one exception lives in the CLI: an
+  `AutoConf(home=…)` that is not a literal is evaluated in a **one-shot subprocess** after an
+  allow-list filter (node types, modules, names, attributes), with a timeout and one JSON line back
+- no `eval` / `exec` / `pickle` on configuration content — and none in `src/`
 - the audit file (the file sink) is append-only (`O_APPEND`) and created `0600`, and its parent directory is never created by the log; the console sink can be switched off, the file sink cannot
 
 ### Known limitations
@@ -319,6 +323,7 @@ Invariants this project commits to (each one has a regression test in
 | **One writer per config directory is a deployment duty** | The engine takes no cross-process lock and does no coordination. Two peer processes that both write can lose each other's keys — prepare the config with `onconf sync` before starting them, and keep the runtime read-only |
 | **A symlinked value file is replaced** | Writes go through `os.replace`: the symlink is replaced by a regular file and the link's target is left untouched (the link itself is destroyed) |
 | **`ONCONF_HOME` and `ONCONF_OWNER_PID` are trusted input** | The first decides the config directory, the second decides whether this process may write; neither is containment-checked |
+| **`<home>/.onconf.json` is trusted input, and `onconf` evaluates a little project code** | The snapshot is the engine's derived record of the boot layer (parameters + call site); the CLI reads it, and whoever can edit it can point `onconf sync` at another directory — same trust class as `ONCONF_HOME`. To find a *computed* `home=`, the CLI evaluates that one expression in a one-shot subprocess after an allow-list filter: running `onconf` in someone else's repo is on par with running `pytest` there |
 | **Log lines contain values verbatim** | `data=` / `old=` / `new=` carry the real value, and the file sink is **always on** — so `<home>/audit.log` (append-only, `0600`) holds real values with no switch to flip. Redaction and encryption are **hooks you supply** (`log_scrub` / `log_encode`), not features the engine ships (threat-model T12) |
 | **The audit file may be appended by several processes** | Every process logs its own operations, and `txn` numbers are per-process — so the file can hold two batches numbered alike. Each line carries its pid, which is what a reader uses to tell them apart |
 | **Code cannot overwrite a value that already exists** | When the file holds a value different from the one your code declares, the runtime respects the file (it logs `op=skip`) and returns the file's value. Overwriting is a human decision: `onconf sync` still will not touch an existing value — it only fills what is missing and deletes undeclared keys, and `onconf build` rebuilds the value file from the declarations (back it up first, or use `--path`) |

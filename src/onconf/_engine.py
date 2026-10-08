@@ -101,6 +101,7 @@ import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -131,6 +132,12 @@ DEFAULT_FILE_NAME = "settings"
 #: 兼容旧名：历史上它是写死的文件名主干，现在与 :data:`DEFAULT_FILE_NAME` 同源。
 VALUES_STEM = DEFAULT_FILE_NAME
 SCHEMA_DIR = "schema"
+#: 引擎在 ``<home>`` 里留下的**派生快照**：这一次装配用的引导层参数、调用点与落表时间。
+#: 它是**元数据不是配置项** —— 命令行靠它知道「这个目录是被谁、按什么参数用的」，
+#: 因此它由引擎自动生成，手改会被下一次装配覆盖。点开头是提醒：它属于引擎自己。
+SNAPSHOT_NAME = ".onconf.json"
+#: 快照的格式版本。读到别的版本就当这张表不存在（不猜、不迁移）。
+SNAPSHOT_VERSION = 1
 #: 缺省值文件类型：**字面 ``"json"``**，不是空串隐含出来的 json。
 DEFAULT_FILE_TYPE = "json"
 #: 缺省值文件的 ``$schema`` 指针（多文件模式下每个文件按自己的层级算出相对路径）。
@@ -336,6 +343,57 @@ def default_home() -> Path:
     return Path(os.environ.get(HOME_ENV) or "conf").resolve()
 
 
+def write_snapshot(
+    home: Path,
+    *,
+    file_name: str,
+    file_type: str,
+    no_one_file: bool,
+    log_path: str,
+    declared_at: str = "",
+) -> None:
+    """写 ``<home>/<SNAPSHOT_NAME>``：引导层的**派生快照**（元数据，不是配置项）。
+
+    三条自我约束，缺一条都不行：
+
+    * **目录不在就不写**：建 ``<home>`` 是值文件写入那条路的事，快照不该成为
+      「凭空造出一棵目录树」的触发者；
+    * **内容没变就不写**：比较的是稳定字段（落表时间与 pid 不参与），稳态下是一次纯读；
+    * **失败一律吞掉**：快照是配套设施，不许拦住 ``AutoConf``，也不许拦住一条命令。
+
+    ``log_path`` 收**原始值**（相对路径按 ``<home>`` 解析），与 ``Engine`` 的字段同源；
+    两个调用点：引擎装配时的 :meth:`Engine.record_snapshot`，以及命令行在**真的写了字节**
+    的可写命令之后的那次刷新（见 ``docs/design/cli.md`` §1.2）。
+    """
+    if not home.is_dir():
+        return
+    stable: dict[str, Any] = {
+        "version": SNAPSHOT_VERSION,
+        "generated_by": "onconf",
+        "home": str(home),
+        "file_name": file_name,
+        "file_type": file_type,
+        "no_one_file": no_one_file,
+        "log_path": str(_log_path(home, log_path)),
+        "declared_at": declared_at,
+    }
+    target = home / SNAPSHOT_NAME
+    with contextlib.suppress(OSError, ValueError):
+        existing = json.loads(target.read_text(encoding="utf-8"))
+        if isinstance(existing, dict) and all(
+            existing.get(name) == value for name, value in stable.items()
+        ):
+            return
+    payload = {
+        **stable,
+        "recorded_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "pid": os.getpid(),
+    }
+    text = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+    with contextlib.suppress(OSError, ValueError):
+        _atomic_write_text(target, text, newline="\n")
+
+
 @dataclass
 class _FileState:
     """一个值文件在内存里的样子（多文件模式下会有很多个）。
@@ -426,6 +484,40 @@ class Engine:
         self._logged_failure: BaseException | None = None
         #: ``[Start]`` 只记一次（第一次真正用到这个引擎时）。
         self._started = False
+        #: 派生快照：``declared_at`` 非空才写（只有 ``AutoConf`` 会设置它），写完不再写。
+        self._declared_at = ""
+        self._snapshot_done = False
+
+    # ------------------------------------------------------------ 派生快照
+
+    def record_snapshot(self, *, declared_at: str = "") -> None:
+        """记下这一次装配的引导层事实（``<home>/<SNAPSHOT_NAME>``，**纯派生**）。
+
+        由 ``AutoConf`` 起头的引擎调用；``<home>`` 还不存在时（第一次运行的项目）
+        什么都不做，等第一次真的把配置写下去再由 :meth:`_touch_snapshot` 补上 ——
+        引擎不自己造目录。``declared_at`` 是 ``AutoConf`` 的调用点（抓不到就是空串）。
+        """
+        self._declared_at = declared_at or self._declared_at
+        self._write_snapshot()
+
+    def _touch_snapshot(self) -> None:
+        """第一次提交之后再试一次：那时 ``<home>`` 才存在。"""
+        if self._declared_at:
+            self._write_snapshot()
+
+    def _write_snapshot(self) -> None:
+        """落表：一个进程一次，目录不在就留着下次。"""
+        if self._snapshot_done or not self.home.is_dir():
+            return
+        write_snapshot(
+            self.home,
+            file_name=self.file_name,
+            file_type=self.file_type,
+            no_one_file=self.no_one_file,
+            log_path=str(self.log_path),
+            declared_at=self._declared_at,
+        )
+        self._snapshot_done = True
 
     # ------------------------------------------------------------ 键 → 文件寻址
 
@@ -940,6 +1032,7 @@ class Engine:
             newline=self._file_for("").newline,
         )
         self._stamp = self._disk_stamp()
+        self._touch_snapshot()
 
     def _commit_one(self, path_part: str, actions: list[Action]) -> None:
         """把一批动作落到**一个**值文件上（外科手术式回写）。"""
