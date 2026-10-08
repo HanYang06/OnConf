@@ -260,6 +260,7 @@ module = [
     "test_json_backend",
     "test_paths",
     "test_security_invariants",
+    "test_style",
     "test_toml_backend",
     "test_vocab",
     "test_yaml_backend",

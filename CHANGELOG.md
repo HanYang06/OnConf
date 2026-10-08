@@ -11,6 +11,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- **命令行的人读输出有了色彩**（[路线图 2-078](docs/roadmap/2.x.md)）：新增 `--color=auto|always|never`
+  这一处闸门，只给**语义**上色 —— `check` 的 finding 类别、`OK` / `Error:`、计划里的删除与新增
+  动词；键名、路径、值与列宽一个都不动。
+  - 缺省 `auto`：非终端就是纯文本，且与上色前**逐字相同**；判定顺序 `NO_COLOR` →
+    `TERM=dumb` → `FORCE_COLOR` → 是不是终端 → Windows 上控制台支不支持 VT，
+    **「关」排在「开」前面**。
+  - `--json` 与一切落盘字节**永不经过**渲染层；`--help` 的着色仍归 `argparse`。
+
 ## [2.0.0] - 2026-10-07
 
 ### Changed
