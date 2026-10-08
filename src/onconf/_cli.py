@@ -57,7 +57,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import _paths
+from . import _paths, _style
 from ._core import (
     MISSING,
     NO_VALUE,
@@ -127,6 +127,15 @@ _ACTION_LABEL = {
     "register": "register",
     "update_meta": "update-meta",
     "skip": "keep",
+}
+
+#: 同上的渲染样式：**删除是红的**（它会动用户手写的键），写下去的是绿的，其余是说明。
+_ACTION_STYLE: dict[str, str] = {
+    "clean": _style.STYLE_ERROR,
+    "fill": _style.STYLE_OK,
+    "register": _style.STYLE_OK,
+    "update_meta": _style.STYLE_NOTE,
+    "skip": _style.STYLE_NOTE,
 }
 
 
@@ -521,6 +530,13 @@ _KIND_WIDTH = max(len(kind) for kind in CHECK_KINDS)
 #: 需要两侧取值的类别。
 _BOTH_SIDES = frozenset({"default", "doc"})
 
+#: 六类 finding → 渲染样式。只有 ``undeclared`` 是红的：它的收敛动作是**删掉值文件里的键**
+#: （用户手写的那份资产）；``stale`` 删的是词表条目，词表本来就是库自己的资产，因此只算警告。
+_KIND_STYLE: dict[str, str] = {
+    **dict.fromkeys(CHECK_KINDS, _style.STYLE_WARNING),
+    "undeclared": _style.STYLE_ERROR,
+}
+
 #: 发现问题的退出码（见 ``docs/design/cli.md`` §6）。
 CHECK_FAILED = 5
 
@@ -662,10 +678,15 @@ def _render(value: Any) -> str:
 
 def _print_check(payload: dict[str, Any], *, verbose: bool) -> None:
     if payload["ok"]:
-        print("All config items are OK.")  # noqa: T201
+        print(_style.paint("All config items are OK.", _style.STYLE_OK))  # noqa: T201
     else:
         for issue in payload["findings"]:
-            parts = [f"{issue['kind']:<{_KIND_WIDTH}}", f"{issue['key']:<12}"]
+            # 颜色套在**已补齐宽度**的整格上：转义码零宽，列不会因此歪。
+            kind = _style.paint(
+                f"{issue['kind']:<{_KIND_WIDTH}}",
+                _KIND_STYLE.get(issue["kind"], _style.STYLE_WARNING),
+            )
+            parts = [kind, f"{issue['key']:<12}"]
             if verbose and issue["path"]:
                 parts.append(issue["path"])
             if issue["kind"] in _BOTH_SIDES:
@@ -674,7 +695,8 @@ def _print_check(payload: dict[str, Any], *, verbose: bool) -> None:
     # warning 不改变通过判定，但**不能因此看不见** —— 通过时也照打。
     for warning in payload["warnings"]:
         prefix = f"{warning['where']}: " if warning["where"] else ""
-        print(f"warning: {prefix}{warning['message']}")  # noqa: T201
+        label = _style.paint("warning:", _style.STYLE_WARNING)
+        print(f"{label} {prefix}{warning['message']}")  # noqa: T201
     if payload["findings"]:
         print('Run "onconf sync" to align the vocabulary and the value files.')  # noqa: T201
 
@@ -878,7 +900,8 @@ def _missing_key(
 
 def _ambiguous(args: argparse.Namespace, hits: list[tuple[Path, str]], home: Path) -> None:
     """命中多个文件：逐条列出候选，要求显式给出落点（不进入交互选择）。"""
-    print(f'Error: key "{args.key}" exists in more than one file', file=sys.stderr)  # noqa: T201
+    label = _style.paint("Error:", _style.STYLE_ERROR, stream=sys.stderr)
+    print(f'{label} key "{args.key}" exists in more than one file', file=sys.stderr)  # noqa: T201
     for index, (path, _) in enumerate(hits, start=1):
         print(f"  {index}: {args.key}   {_relative(path, home)}", file=sys.stderr)  # noqa: T201
     print("Please specify the file with --file, or write the key as <path>:<key>.", file=sys.stderr)  # noqa: T201
@@ -924,10 +947,10 @@ def _set_in_file(args: argparse.Namespace) -> int:
     text = target.read_text(encoding="utf-8")
     updated = _BACKENDS[suffix].set_value(text, inner_key, _parse_value(args.value))
     if args.dry_run:
-        print("OK (--dry-run: nothing was written)")  # noqa: T201
+        print(f"{_style.paint('OK', _style.STYLE_OK)} (--dry-run: nothing was written)")  # noqa: T201
         return 0
     _atomic_write_text(target, updated, newline=_detect_newline(target.read_bytes()))
-    print("OK")  # noqa: T201
+    print(_style.paint("OK", _style.STYLE_OK))  # noqa: T201
     return 0
 
 
@@ -946,13 +969,15 @@ def _set_default(args: argparse.Namespace) -> int:
             json.dumps(vocab.to_schema(), indent=2, ensure_ascii=False) + "\n",
             newline="\n",
         )
-    print("OK")  # noqa: T201
+    print(_style.paint("OK", _style.STYLE_OK))  # noqa: T201
 
     declared = [finding.where for finding in scan_project(Path.cwd()).decls if finding.key == flat]
     if declared:
-        print(f"note: declared at {', '.join(declared)} — change it there to keep this default")  # noqa: T201
+        label = _style.paint("note:", _style.STYLE_NOTE)
+        print(f"{label} declared at {', '.join(declared)} — change it there to keep this default")  # noqa: T201
     else:
-        print(f"warning: no declaration of {flat!r} found; this default is not backed by code")  # noqa: T201
+        label = _style.paint("warning:", _style.STYLE_WARNING)
+        print(f"{label} no declaration of {flat!r} found; this default is not backed by code")  # noqa: T201
     return 0
 
 
@@ -961,7 +986,7 @@ def _cmd_format(args: argparse.Namespace) -> int:
     if _file_suffix(args.file_type) != ".json":
         raise _UsageError("format only supports JSON value files")
     if args.indent is None:
-        print("OK (no --indent given: nothing was written)")  # noqa: T201
+        print(f"{_style.paint('OK', _style.STYLE_OK)} (no --indent given: nothing was written)")  # noqa: T201
         return 0
 
     home = _home(args)
@@ -973,7 +998,7 @@ def _cmd_format(args: argparse.Namespace) -> int:
         formatted = json.dumps(json.loads(original), indent=args.indent, ensure_ascii=False) + "\n"
         if formatted == original:
             continue
-        print(f"OK {_relative(path, home)}")  # noqa: T201
+        print(f"{_style.paint('OK', _style.STYLE_OK)} {_relative(path, home)}")  # noqa: T201
         if not args.dry_run:
             _atomic_write_text(path, formatted, newline=_detect_newline(path.read_bytes()))
     return 0
@@ -1059,12 +1084,16 @@ def _print_human(payload: dict[str, Any]) -> None:
         print(f"  declared    : {item['key']} = {value}   [{item['where']}]")  # noqa: T201
     for item in payload["plan"]:
         if "key" in item:
-            label = _ACTION_LABEL.get(item["kind"], item["kind"])
-            print(f"  {label:<12}: {item['key']}  {item.get('reason', '')}".rstrip())  # noqa: T201
+            label = _style.paint(
+                f"{_ACTION_LABEL.get(item['kind'], item['kind']):<12}",
+                _ACTION_STYLE.get(item["kind"], _style.STYLE_NOTE),
+            )
+            print(f"  {label}: {item['key']}  {item.get('reason', '')}".rstrip())  # noqa: T201
         else:
             print(f"  {item['kind']:<12}: {item['file']}  ({item['keys']} keys)")  # noqa: T201
     for problem in payload["problems"]:
-        print(f"  ! unreadable: {problem}")  # noqa: T201
+        label = _style.paint("! unreadable:", _style.STYLE_WARNING)
+        print(f"  {label} {problem}")  # noqa: T201
     for note in payload["notes"]:
         print(f"  · note      : {note}")  # noqa: T201
     if payload["dry_run"]:
@@ -1077,6 +1106,12 @@ def _emit(payload: dict[str, Any], *, as_json: bool) -> None:
         print(json.dumps(payload, ensure_ascii=False, indent=2))  # noqa: T201
     else:
         _print_human(payload)
+
+
+def _error(message: object) -> None:
+    """``stderr`` 上的一行失败：``onconf:`` 这个标签上色，库的原话原样透传。"""
+    label = _style.paint("onconf:", _style.STYLE_ERROR, stream=sys.stderr)
+    print(f"{label} {message}", file=sys.stderr)  # noqa: T201
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1094,18 +1129,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
     os.environ.pop(OWNER_ENV, None)
     args = _parser().parse_args(argv)
+    _style.configure(args.color)
     handler: Callable[[argparse.Namespace], int] = args.handler
     try:
         return handler(args)
     except ConfError as exc:
-        print(f"onconf: {exc}", file=sys.stderr)  # noqa: T201
+        _error(exc)
         return 1
     except ValueError as exc:
         # 值文件读不出来（JSON 语法错、`.env` / YAML / TOML 的读期异常）。
-        print(f"onconf: {exc}", file=sys.stderr)  # noqa: T201
+        _error(exc)
         return 3
     except _UsageError as exc:
-        print(f"onconf: {exc}", file=sys.stderr)  # noqa: T201
+        _error(exc)
         return 2
 
 
@@ -1127,6 +1163,12 @@ def _parser() -> argparse.ArgumentParser:
                 "--dry-run", action="store_true", help="print what would happen; write nothing"
             )
         target.add_argument("--json", action="store_true", help="machine-readable output")
+        target.add_argument(
+            "--color",
+            choices=_style.COLOR_MODES,
+            default=_style.COLOR_AUTO,
+            help="colourise the human-readable output: auto (default), always, never",
+        )
 
     build = sub.add_parser("build", help="rebuild the value file(s) and the vocabulary")
     common(build)

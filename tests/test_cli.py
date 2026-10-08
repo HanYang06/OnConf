@@ -16,6 +16,7 @@ import pytest
 
 from onconf import _reset
 from onconf._cli import main, scan_project
+from onconf._log import strip_ansi
 
 
 if TYPE_CHECKING:
@@ -736,3 +737,92 @@ class TestFormat:
         text = values.read_text(encoding="utf-8")
         assert '\n    "a.port": 8080' in text
         assert json.loads(text) == {"$schema": "schema/settings.json", "a.port": 8080}
+class TestColor:
+    """``--color`` 是命令行的渲染闸门：**非 TTY 逐字稳定，``--json`` 永不着色**。
+
+    只测「闸门有没有接在输出上」；判定表本身归 ``test_style.py``。
+    """
+
+    _SOURCE = "from onconf import conf\nconf('a.port', 8080, 'port')\n"
+
+    def _project(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        _write(tmp_path, self._SOURCE)
+        assert _run(tmp_path, monkeypatch, "build") == 0
+
+    def test_a_pipe_gets_the_plain_text(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """缺省 ``auto`` + 不是终端 ⇒ 与上色前**逐字相同**。"""
+        self._project(tmp_path, monkeypatch)
+        capsys.readouterr()
+        assert _run(tmp_path, monkeypatch, "check") == 0
+        assert capsys.readouterr().out == "All config items are OK.\n"
+
+    def test_always_colours_a_pipe(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._project(tmp_path, monkeypatch)
+        capsys.readouterr()
+        assert _run(tmp_path, monkeypatch, "check", "--color=always") == 0
+        out = capsys.readouterr().out
+        assert "\x1b[32m" in out
+        assert strip_ansi(out) == "All config items are OK.\n"
+
+    def test_never_beats_force_color(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._project(tmp_path, monkeypatch)
+        monkeypatch.setenv("FORCE_COLOR", "1")
+        capsys.readouterr()
+        assert _run(tmp_path, monkeypatch, "check", "--color=never") == 0
+        assert "\x1b[" not in capsys.readouterr().out
+
+    def test_json_is_never_coloured(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._project(tmp_path, monkeypatch)
+        capsys.readouterr()
+        assert _run(tmp_path, monkeypatch, "check", "--json", "--color=always") == 0
+        out = capsys.readouterr().out
+        assert "\x1b[" not in out
+        assert json.loads(out)["ok"] is True
+
+    def test_the_kind_cell_carries_the_colour(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """值文件里手塞一个未声明的键：它是唯一标红的一类（收敛动作会动用户手写的字节）。"""
+        self._project(tmp_path, monkeypatch)
+        values = tmp_path / "conf" / "settings.json"
+        data = json.loads(values.read_text(encoding="utf-8"))
+        data["a.legacy"] = 1
+        values.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        capsys.readouterr()
+        assert _run(tmp_path, monkeypatch, "check", "--color=always") == 5
+        out = capsys.readouterr().out
+        assert "\x1b[1;31mundeclared\x1b[0m" in out
+        assert "undeclared  a.legacy" in strip_ansi(out)
+
+    def test_ok_is_coloured_and_still_reads_as_ok(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._project(tmp_path, monkeypatch)
+        capsys.readouterr()
+        assert _run(tmp_path, monkeypatch, "set", "a.port", "9090", "--color=always") == 0
+        assert strip_ansi(capsys.readouterr().out) == "OK\n"
+
+    def test_errors_are_labelled_on_stderr(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write(tmp_path, self._SOURCE)
+        assert _run(tmp_path, monkeypatch, "get", "a.nope", "--color=always") == 1
+        err = capsys.readouterr().err
+        assert err.startswith("\x1b[1;31monconf:\x1b[0m")
+        assert "is not registered" in strip_ansi(err)
+
+    def test_an_unknown_mode_is_a_usage_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(SystemExit) as caught:
+            main(["check", "--color=blue"])
+        assert caught.value.code == 2
