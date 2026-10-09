@@ -117,6 +117,8 @@ nav:
       - 并发模型: design/concurrency.md
       - 审计日志: design/log.md
       - 命令行: design/cli.md
+  - 变更日志:
+      - 变更索引: CHANGELOG/index.md
   - 安全:
       - 安全总览: security/index.md
       - 威胁模型: security/threat-model.md
