@@ -1,0 +1,62 @@
+# ============================================================================
+# GitHub 原生发布说明（自动生成的那一段）的分类规则
+#
+# `gh release create --generate-notes` 与 Releases 页的 “Generate release notes”
+# 都读这里：按 **PR 标签**把合并进来的 PR 分到下面的分类，没命中任何分类的落进
+# “其他变更”。人写的那段发布说明不在本文件 —— 它是 `docs/CHANGELOG/<版本>.md`。
+#
+# 标签由 `.github/workflows/labeler.yml` 依 PR 标题的 Conventional Commit 前缀自动打上，
+# 所以这里用的标签名与 `.github` 里的标签一一对应。
+# ============================================================================
+changelog:
+  # 这些标签的 PR 不进发布说明
+  exclude:
+    labels:
+      - skip-changelog
+      - no-changelog
+      - duplicate
+      - invalid
+      - question
+      - wontfix
+  categories:
+    - title: 💥 破坏性变更
+      labels:
+        - breaking-change
+    - title: ✨ 新功能
+      labels:
+        - feat
+        - enhancement
+    - title: 🐛 缺陷修复
+      labels:
+        - fix
+        - bug
+    - title: ⚡ 性能优化
+      labels:
+        - perf
+    - title: 📝 文档
+      labels:
+        - docs
+        - documentation
+    - title: ♻️ 重构
+      labels:
+        - refactor
+    - title: ✅ 测试
+      labels:
+        - test
+    - title: 📦 构建与依赖
+      labels:
+        - build
+        - dependencies
+    - title: 👷 持续集成
+      labels:
+        - ci
+    - title: 🔧 杂项
+      labels:
+        - chore
+        - maintenance
+    - title: ⏪ 回滚
+      labels:
+        - revert
+    - title: 其他变更
+      labels:
+        - "*"

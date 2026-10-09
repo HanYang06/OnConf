@@ -220,31 +220,45 @@ uv version --output-format json    # 给脚本读：{package_name, version, comm
     它只管版本号。tag 是紧接着的手工动作，而且 CI 会**强制两者一致**：
 
 ```bash
-uv version --bump minor                          # 1) 改版本（pyproject + uv.lock）
-git add pyproject.toml uv.lock CHANGELOG.md      # 2) CHANGELOG 的 [Unreleased] 收成新版本
+uv version --bump minor                                # 1) 改版本（pyproject + uv.lock）
+uv run python scripts/release_notes.py finalize 0.2.0  # 2) 未发布页收成该版本页（补日期）
+git add pyproject.toml uv.lock docs/CHANGELOG           # 3) 三处进同一个提交
 git commit -m "chore(release): 0.2.0"
-git tag -a v0.2.0 -m "0.2.0"                     # 3) tag 必须等于 uv version --short
-git push origin main --follow-tags               # 4) 推 tag 触发 release.yml
+git tag -a v0.2.0 -m "0.2.0"                           # 4) tag 必须等于 uv version --short
+git push origin main --follow-tags                     # 5) 推 tag 触发 release.yml
 ```
 
-`release.yml` 的 `version` job 有三道闸门，任一不过则 build 与 publish 都不跑：
+`release.yml` 的 `version` job 有四道闸门，任一不过则 build 与 publish 都不跑：
 
 | 闸门 | 要求 |
 |---|---|
 | tag 与版本号 | tag 必须正是 `v<pyproject.toml 里的版本>`（`uv version --short`） |
 | tag 落在哪 | tag 指向的提交必须在 `main` 上 —— **先合并到主分支，再在 main 的提交上打标签** |
+| 变更日志页 | `docs/CHANGELOG/<版本>.md` 必须存在 —— Release 正文与站点版本页都由它生成 |
 | 产物命名 | 构建后 `dist/` 里必须同时有带着该版本号的 sdist 与 wheel |
 
-这样「tag 是 v0.2.0、包里其实还是 0.1.0」和「在没合并的分支上打个 tag 就发版」两种发布
-都出不了门 —— PyPI 上的版本号是不可撤回的。
+这样「tag 是 v0.2.0、包里其实还是 0.1.0」「在没合并的分支上打个 tag 就发版」与
+「发出去的版本没有变更记录」三种发布都出不了门 —— PyPI 上的版本号是不可撤回的。
 
 **发布只有一个入口：推 `v*` tag。** `workflow_dispatch` 是**只构建**的验证入口
 （版本解析 → 构建 → 产物校验 → 来源证明），它没有任何「发布」模式 —— 手动点什么都不会
-发版，这样手动入口就不可能把上面三道闸门绕过去。仓库侧还可以给 `pypi` environment 加一条
+发版，这样手动入口就不可能把上面四道闸门绕过去。仓库侧还可以给 `pypi` environment 加一条
 「只允许 `main` 部署」的分支保护规则当第二道锁。
 
-发版时还要把 `CHANGELOG.md` 的 `[Unreleased]` 收成 `## [x.y.z] - YYYY-MM-DD`，
-并在文件末尾补上对应的对比链接。
+发版时把 `docs/CHANGELOG/unreleased.md` 收成 `docs/CHANGELOG/<版本>.md`（标题补
+`- YYYY-MM-DD`）、在 `docs/CHANGELOG/index.md` 的索引里补一行，再重新开一张未发布页 ——
+`uv run python scripts/release_notes.py finalize <版本>` 一次做完这三件事。
+
+**PyPI 发出去之后，GitHub Release 由 `release.yml` 的 `release` job 自动创建**（同样只在
+tag 推送时跑，`contents: write`）：正文 = 该版本的变更页（相对链接已被脚本转成绝对链接），
+再加上 GitHub 原生自动附录（PR / 作者 / 新贡献者 / 完整对比，分类规则见 `.github/release.yml`）。
+预发布版本（`2.1.0a1` 这种）自动标成 prerelease。所以**不需要**手工去 Releases 页补内容，
+也不需要把 `.md` 当附件上传 —— 站点版本页
+`https://hanyang06.github.io/OnConf/CHANGELOG/<版本>/` 就是它的永久地址。
+
+想先看发布说明长什么样，走**只构建**的手动入口：`Actions → Release → Run workflow`，给它一个
+`tag` 输入（如 `v2.0.0`）—— `preview` job 会按同一份变更页与同一个自动附录把正文拼出来写进
+运行摘要，**不建 Release、不碰 PyPI**。所以「为了验证接线而发一个版本」没有存在的理由。
 
 #### PyPI 侧：Trusted Publisher 要注册什么
 
@@ -373,8 +387,9 @@ $schema 这类以 $ 开头的指令键不参与「清理未知数据」，
    PR 级时间线；squash 与 rebase 都会把分支抹平，事后分不清一次改动是走 PR 进来的
    还是直接推上去的。**不要**用 `git merge --ff-only` 或 `git rebase` 自己把分支推平
    再推 main（服务端 ruleset 也会拒绝直推）。
-   PR 标题仍须是一条合法的 Conventional Commit —— release-drafter 是按 **PR 标题 +
-   标签**生成发布说明的，与提交图长什么样无关。
+   PR 标题仍须是一条合法的 Conventional Commit —— 自动生成的那段发布说明按 **PR 标题 +
+   标签**归类（`.github/release.yml` 定分类，`.github/workflows/labeler.yml` 按标题打标签），
+   与提交图长什么样无关。
 
 ---
 
@@ -455,8 +470,9 @@ $schema 这类以 $ 开头的指令键不参与「清理未知数据」，
 - **用户可见的行为变化必须同步 `docs/`**。代码改了、文档没改，PR 视为未完成；
 - **文档只写现代口径**：正文里不出现「以前是什么、改成了什么、为什么改」这类变更叙述，
   也不保留作废 / 已替换 / 曾考虑之类的标记。沿革一律留给 git 与
-  [`CHANGELOG.md`](CHANGELOG.md)，文档读起来只有当下成立的形态。唯一的例外是**路径兼容页**：
-  冻结件（`CHANGELOG.md`、已发布的那条版本线）引用过的地址不能删，那里留一行跳转；
+  [变更日志](docs/CHANGELOG/index.md)，文档读起来只有当下成立的形态。唯一的例外是**路径兼容页**：
+  冻结件（[变更日志](docs/CHANGELOG/index.md)、已发布的那条版本线）引用过的地址不能删，
+  那里留一行跳转；
 - 文档语言**以中文为主**；README 是两份：[`README.md`](README.md)（英文）与
   [`README.zh-CN.md`](README.zh-CN.md)（中文），**改一份必须同步改另一份**；
 - 口径分三层，**以[路线图](docs/roadmap/README.md)为范围与版本的唯一裁决**：
@@ -466,7 +482,7 @@ $schema 这类以 $ 开头的指令键不参与「清理未知数据」，
   而改上层只有两种合法动作：**新增条目**，或**撤回条目的 `决策状态`**（`已定` → `待裁` /
   `已废弃`，写明理由与影响面）。条目只增不减、版本号只增不减；
 - **收录原则**：主动开发才进路线图，**修复不进**。当前设计的**实现**错了走
-  [`CHANGELOG.md`](CHANGELOG.md) 与 patch 版本；**设计本身**错了、或者范围变了，那已经不算
+  [变更日志](docs/CHANGELOG/index.md)与 patch 版本；**设计本身**错了、或者范围变了，那已经不算
   修复，而是**下一个小版本的内容**，进路线图；改变了公开契约（API / 磁盘格式 / 安全语义）
   必进路线图，哪怕它是打着 `fix:` 合进来的。判据是「问题出在实现还是设计」，与语义化版本
   一一对应：修复 = patch，范围与设计 = minor / major。完整口径见

@@ -80,6 +80,13 @@ jobs:
       - name: Codespell
         run: uv run codespell
 
+      # 相对链接与指向本仓库的 blob 地址必须落到真实存在的路径上。
+      # `mkdocs build --strict` 只管 docs/ 内部页面之间；README / SECURITY / pyproject /
+      # 已发布的那条版本线里的引用它一概看不见 —— 文件一搬，那些引用就静默 404
+      # （踩过一次，手工对了两小时，所以这一步是阻塞项）。
+      - name: Link check
+        run: uv run python scripts/check_links.py
+
       # 第三方许可清单必须与「运行时依赖闭包」一致。脚本自带 --check：
       # 清单与重新生成的结果不一致、或清单文件缺失，都会以非 0 退出。
       # 没有这一步，THIRD_PARTY_NOTICES.md 会悄悄过期而无人发现。

@@ -65,7 +65,7 @@ Documentation = "https://hanyang06.github.io/OnConf/"
 Repository = "https://github.com/HanYang06/OnConf"
 Issues = "https://github.com/HanYang06/OnConf/issues"
 Discussions = "https://github.com/HanYang06/OnConf/discussions"
-Changelog = "https://github.com/HanYang06/OnConf/blob/main/CHANGELOG.md"
+Changelog = "https://github.com/HanYang06/OnConf/blob/main/docs/CHANGELOG/index.md"
 Security = "https://github.com/HanYang06/OnConf/security/policy"
 
 [build-system]
@@ -261,6 +261,7 @@ disallow_any_explicit = false
 module = [
     "test_log",
     "test_boot",
+    "test_check_links",
     "test_cli",
     "test_core",
     "test_engine",
@@ -268,6 +269,7 @@ module = [
     "test_json_backend",
     "test_paths",
     "test_python_support",
+    "test_release_notes",
     "test_security_invariants",
     "test_style",
     "test_toml_backend",

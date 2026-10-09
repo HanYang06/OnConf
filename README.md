@@ -21,7 +21,7 @@ changing one requires changing the other — plus `README.zh-CN.md`, `pyproject.
 > [!IMPORTANT]
 > **`1.0.0` — the first stable release** (2026-10-04). The public API and the on-disk format now
 > follow [semantic versioning](https://semver.org/): from here on they change only in a **major**
-> release, and every change is recorded in the [changelog](CHANGELOG.md).
+> release, and every change is recorded in the [changelog](docs/CHANGELOG/index.md).
 > **Both `1.0` and `2.0` are breaking-change releases**: **follow 2.0 from here on**;
 > the 1.0 shape lives in [the 1.0.x roadmap](docs/roadmap/1.0.x/roadmap.md).
 > **Both halves of the line above have mechanism behind them**: *without losing a byte* by
