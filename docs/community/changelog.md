@@ -9,7 +9,7 @@
 
 变更日志以仓库根目录的 `CHANGELOG.md` 为唯一事实来源：
 
-- [CHANGELOG.md](https://github.com/HanYang06/OnConf/blob/main/CHANGELOG.md)
+- [CHANGELOG.md](https://github.com/HanYang06/OnConf/blob/main/docs/CHANGELOG/index.md)
 
 它遵循 [Keep a Changelog 1.1.0](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循[语义化版本 2.0.0](https://semver.org/lang/zh-CN/)，
