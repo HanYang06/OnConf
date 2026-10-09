@@ -4,7 +4,11 @@
 # ## 什么时候会跑，什么时候**真的发**
 #
 #     push 一个 `v*` tag   →  build + **publish** + **建 Release**（唯一的发布入口）
-#     workflow_dispatch    →  只 build + 来源证明，**永不发布**
+#     workflow_dispatch    →  只 build + 来源证明 + **发布说明预演**，**永不发布**
+#
+# 手动入口里那个 `preview` job 是发布说明的预演：按同一个 tag 名把正文拼出来写进运行摘要，
+# 但**不建 Release**。这样就没有「为了验证接线而发一个版本」的理由 —— 而 PyPI 的版本号
+# 不可撤回，用真版本试错是有代价的。
 #
 # 发布前的四道闸门：前三道在 `version` job，第四道在 `build` job。任一不过就出不去：
 #   1. tag 必须正是 `v<pyproject.toml 里的版本>`；
@@ -49,8 +53,14 @@ on:
   push:
     tags: ["v*"]
   # 只构建、不发布的手动入口：用来在真正打 tag 之前验证版本解析 / 构建 / 产物命名 /
-  # 来源证明这几步。它**没有**「发布」这个模式，所以手动触发不可能误发版。
+  # 来源证明这几步，并用下面的 `tag` 输入预演发布说明。它**没有**「发布」这个模式，
+  # 所以手动触发不可能误发版。
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "发布说明预演用的 tag（留空 = 用 pyproject 里的版本，例如 v2.1.0）"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -297,6 +307,11 @@ jobs:
           version: "0.12.22"
           enable-cache: false
 
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
       # 人写的那一段：该版本的变更页，相对链接已绝对化。
       - name: Build the release body from the changelog page
         env:
@@ -333,3 +348,64 @@ jobs:
             --notes-file release-body.md \
             --verify-tag \
             "${extra[@]}"
+
+  # --------------------------------------------------------------------------
+  # 发布说明预演 —— 只在手动触发时跑：**拼出正文，但绝不建 Release**
+  #
+  # 存在的理由：`release` job 只有推 tag 才会跑，而 PyPI 的版本号不可撤回 —— 没有这个入口，
+  # 「想验证新接线」就只能靠发一个真版本。这里的步骤与 `release` job 的拼正文部分**逐字
+  # 对应**（同一份变更页、同一个自动附录），差别只在最后不调 `gh release create`；
+  # 改动其中一个时，记得同步另一个。
+  # --------------------------------------------------------------------------
+  preview:
+    name: Preview release notes
+    needs: [version]
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.22"
+          enable-cache: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      # 与 `release` job 的「Build the release body…」+「Append the generated notes」
+      # 保持一致；不同之处只有：不建 Release，正文写进运行摘要而不是 Release。
+      - name: Compose the notes into the run summary
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          tag="${INPUT_TAG:-v$VERSION}"
+          version="${tag#v}"
+          page="docs/CHANGELOG/$version.md"
+          if [ ! -f "$page" ]; then
+            echo "::error::$page 不存在：这个 tag 对应的版本还没有变更页。"
+            exit 1
+          fi
+          uv run python scripts/release_notes.py body "$version" --output release-body.md
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$tag" --jq .body > generated-notes.md
+          {
+            echo "## 发布说明预演：$tag"
+            echo
+            echo "> 本步骤**没有**创建 Release，也没有碰 PyPI。"
+            echo
+            cat release-body.md
+            printf '\n---\n\n'
+            cat generated-notes.md
+          } >> "$GITHUB_STEP_SUMMARY"

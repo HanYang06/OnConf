@@ -256,6 +256,10 @@ tag 推送时跑，`contents: write`）：正文 = 该版本的变更页（相�
 也不需要把 `.md` 当附件上传 —— 站点版本页
 `https://hanyang06.github.io/OnConf/CHANGELOG/<版本>/` 就是它的永久地址。
 
+想先看发布说明长什么样，走**只构建**的手动入口：`Actions → Release → Run workflow`，给它一个
+`tag` 输入（如 `v2.0.0`）—— `preview` job 会按同一份变更页与同一个自动附录把正文拼出来写进
+运行摘要，**不建 Release、不碰 PyPI**。所以「为了验证接线而发一个版本」没有存在的理由。
+
 #### PyPI 侧：Trusted Publisher 要注册什么
 
 `publish` job 用 OIDC（trusted publishing）换一次性上传凭据，**PyPI 上没有对应记录就直接
