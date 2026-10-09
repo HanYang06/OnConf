@@ -12,12 +12,13 @@
 | [CONTRIBUTING.md](https://github.com/HanYang06/OnConf/blob/main/CONTRIBUTING.md) | 开发环境、提交信息规范、质量门槛、PR 流程、文档改动的要求 |
 | [CODE_OF_CONDUCT.md](https://github.com/HanYang06/OnConf/blob/main/CODE_OF_CONDUCT.md) | 社区行为准则（Contributor Covenant 2.1 简体中文译本） |
 | [SUPPORT.md](https://github.com/HanYang06/OnConf/blob/main/SUPPORT.md) | 遇到问题时该走哪条渠道、维护者的分工 |
-| [CHANGELOG.md](https://github.com/HanYang06/OnConf/blob/main/CHANGELOG.md) | 变更日志的唯一事实来源 |
+| [变更日志](https://github.com/HanYang06/OnConf/tree/main/docs/CHANGELOG) | 变更日志的唯一事实来源：一个版本一页 |
 | [SECURITY.md](https://github.com/HanYang06/OnConf/blob/main/SECURITY.md) | 安全问题请走私密渠道，不要开公开 issue |
 
 ## 本站页面
 
-- [变更日志](changelog.md) —— `CHANGELOG.md` 的站点说明页；本站**不复制**它的内容。
+- [变更日志](../CHANGELOG/index.md) —— 按版本分页的变更记录索引。
+- [变更日志的维护口径](changelog.md) —— 一页一个版本、发版闸门与 Release 正文的来源。
 - [安全总览](../security/index.md) —— 安全相关文档的索引。
 
 ## 待补内容

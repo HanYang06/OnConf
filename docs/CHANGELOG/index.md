@@ -1,18 +1,15 @@
-[Unreleased]: https://github.com/HanYang06/OnConf/compare/v2.1.0...HEAD
-[2.1.0]: https://github.com/HanYang06/OnConf/compare/v2.0.0...v2.1.0
-[2.0.0]: https://github.com/HanYang06/OnConf/compare/v1.0.0...v2.0.0
-[1.0.0]: https://github.com/HanYang06/OnConf/compare/3ef3f4f...v1.0.0
-[0.1.0]: https://github.com/HanYang06/OnConf/compare/3ef3f4f...d166050
+# 变更日志
+
+一个已发布版本一页，文件名就是版本号。格式遵循
+[Keep a Changelog 1.1.0](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循
+[语义化版本 2.0.0](https://semver.org/lang/zh-CN/)；维护与发版口径见
+[变更日志的维护口径](../community/changelog.md)。
+
+- [未发布](unreleased.md)
+- [2.1.0](2.1.0.md) —— 2026-10-09
+- [2.0.0](2.0.0.md) —— 2026-10-07
+- [1.0.0](1.0.0.md) —— 2026-10-04
+- [0.1.0](0.1.0.md) —— 2026-10-04
 
 `v0.1.0` **从未打过 tag、也从未发布**，所以它只能按提交区间比对（`3ef3f4f...d166050`）；
-`v1.0.0` 的对比基准因此也退回同一个起点。详见 `CONTRIBUTING.md` §4.4 的版本闸门。
-
-### CHAGNEGLOG
-
-- [0.1.0](./0.1.0.md)
-
-- [1.0.0](./1.0.0.md)
-
-- [2.0.0](./2.0.0.md)
-
-  - [2.1.0](./2.1.0.md)  
+`v1.0.0` 的对比基准因此也退回同一个起点。版本闸门见 `CONTRIBUTING.md` §4.4。

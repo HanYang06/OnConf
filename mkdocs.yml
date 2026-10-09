@@ -119,14 +119,19 @@ nav:
       - 命令行: design/cli.md
   - 变更日志:
       - 变更索引: CHANGELOG/index.md
+      - 未发布: CHANGELOG/unreleased.md
+      - 2.1.0（2026-10-09）: CHANGELOG/2.1.0.md
+      - 2.0.0（2026-10-07）: CHANGELOG/2.0.0.md
+      - 1.0.0（2026-10-04）: CHANGELOG/1.0.0.md
+      - 0.1.0（2026-10-04）: CHANGELOG/0.1.0.md
   - 安全:
       - 安全总览: security/index.md
       - 威胁模型: security/threat-model.md
   - 社区:
       - 参与方式: community/index.md
-      - 变更日志: community/changelog.md
+      - 变更日志维护: community/changelog.md
 
-# 路径兼容页：冻结件（CHANGELOG.md、已发布的那条版本线）引用着这两个地址，它们留在
+# 路径兼容页：冻结件（变更日志、已发布的那条版本线）引用着这两个地址，它们留在
 # 仓库里让旧链接可达。`roadmap/index.md` 与目录索引 `roadmap/README.md` 撞同一个 URL，
 # 所以它只存在于仓库、不进站点；另一个留在站点里，只是不进导航。
 exclude_docs: |
