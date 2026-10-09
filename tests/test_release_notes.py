@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -49,12 +50,31 @@ def _changelog(tmp_path: Path) -> Path:
     return directory
 
 
-def test_repository_unreleased_page_matches_template() -> None:
-    """仓库里的未发布页必须与脚本里的模板逐字一致，否则发版才发现漂移。"""
+def test_repository_unreleased_page_keeps_the_shape() -> None:
+    """未发布页可以有条目，但骨架必须在：标题、三个分区、指向 HEAD 的对比定义。"""
     page = Path(__file__).resolve().parents[1] / "docs" / "CHANGELOG" / "unreleased.md"
-    text = page.read_text(encoding="utf-8")
-    previous = text.rsplit("compare/v", 1)[1].split("...", 1)[0]
-    assert text == notes.unreleased_text(previous)
+    assert _unreleased_shape_ok(page.read_text(encoding="utf-8"))
+
+
+def test_unreleased_template_keeps_the_same_shape() -> None:
+    """发版收口写回的那一页，与仓库里那一页必须是同一种骨架。"""
+    assert _unreleased_shape_ok(notes.unreleased_text("2.1.0"))
+
+
+def _unreleased_shape_ok(text: str) -> bool:
+    """未发布页的骨架判据。"""
+    compare = re.search(
+        r"^\[Unreleased\]: https://github\.com/HanYang06/OnConf/compare/v\d+\.\d+\.\d+\.\.\.HEAD$",
+        text,
+        re.MULTILINE,
+    )
+    return (
+        text.startswith("## [Unreleased]\n")
+        and "### Added" in text
+        and "### Changed" in text
+        and "### Fixed" in text
+        and compare is not None
+    )
 
 
 def test_version_pages_ignore_non_versions(tmp_path: Path) -> None:
