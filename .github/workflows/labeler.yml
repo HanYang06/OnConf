@@ -1,0 +1,64 @@
+# ============================================================================
+# Labeler —— 按 PR 标题的 Conventional Commit 前缀自动打标签
+#
+# 为什么需要它：GitHub 原生自动发布说明（`.github/release.yml`）按**标签**分类，
+# 而本仓库的 PR 标题本来就是合法的 Conventional Commit —— 这一步不该靠人记。
+#
+# 刻意不用任何 action：`gh` 在 runner 上预装，因此这里没有需要固定 SHA 的对象；
+# 前缀到标签的映射写死在 case 里，PR 标题不参与 shell 求值。
+# ============================================================================
+name: Labeler
+
+on:
+  pull_request:
+    types: [opened, reopened, edited]
+
+# 顶层只给读：写权限只出现在需要它的那个 job 上。
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  label:
+    name: Label by title prefix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # fork 的 PR 拿不到写权限，这里直接跳过，免得无谓地红一次。
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Map the title prefix to a label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$PR_TITLE" =~ ^([a-zA-Z]+)(\([^)]*\))?(!)?: ]]; then
+            echo "标题不是 Conventional Commit，跳过打标签：$PR_TITLE"
+            exit 0
+          fi
+          type="${BASH_REMATCH[1],,}"
+          breaking="${BASH_REMATCH[3]}"
+          case "$type" in
+            feat) label=feat ;;
+            fix) label=fix ;;
+            perf) label=perf ;;
+            docs) label=docs ;;
+            refactor) label=refactor ;;
+            test) label=test ;;
+            build) label=build ;;
+            ci) label=ci ;;
+            chore) label=chore ;;
+            revert) label=revert ;;
+            *) echo "标题类型没有对应标签，跳过：$type"; exit 0 ;;
+          esac
+          gh pr edit "$PR_NUMBER" --add-label "$label"
+          if [ -n "$breaking" ]; then
+            gh pr edit "$PR_NUMBER" --add-label breaking-change
+          fi

@@ -1,18 +1,23 @@
 # ============================================================================
-# Release —— 构建 + 来源证明 + 发布到 PyPI
+# Release —— 构建 + 来源证明 + 发布到 PyPI + 建 GitHub Release
 #
 # ## 什么时候会跑，什么时候**真的发**
 #
-#     push 一个 `v*` tag   →  build + **publish**（唯一的发布入口）
+#     push 一个 `v*` tag   →  build + **publish** + **建 Release**（唯一的发布入口）
 #     workflow_dispatch    →  只 build + 来源证明，**永不发布**
 #
-# 发布前的三道闸门：前两道在 `version` job，第三道在 `build` job。任一不过就出不去：
+# 发布前的四道闸门：前三道在 `version` job，第四道在 `build` job。任一不过就出不去：
 #   1. tag 必须正是 `v<pyproject.toml 里的版本>`；
 #   2. tag 指向的提交必须在 `main` 上 —— 合并进主分支才算数；
-#   3. 构建之后核对 `dist/` 里同时有带着该版本号的 sdist 与 wheel。
+#   3. `docs/CHANGELOG/<版本>.md` 必须存在 —— Release 正文与站点版本页都由它生成；
+#   4. 构建之后核对 `dist/` 里同时有带着该版本号的 sdist 与 wheel。
 #
 # 「先合并到 main、再在 main 的提交上打 tag」因此在 CI 里是**被强制的**，不只是约定；
 # 反过来，「在任意分支的提交上打个 tag」或「手动点一下」都发不出去。
+#
+# PyPI 发出去之后，末尾的 `release` job 用同一份变更页建 GitHub Release：
+# 正文 = `docs/CHANGELOG/<版本>.md`（相对链接已绝对化）+ GitHub 原生自动附录
+# （PR / 作者 / 新贡献者 / 完整对比，分类规则见 `.github/release.yml`）。
 #
 # ⚠️ 项目名（PyPI 发布名）是 `onconf`，但本工作流里**刻意不出现**它：
 #    pypa/gh-action-pypi-publish 走 trusted publishing（OIDC），
@@ -59,11 +64,12 @@ jobs:
   # 版本闸门：**版本号只有一个来源 —— `pyproject.toml` 的 `[project] version`**，
   # 改动一律走 `uv version`（它会把 pyproject.toml 与 uv.lock 一起改好）。
   #
-  # 这里做三件事：
+  # 这里做四件事：
   #   1. 打 tag 触发时，要求 tag 就是 `v<pyproject 里的版本>`。否则「tag 写 v0.2.0、
   #      包里还是 0.1.0」这种发布会被放出门，而 PyPI 上的版本号不可撤回；
   #   2. 打 tag 触发时，要求 tag 指向的提交**已经在 main 上**（合并进主分支才算数）；
-  #   3. 把版本号交给下游 job —— 构建与发布都用它，而不是各自去猜。
+  #   3. 打 tag 触发时，要求该版本的变更页存在 —— 没有变更记录的版本不发；
+  #   4. 把版本号交给下游 job —— 构建与发布都用它，而不是各自去猜。
   # --------------------------------------------------------------------------
   version:
     name: Resolve version from pyproject.toml
@@ -119,6 +125,21 @@ jobs:
         run: |
           if ! git merge-base --is-ancestor HEAD origin/main; then
             echo "::error::tag $TAG 指向的提交不在 main 上：先把改动合并进 main，再在 main 的提交上打标签。"
+            exit 1
+          fi
+
+      # 第三道闸门：发出去的版本必须有一页变更记录 —— Release 正文与站点版本页都由它生成。
+      # 没有它，「发了一个版本但没人知道改了什么」这种事只能靠事后补，补不回来。
+      # 只在 tag 触发时要求；workflow_dispatch（只构建）跳过。
+      - name: Changelog page must exist
+        if: github.event_name == 'push'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          page="docs/CHANGELOG/$VERSION.md"
+          if [ ! -f "$page" ]; then
+            echo "::error::$page 不存在：先把未发布页收成该版本页再打 tag。"
+            echo "::error::命令：uv run python scripts/release_notes.py finalize $VERSION"
             exit 1
           fi
 
@@ -211,8 +232,8 @@ jobs:
   publish:
     name: Publish to PyPI
     needs: [version, build]
-    # 唯一的发布入口是推 `v*` tag（届时 version job 的三道闸门都过了才会轮到这一步）。
-    # 手动触发一概跳过 —— 「勾一个框就能发版」那条路等于把三道闸门全绕过去，
+    # 唯一的发布入口是推 `v*` tag（届时 version job 的四道闸门都过了才会轮到这一步）。
+    # 手动触发一概跳过 —— 「勾一个框就能发版」那条路等于把四道闸门全绕过去，
     # 而 PyPI 上的版本号不可撤回。
     if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
@@ -243,3 +264,72 @@ jobs:
         with:
           # packages-dir 用 kebab-case（下划线形式在该版本已标记废弃）。
           packages-dir: dist/
+
+  # --------------------------------------------------------------------------
+  # 建 GitHub Release —— 只有 tag 推送会走到这里，且必须等 PyPI 发布成功
+  #
+  # 正文两段拼起来：
+  #   1. **人写的那一段** = `docs/CHANGELOG/<版本>.md`，由 scripts/release_notes.py
+  #      把页内相对链接换成仓库绝对链接（Release 正文不在仓库上下文里，相对链接解析不到）；
+  #   2. **机器写的那一段** = GitHub 原生自动附录（合并进来的 PR、作者、新贡献者、
+  #      完整对比），分类规则在 `.github/release.yml`，标签由 labeler 工作流打。
+  #
+  # 这一步失败不会把已经上传到 PyPI 的版本收回来 —— Release 可以事后重跑；
+  # 「有没有变更页」这一条已经由 version job 的闸门挡在前面了。
+  # --------------------------------------------------------------------------
+  release:
+    name: Create GitHub Release
+    needs: [version, publish]
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # 建 Release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.22"
+          enable-cache: false
+
+      # 人写的那一段：该版本的变更页，相对链接已绝对化。
+      - name: Build the release body from the changelog page
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          uv run python scripts/release_notes.py body "$VERSION" --output release-body.md
+          cat release-body.md >> "$GITHUB_STEP_SUMMARY"
+
+      # 机器写的那一段：谁修的、哪条 PR，不靠人抄。
+      - name: Append the generated notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$TAG" --jq .body > generated-notes.md
+          printf '\n---\n\n' >> release-body.md
+          cat generated-notes.md >> release-body.md
+
+      # --verify-tag：tag 不存在就直接失败，不建一个没有对应提交的 Release。
+      # 预发布版本（`2.1.0a1` 这种）标成 prerelease，不去抢 "Latest"。
+      - name: Create the Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          extra=()
+          if [[ "$VERSION" =~ [a-zA-Z] ]]; then
+            extra+=(--prerelease)
+          fi
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file release-body.md \
+            --verify-tag \
+            "${extra[@]}"

@@ -261,6 +261,7 @@ disallow_any_explicit = false
 module = [
     "test_log",
     "test_boot",
+    "test_check_links",
     "test_cli",
     "test_core",
     "test_engine",
@@ -268,6 +269,7 @@ module = [
     "test_json_backend",
     "test_paths",
     "test_python_support",
+    "test_release_notes",
     "test_security_invariants",
     "test_style",
     "test_toml_backend",
