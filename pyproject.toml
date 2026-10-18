@@ -69,7 +69,7 @@ Changelog = "https://github.com/HanYang06/OnConf/blob/main/docs/CHANGELOG/index.
 Security = "https://github.com/HanYang06/OnConf/security/policy"
 
 [build-system]
-requires = ["uv_build>=0.12.22,<0.13.0"]
+requires = ["uv_build>=0.12.22,<0.14.0"]
 build-backend = "uv_build"
 
 # ============================================================================
