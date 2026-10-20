@@ -577,8 +577,15 @@ class TestConsoleSink:
     def test_a_tty_gets_coloured_lines(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """TTY 上才走 rich 着色，而且行内容与纯文本那份一致。"""
+        """TTY 上才走 rich 着色，而且行内容与纯文本那份一致。
+
+        终端类型属于**环境**而不是被测行为：判定 TTY 是我们自己的 `_is_tty`，但 rich
+        还看 `TERM` —— `dumb` / `unknown` 会被它当成 dumb terminal，连粗体的 SGR 都不出。
+        所以这里把 `TERM` 固定成一种真的支持颜色的终端；本机 bash 常带 `TERM=dumb`，
+        不固定的话这条用例在本地红、在 CI 绿，而那说明的是用例不密封，不是着色坏了。
+        """
         monkeypatch.setattr(_log, "_is_tty", lambda _stream: True)
+        monkeypatch.setenv("TERM", "xterm-256color")
         engine = Engine(tmp_path)
         engine("k", 1)
 
