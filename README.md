@@ -19,7 +19,8 @@ changing one requires changing the other — plus `README.zh-CN.md`, `pyproject.
 `mkdocs.yml`'s `site_description` and `docs/index.md`.
 
 > [!IMPORTANT]
-> **`2.1.0` — the current release** (2026-10-09). The public API and the on-disk format follow
+> **The current release is whatever [PyPI](https://pypi.org/project/OnConf/) says** — this page
+> tracks `main`, not a version number. The public API and the on-disk format follow
 > [semantic versioning](https://semver.org/): from `1.0.0` on they change only in a **major**
 > release, and every change is recorded in the [changelog](docs/CHANGELOG/index.md).
 > **`1.0` and `2.0` were both breaking-change releases**: **follow 2.x from here on**;
