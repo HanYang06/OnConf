@@ -201,6 +201,6 @@ conf("PORT", 8080)   # TypeError：.env 只能存字符串；要存非字符串�
 | 事项 | 归属 |
 |---|---|
 | `.env` 的 `dict` / `list` 开关与编解码格式 | [路线图 2-038](../roadmap/2.x.md)（2.2.0） |
-| 命名空间形式 `file_names = []` | [路线图 2-041](../roadmap/2.x.md)（2.1.0） |
+| 命名空间形式 `file_names = []` | [路线图 2-041](../roadmap/2.x.md)（2.2.0） |
 | `format` 只覆盖 JSON | [路线图 2-044](../roadmap/2.x.md) |
-| 词表按格式导出（当前只产出一份 JSON Schema） | [路线图 2-039](../roadmap/2.x.md) |
+| 词表按格式导出（当前只产出一份 JSON Schema） | [路线图 2-039](../roadmap/2.x.md)（2.2.0） |

@@ -36,6 +36,13 @@ INDEX_SAMPLE = """# 变更日志
 - [2.1.0](2.1.0.md) —— 2026-10-09
 """
 
+MKDOCS_SAMPLE = """nav:
+  - 变更日志:
+      - 变更索引: CHANGELOG/index.md
+      - 未发布: CHANGELOG/unreleased.md
+      - 2.1.0（2026-10-09）: CHANGELOG/2.1.0.md
+"""
+
 
 def _changelog(tmp_path: Path) -> Path:
     """搭一棵最小的变更日志目录树。"""
@@ -48,6 +55,13 @@ def _changelog(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return directory
+
+
+def _mkdocs(tree: Path) -> Path:
+    """在最小树里放一份逐版列页的 nav（与仓库里那一份同样的缩进）。"""
+    config = tree / "mkdocs.yml"
+    config.write_text(MKDOCS_SAMPLE, encoding="utf-8")
+    return config
 
 
 def test_repository_unreleased_page_keeps_the_shape() -> None:
@@ -137,7 +151,52 @@ def test_finalize_moves_the_page_and_reopens_unreleased(tmp_path: Path) -> None:
     new_line = "- [2.2.0](2.2.0.md) —— 2026-11-01"
     assert index.index("- [未发布](unreleased.md)") < index.index(new_line)
     assert index.index(new_line) < index.index("- [2.1.0](2.1.0.md)")
-    assert len(actions) == 3
+    assert len(actions) == 4
+
+
+def test_finalize_inserts_the_version_into_mkdocs_nav(tmp_path: Path) -> None:
+    """收口要把版本页补进 nav：插在「未发布」之后，缩进与相邻行一致。"""
+    _changelog(tmp_path)
+    config = _mkdocs(tmp_path)
+    actions = notes.finalize(tmp_path, "2.2.0", "2026-11-01")
+
+    lines = config.read_text(encoding="utf-8").splitlines()
+    entry = "      - 2.2.0（2026-11-01）: CHANGELOG/2.2.0.md"
+    assert entry in lines
+    position = lines.index(entry)
+    assert lines[position - 1] == "      - 未发布: CHANGELOG/unreleased.md"
+    assert lines[position + 1] == "      - 2.1.0（2026-10-09）: CHANGELOG/2.1.0.md"
+    assert any("mkdocs.yml" in action for action in actions)
+
+
+def test_finalize_skips_mkdocs_when_the_config_is_absent(tmp_path: Path) -> None:
+    """最小树里没有 mkdocs.yml：跳过 nav，不因此失败。"""
+    _changelog(tmp_path)
+    actions = notes.finalize(tmp_path, "2.2.0", "2026-11-01")
+
+    assert not (tmp_path / "mkdocs.yml").exists()
+    assert len(actions) == 4
+    assert any("无需改动" in action for action in actions)
+
+
+def test_finalize_does_not_duplicate_an_existing_nav_line(tmp_path: Path) -> None:
+    """导航里已经有这一行时原样保留，不重复插。"""
+    _changelog(tmp_path)
+    config = _mkdocs(tmp_path)
+    entry = "      - 2.2.0（2026-11-01）: CHANGELOG/2.2.0.md"
+    config.write_text(
+        MKDOCS_SAMPLE.replace(
+            "      - 2.1.0（2026-10-09）: CHANGELOG/2.1.0.md\n",
+            f"      - 2.1.0（2026-10-09）: CHANGELOG/2.1.0.md\n{entry}\n",
+        ),
+        encoding="utf-8",
+    )
+
+    notes.finalize(tmp_path, "2.2.0", "2026-11-01")
+
+    text = config.read_text(encoding="utf-8")
+    assert text.count("CHANGELOG/2.2.0.md") == 1
+    assert text.count("      - 未发布: CHANGELOG/unreleased.md") == 1
 
 
 def test_finalize_refuses_an_existing_version_page(tmp_path: Path) -> None:
