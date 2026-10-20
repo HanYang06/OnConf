@@ -122,6 +122,7 @@ nav:
   - 变更日志:
       - 变更索引: CHANGELOG/index.md
       - 未发布: CHANGELOG/unreleased.md
+      - 2.1.1（2026-10-20）: CHANGELOG/2.1.1.md
       - 2.1.0（2026-10-09）: CHANGELOG/2.1.0.md
       - 2.0.0（2026-10-07）: CHANGELOG/2.0.0.md
       - 1.0.0（2026-10-04）: CHANGELOG/1.0.0.md
