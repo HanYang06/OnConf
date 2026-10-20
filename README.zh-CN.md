@@ -19,10 +19,10 @@
 与 `docs/index.md`。
 
 > [!IMPORTANT]
-> **`1.0.0` —— 首个稳定版**（2026-10-04）。公开 API 与磁盘格式从 1.0 起遵循
+> **`2.1.0` —— 当前版本**（2026-10-09）。公开 API 与磁盘格式从 `1.0.0` 起遵循
 > [语义化版本](https://semver.org/lang/zh-CN/)：只有**主版本号**变更时才做破坏性变更，
 > 每一次变更都记进[变更日志](docs/CHANGELOG/index.md)。
-> **`1.0` 与 `2.0` 都是破坏性变更版本**：**后续一律以 2.0 为准**；1.0 的形态见
+> **`1.0` 与 `2.0` 都是破坏性变更版本**：**后续一律以 2.x 为准**；1.0 的形态见
 > [路线图 1.0.x](docs/roadmap/1.0.x/roadmap.md)。
 > **定位句的两个半句现在都有机制支撑**：「不丢一个字节」由外科手术式回写保证；
 > 「不丢一次更新」由**写权限的角色**保证 —— 引擎不做跨进程协调，同一时刻只有一个写者
@@ -226,7 +226,7 @@ conf(build_key(), 8080)              # ❌
 | **日志就是审计** —— 一份记录流、两个出口。**文件**出口恒写（`log_path`，缺省 `<home>/audit.log`）：只追加、`0600`、紧凑 `key=value`、完整日期、**永不截断**。**控制台**出口（`stderr`）可以关（`log_console=False`）；TTY 上由 `rich` 着色——只在那个分支里惰性导入，所以强制路径与管道既不多付代价、也永远看不到 ANSI。级别是 `[Read]` / `[Write]` / `[Change]` / `[Error]` 外加 `[Start]`；写全量（含 `op=skip`「想改没改」与 `op=noop`「本批声明已满足」），读按事务去重（`n=1000`）；每条写记录带调用点（`at=app/config.py:12`）、pid 与可选 `identity=`。三个可选钩子——`log_rotate`（下一批写到哪个文件；**轮转只换落点，绝不 rename 文件**）、`log_scrub`（落盘前脱敏）、`log_encode`（最终落盘的字节）——默认全是「什么都不做」。见[日志](docs/design/log.md) | ✅ |
 | **运行期不删键** —— 只补缺、只补元数据；删除归 `onconf sync`（离线、单次、对着完整的声明集） | ✅ |
 | 测试 —— 每个模块一个测试文件，外加安全不变量 | ✅ 本地全绿；CI 在 ubuntu / windows / macos 上跑 |
-| **命令行（七条命令）** —— `onconf build` 按声明完整重建值文件与词表（`--path` 把整份重建写到新目录，原目录不动）；`onconf sync` 补缺并删除声明里没有的键（`--no-clean` 则一个键都不删）。声明靠**扫描项目里的 `conf(...)` 调用**、解读参数得到 —— 单函数 API 正是这件事的前提。两条命令都支持 `--dry-run`（一个字节都不写）与 `--json`；扫不动的调用会让 `sync` 拒绝删除任何键。`onconf check` 一个字节都不写地对比**三样** —— 代码里扫到的声明、词表、值文件 —— 按 `missing` / `stale` / `default` / `doc` / `unfilled` / `undeclared` 六类报；`--verbose` 补上每一处落在哪个文件，`--strict` 把 warning 也算作失败。`onconf get` 打出 `key` / `value` / `path` / `doc`（有几个文件存着这个键就打几行），`onconf set` 改已有键的值（`--default` 改词表里的默认值），`onconf diff` 列出审计日志里记下的变更，`onconf format --indent N` 重排 JSON 值文件的缩进。引导层（`home` / `file_name` / `file_type` / `no_one_file` / `log_path`）的缺省取**项目里 `AutoConf(...)` 说的话**：字面量静态读，算出来的 `home=config_root()` 交给一个一次性子进程求值，其余由引擎落的 `<home>/.onconf.json` 快照补齐 —— 可写命令跑完会按**代码说的**刷新它（显式参数不进表），每个命令都会回显取值的出处。人读输出**只在终端上**着色，且只给有语义的地方上色（`--color=auto|always|never`）；`--json` 与一切落盘字节不会见到 ANSI 序列 | ✅ `build` / `sync` / `check` / `get` / `set` / `diff` / `format`；`add` / `log` 尚未实现 |
+| **命令行（七条命令）** —— `onconf build` 按声明完整重建值文件与词表（`--path` 把整份重建写到新目录，原目录不动）；`onconf sync` 补缺并删除声明里没有的键（`--no-clean` 则一个键都不删）。声明靠**扫描项目里的 `conf(...)` 调用**、解读参数得到 —— 单函数 API 正是这件事的前提。两条命令都支持 `--dry-run`（一个字节都不写）与 `--json`；扫不动的调用会让 `sync` 拒绝删除任何键。`onconf check` 一个字节都不写地对比**三样** —— 代码里扫到的声明、词表、值文件 —— 按 `missing` / `stale` / `default` / `doc` / `unfilled` / `undeclared` 六类报；`--verbose` 补上每一处落在哪个文件，`--strict` 把 warning 也算作失败。`onconf get` 打出 `key` / `value` / `path` / `doc`（有几个文件存着这个键就打几行），`onconf set` 改已有键的值（`--default` 改词表里的默认值），`onconf diff` 列出审计日志里记下的变更，`onconf format --indent N` 重排 JSON 值文件的缩进。引导层（`home` / `file_name` / `file_type` / `no_one_file` / `log_path`）的缺省取**项目里 `AutoConf(...)` 说的话**：字面量静态读，算出来的 `home=config_root()` 交给一个一次性子进程求值，其余由引擎落的 `<home>/.onconf.json` 快照补齐 —— 可写命令跑完会按**代码说的**刷新它（显式参数不进表），每个命令都会回显取值的出处。人读输出**只在终端上**着色，且只给有语义的地方上色（`--color=auto\|always\|never`）；`--json` 与一切落盘字节不会见到 ANSI 序列 | ✅ `build` / `sync` / `check` / `get` / `set` / `diff` / `format`；`add` / `log` 尚未实现 |
 
 ## 路线图 —— 当前不可用
 
@@ -237,9 +237,9 @@ conf(build_key(), 8080)              # ❌
 | WAL（预写日志）—— **判定不做**：声明可从代码重新推导，而运行期只补缺、不改既存值，没有需要重放的东西 | 不计划 |
 | C 加速器（未来）—— 做成 **extra**，不另开包名：`pip install onconf[c]` | — |
 | 把系统环境变量当作配置**来源**（`ONCONF_HOME` 只用来定位配置目录） | — |
-| 按格式导出词表 | — |
+| 按格式导出词表 | 2.2（计划） |
 | `.env` 的 `dict` / `list` 值 —— 由 `env_file_dict` / `env_file_list` 两个布尔开关开启（默认都关）；标量仍是字符串 | 2.2（计划） |
-| 其余两条命令行 —— `add` / `log` | 2.1 |
+| 其余两条命令行 —— `add` / `log` | 2.2（计划） |
 | `read`（文件级原始读取）—— 后移：只有日志能按二进制落盘（`log_encode`）才需要它，否则没有原始字节要读回来 | — |
 | 命令行按 `pyproject.toml` / `.gitignore` 收敛扫描范围（现在是固定跳过名单 + 整个项目） | — |
 
@@ -305,14 +305,20 @@ CI 跑 **ubuntu / windows / macos × Python 3.11 / 3.12 / 3.13 / 3.14**，并强
 
 ## 命令行
 
-九条计划命令里已实现两条（`build` / `sync`）。它们靠**扫描项目里的 `conf(...)` 调用**
-找到声明 —— 单函数 API 正是这件事的前提 —— 而且**从不 import 你的代码**：
+已实现七条（`build` / `sync` / `check` / `get` / `set` / `diff` / `format`），
+`add` / `log` 尚未实现，`read` 后移。它们靠**扫描项目里的 `conf(...)` 调用**找到声明
+—— 单函数 API 正是这件事的前提 —— 而且**从不 import 你的代码**：
 
 ```console
 onconf build                # 按声明完整重建 <home>/settings.json 与词表
 onconf build --path ./out   # 整份重建写到别处；原目录一个字节不动
 onconf sync                 # 补缺，然后删掉声明里没有的键
 onconf sync --no-clean      # 只补缺，一个键都不删
+onconf check                # 只读体检：代码 / 词表 / 值文件三口径对比，一个字节都不写
+onconf get app.port         # 取值：key / value / path / doc 四列
+onconf set app.port 8080    # 改一个已有键的值
+onconf diff                 # 审计日志里记下的变更，一行一条
+onconf format --indent 2    # 重排 JSON 值文件的缩进
 ```
 
 `--home` / `--file-name` / `--file-type` / `--no-one-file` 与 `AutoConf` 的参数一一对应；
@@ -328,7 +334,9 @@ src/onconf/
   _engine.py         # 引擎装配、目录约定、落盘、属主闸门
   _paths.py          # 外部字符串 → 路径的唯一入口（包含性校验）
   _core.py           # 对账：补缺 / 补元数据，外加命令行专用的 undeclared
-  _cli.py            # onconf 入口：build / sync（声明靠 AST 扫描）
+  _cli.py            # onconf 入口：七条命令（声明靠 AST 扫描）
+  _boot.py           # 引导层发现：读代码、读快照，算不出来的进一次性子进程
+  _style.py          # 命令行人读输出的着色闸门
   _vocab.py          # 词表 + JSON Schema
   _textscan.py       # 各后端共用的字节级扫描
   _log.py            # 日志：一份记录流、两个出口、三个口子
@@ -343,7 +351,7 @@ docs/                # 文档站源码（中文）
   design/file_support.md  # 值文件选定、返回类型、后端、词表
   design/concurrency.md   # 谁能写、读看到什么、引擎明确不做的事
   design/log.md           # 日志与审计
-  design/cli.md           # 命令矩阵：九条命令的语义、退出码、写不写字节
+  design/cli.md           # 命令矩阵：每条命令的语义、退出码、写不写字节
 ```
 
 模块会随后端增加而变多，以 `src/onconf/` 本身为准。

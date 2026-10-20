@@ -19,16 +19,17 @@ changing one requires changing the other — plus `README.zh-CN.md`, `pyproject.
 `mkdocs.yml`'s `site_description` and `docs/index.md`.
 
 > [!IMPORTANT]
-> **`1.0.0` — the first stable release** (2026-10-04). The public API and the on-disk format now
-> follow [semantic versioning](https://semver.org/): from here on they change only in a **major**
+> **`2.1.0` — the current release** (2026-10-09). The public API and the on-disk format follow
+> [semantic versioning](https://semver.org/): from `1.0.0` on they change only in a **major**
 > release, and every change is recorded in the [changelog](docs/CHANGELOG/index.md).
-> **Both `1.0` and `2.0` are breaking-change releases**: **follow 2.0 from here on**;
+> **`1.0` and `2.0` were both breaking-change releases**: **follow 2.x from here on**;
 > the 1.0 shape lives in [the 1.0.x roadmap](docs/roadmap/1.0.x/roadmap.md).
 > **Both halves of the line above have mechanism behind them**: *without losing a byte* by
-> surgical write-back, and *without losing an update* by a **dedicated writer** — whichever process
-> first claims a config directory serves every other process over a local named pipe (Windows) or
-> Unix socket (POSIX), with a cross-process **OS** lock plus a re-read under that lock as the
-> fallback.
+> surgical write-back, and *without losing an update* by **who may write** — the engine does no
+> cross-process coordination, so one writer per config directory is a deployment duty: the process
+> that creates the engine instance is the **owner**, and anything derived from it via `fork` /
+> `spawn` is **read-only**; instances and threads inside one process share a purely **in-memory**
+> lock.
 > Writes are atomic too: same-directory temp file → `fsync` → `os.replace` (plus a parent-directory
 > `fsync` on POSIX), preserving the file's original line endings and permissions.
 > Read [Known limitations](#known-limitations) and the
@@ -249,7 +250,7 @@ whatever key was registered.
 | **Logging = audit** — one record stream, two sinks. The **file** sink is always on (`log_path`, default `<home>/audit.log`): append-only, `0600`, compact `key=value`, full dates, **never truncated**. The **console** sink (`stderr`) can be switched off (`log_console=False`) and, on a TTY, is coloured by `rich` — imported lazily in that branch only, so the mandatory path and pipes never pay for it and never see ANSI. Levels are `[Read]` / `[Write]` / `[Change]` / `[Error]` plus `[Start]`; writes are logged in full (including `op=skip` "wanted to change, respected the file" and `op=noop` "this batch's declaration was already satisfied"), reads are de-duplicated per transaction (`n=1000`); every write carries its call site (`at=app/config.py:12`), the pid and the optional `identity=`. Three optional hooks — `log_rotate` (which file the next batch goes to; **rotation changes the sink, it never renames a file**), `log_scrub` (redact a record before it lands) and `log_encode` (the final bytes on disk) — all default to *do nothing*. See the [log design](docs/design/log.md) | ✅ |
 | **No runtime cleanup** — the runtime only fills what is missing and updates vocabulary metadata; it never deletes a key. Deletion lives in `onconf sync` (offline, one shot, over a complete declaration set) | ✅ |
 | Test suite — one file per module plus security invariants | ✅ green locally; CI runs it on ubuntu / windows / macos |
-| **CLI (seven commands)** — `onconf build` rebuilds the value file(s) and the vocabulary from the declarations (`--path` writes the whole rebuild into a new directory instead); `onconf sync` fills what is missing and deletes keys the declarations do not know (`--no-clean` keeps them). Declarations are found by **scanning the project for `conf(...)` calls** and reading their arguments — the single-function API is what makes that possible. Both commands support `--dry-run` (writes nothing) and `--json`; `sync` refuses to delete anything when some call could not be read statically. `onconf check` compares **three** things without writing a single byte — the declarations found in code, the vocabulary and the value files — and reports `missing` / `stale` / `default` / `doc` / `unfilled` / `undeclared`; `--verbose` adds the file each finding lives in, `--strict` counts warnings as failures. `onconf get` prints `key` / `value` / `path` / `doc` for every file that holds the key, `onconf set` changes the value of an existing key (or the vocabulary default, with `--default`), `onconf diff` lists the changes recorded in the audit log, and `onconf format --indent N` re-indents JSON value files. The boot layer (`home` / `file_name` / `file_type` / `no_one_file` / `log_path`) defaults to **what the project's `AutoConf(...)` says**: literals are read statically, a computed `home=config_root()` is evaluated in a one-shot subprocess, and the engine's `<home>/.onconf.json` snapshot fills in the rest — write commands refresh that snapshot from the code (explicit flags never land in it), and every command reports where each value came from. Human-readable output is colourised **only on a terminal** and only where it carries meaning (`--color=auto|always|never`); `--json` and every byte written to disk never see an ANSI sequence | ✅ `build` / `sync` / `check` / `get` / `set` / `diff` / `format`; `add` / `log` are not implemented |
+| **CLI (seven commands)** — `onconf build` rebuilds the value file(s) and the vocabulary from the declarations (`--path` writes the whole rebuild into a new directory instead); `onconf sync` fills what is missing and deletes keys the declarations do not know (`--no-clean` keeps them). Declarations are found by **scanning the project for `conf(...)` calls** and reading their arguments — the single-function API is what makes that possible. Both commands support `--dry-run` (writes nothing) and `--json`; `sync` refuses to delete anything when some call could not be read statically. `onconf check` compares **three** things without writing a single byte — the declarations found in code, the vocabulary and the value files — and reports `missing` / `stale` / `default` / `doc` / `unfilled` / `undeclared`; `--verbose` adds the file each finding lives in, `--strict` counts warnings as failures. `onconf get` prints `key` / `value` / `path` / `doc` for every file that holds the key, `onconf set` changes the value of an existing key (or the vocabulary default, with `--default`), `onconf diff` lists the changes recorded in the audit log, and `onconf format --indent N` re-indents JSON value files. The boot layer (`home` / `file_name` / `file_type` / `no_one_file` / `log_path`) defaults to **what the project's `AutoConf(...)` says**: literals are read statically, a computed `home=config_root()` is evaluated in a one-shot subprocess, and the engine's `<home>/.onconf.json` snapshot fills in the rest — write commands refresh that snapshot from the code (explicit flags never land in it), and every command reports where each value came from. Human-readable output is colourised **only on a terminal** and only where it carries meaning (`--color=auto\|always\|never`); `--json` and every byte written to disk never see an ANSI sequence | ✅ `build` / `sync` / `check` / `get` / `set` / `diff` / `format`; `add` / `log` are not implemented |
 
 ## Roadmap — not available yet
 
@@ -260,9 +261,9 @@ Do not plan around these; they are **not implemented**:
 | WAL (write-ahead log) — judged **unnecessary**: declarations are re-derivable from code, and the runtime only ever fills missing keys, so there is nothing to replay | not planned |
 | C accelerator (future) — an **extra**, not a separate distribution: `pip install onconf[c]` | — |
 | System environment variables as a configuration **source** (`ONCONF_HOME` only locates the config dir) | — |
-| Per-format vocabulary export | — |
+| Per-format vocabulary export | 2.2 (planned) |
 | `.env` `dict` / `list` values — behind the `env_file_dict` / `env_file_list` booleans (both default off); scalars stay strings | 2.2 (planned) |
-| The other two CLI commands — `add` / `log` | 2.1 |
+| The other two CLI commands — `add` / `log` | 2.2 (planned) |
 | `read` (file-level raw read) — deferred: it is only needed if the log can land as binary (`log_encode`); otherwise there is no raw byte to read back | — |
 | `.pyproject.toml` / `.gitignore`-aware scan scope for the CLI (today it walks the project with a fixed skip list) | — |
 
@@ -334,15 +335,21 @@ Full analysis, per threat with code evidence: [`docs/security/threat-model.md`](
 
 ## The command line
 
-Two of the nine planned commands are implemented (`build`, `sync`). Both find your
-declarations by **scanning the project for `conf(...)` calls** — the single-function API is
-what makes that possible — and neither one imports your code:
+Seven commands are implemented — `build` / `sync` / `check` / `get` / `set` / `diff` /
+`format`; `add` / `log` are not, and `read` is deferred. They find your declarations by
+**scanning the project for `conf(...)` calls** — the single-function API is what makes that
+possible — and none of them imports your code:
 
 ```console
 onconf build                # rebuild <home>/settings.json + the vocabulary from the declarations
 onconf build --path ./out   # write the whole rebuild elsewhere; the original is untouched
 onconf sync                 # fill what is missing, then delete keys the declarations do not know
 onconf sync --no-clean      # fill only — delete nothing
+onconf check                # read-only: code vs vocabulary vs value files, not one byte written
+onconf get app.port         # one key: key / value / path / doc
+onconf set app.port 8080    # change the value of an existing key
+onconf diff                 # every change recorded in the audit log
+onconf format --indent 2    # re-indent JSON value files
 ```
 
 `--home` / `--file-name` / `--file-type` / `--no-one-file` mirror the `AutoConf` parameters,
@@ -358,7 +365,9 @@ src/onconf/
   _engine.py         # engine assembly, directory conventions, write-back, the owner gate
   _paths.py          # the one entry point from external strings to paths (containment check)
   _core.py           # reconciliation: fill / metadata, plus `undeclared` for the CLI
-  _cli.py            # the `onconf` entry point: build / sync (declarations by AST scan)
+  _cli.py            # the `onconf` entry point: seven commands (declarations by AST scan)
+  _boot.py           # boot-layer discovery: read the code, read the snapshot, evaluate the rest
+  _style.py          # the colour gate for human-readable CLI output
   _vocab.py          # vocabulary + JSON Schema
   _textscan.py       # shared byte-level scanning used by the backends
   _log.py            # the log: one record stream, two sinks, three hooks

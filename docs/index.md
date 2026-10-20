@@ -8,10 +8,10 @@
 > `README.md`、`README.zh-CN.md`、`pyproject.toml` 的 `description`
 > 与本文件的 `site_description`。
 
-**已发布到 PyPI**，发布名 [`OnConf`](https://pypi.org/project/OnConf/)。当前版本 `1.0.0`，
-首个稳定版：公开 API 与磁盘格式从 1.0 起遵循语义化版本，只在**主版本号**变更时才做
-破坏性变更；命令行已交付头七条（`build` / `sync` / `check` / `get` / `set` / `diff` / `format`），
-其余两条尚未实现
+**已发布到 PyPI**，发布名 [`OnConf`](https://pypi.org/project/OnConf/)。当前版本 `2.1.0`：
+公开 API 与磁盘格式从 `1.0.0` 起遵循语义化版本，只在**主版本号**变更时才做破坏性变更；
+命令行已交付七条（`build` / `sync` / `check` / `get` / `set` / `diff` / `format`），
+`add` / `log` 尚未实现
 （以[路线图](roadmap/README.md)为准）。
 
 定位句的两个半句现在**都有机制支撑**：「不丢一个字节」由外科手术式回写保证；
@@ -23,11 +23,11 @@
 
 ## 当前状态
 
-下表是 2026-10-04 的工作区快照，不是承诺。
+下表是当前的工作区快照，不是承诺。
 
 | 项 | 现状 |
 |---|---|
-| 版本 | `1.0.0`（2026-10-04 发布，PyPI 上是 [`OnConf`](https://pypi.org/project/OnConf/)） |
+| 版本 | `2.1.0`（2026-10-09 发布，PyPI 上是 [`OnConf`](https://pypi.org/project/OnConf/)） |
 | 开发状态 | 稳定（classifier `Development Status :: 5 - Production/Stable`） |
 | 公开 API | `AutoConf` / `conf` 两个面，`__all__` 共 8 个符号 |
 | 值后端 | JSON（缺省）、YAML、TOML、`.env`（字符串后端）；多文件由 `no_one_file` 开启 |
@@ -53,7 +53,8 @@
   说的话 —— 字面量静态读，算出来的交给一个一次性子进程求值，其余由引擎落的
   `<home>/.onconf.json` 快照补齐，每个命令回显出处。
   人读输出**只在终端上**着色、且只给语义上色（`--color=auto|always|never`），`--json`
-  与一切落盘字节不会见到 ANSI。其余两条（`add` / `log`）尚未实现（`read` 后移，见路线图 2-073）。
+  与一切落盘字节不会见到 ANSI。`add` / `log` 尚未实现（路线图 2-045，2.2.0），
+  `read` 后移（路线图 2-073）。
 - **用值当键**：支持 `conf(conf("app.key_name"))` 这类间接寻址。
 - **`$schema` 指针**：每次落盘都保证值文件里有指向词表的指针（**能吃下成员的后端**才写；
   `.env` 与 TOML 放不下成员，跳过）。
