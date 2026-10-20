@@ -12,8 +12,8 @@
 
 ``finalize``
     把 ``docs/CHANGELOG/unreleased.md`` 收成 ``docs/CHANGELOG/<版本>.md``（标题补日期、
-    对比链接换成该版本），给索引页补一行，再重新开一张未发布页。三件事一次做完，
-    省掉手工搬运带来的笔误。
+    对比链接换成该版本），给索引页补一行，把该页插进 ``mkdocs.yml`` 的「变更日志」导航，
+    再重新开一张未发布页。四件事一次做完，省掉手工搬运带来的笔误。
 """
 
 from __future__ import annotations
@@ -31,10 +31,15 @@ if TYPE_CHECKING:
 
 REPO_URL = "https://github.com/HanYang06/OnConf"
 SITE_URL = "https://hanyang06.github.io/OnConf"
-CHANGELOG_DIR = Path("docs") / "CHANGELOG"
+# 站点里的路径对 docs_dir 而言，不带 docs/ 前缀；仓库路径则带。两处同源，避免发版时
+# 往 nav 里写一个 mkdocs build --strict 解析不到的目标。
+CHANGELOG_NAV_DIR = Path("CHANGELOG")
+CHANGELOG_DIR = Path("docs") / CHANGELOG_NAV_DIR
 INDEX_NAME = "index.md"
 UNRELEASED_NAME = "unreleased.md"
 INDEX_UNRELEASED_LINE = "- [未发布](unreleased.md)"
+MKDOCS_NAME = "mkdocs.yml"
+NAV_UNRELEASED_LINE = "- 未发布: CHANGELOG/unreleased.md"
 
 # 未发布页的模板。仓库里的 docs/CHANGELOG/unreleased.md 必须与它一致 —— 由
 # tests/test_release_notes.py 钉住，免得模板漂移之后发版才发现。
@@ -165,8 +170,39 @@ def _insert_index_line(index: Path, line: str) -> None:
     index.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
+def _sync_nav(root: Path, entry: str) -> bool:
+    """把该版本页那一行插进 ``mkdocs.yml`` 的「未发布」之后。
+
+    ``mkdocs.yml`` 是逐版列页的导航，且 ``strict: true``：少一行，docs job 的
+    ``mkdocs build --strict`` 就会因为「页面不在导航里」而失败。这里只做文本插入，
+    不解析、不重排整个文件 —— 它带着 ``!!python/name`` 标签与成段的注释。
+
+    Args:
+        root: 仓库根目录。
+        entry: 要插入的导航行（不含缩进）。
+
+    Returns:
+        插进去了返回 True；配置文件不存在、找不到「未发布」那一行、
+        或该行已经存在时返回 False（重复收口不重复插）。
+    """
+    config = root / MKDOCS_NAME
+    if not config.is_file():
+        return False
+    lines = config.read_text(encoding="utf-8").splitlines()
+    if any(line.strip() == entry for line in lines):
+        return False
+    for position, line in enumerate(lines):
+        if line.strip() != NAV_UNRELEASED_LINE:
+            continue
+        indent = line[: len(line) - len(line.lstrip())]
+        lines.insert(position + 1, indent + entry)
+        config.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+        return True
+    return False
+
+
 def finalize(root: Path, version: str, date: str | None = None) -> list[str]:
-    """把未发布页收成该版本页，重置未发布页，并给索引补一行。
+    """把未发布页收成该版本页，重置未发布页，给索引与 mkdocs 导航各补一行。
 
     Args:
         root: 仓库根目录。
@@ -206,11 +242,17 @@ def finalize(root: Path, version: str, date: str | None = None) -> list[str]:
     line = f"- [{version}]({version}.md) —— {stamp}"
     _insert_index_line(directory / INDEX_NAME, line)
 
-    return [
+    actions = [
         f"新建 {target.relative_to(root).as_posix()}（对比基准 v{previous}）",
         f"重置 {unreleased.relative_to(root).as_posix()}",
         f"索引补一行：{line}",
     ]
+    nav_line = f"- {version}（{stamp}）: {CHANGELOG_NAV_DIR.as_posix()}/{version}.md"
+    if _sync_nav(root, nav_line):
+        actions.append(f"{MKDOCS_NAME} 导航补一行：{nav_line}")
+    else:
+        actions.append(f"{MKDOCS_NAME} 导航无需改动（文件缺失或该行已存在）")
+    return actions
 
 
 def main(argv: Sequence[str] | None = None) -> int:

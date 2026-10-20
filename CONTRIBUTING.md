@@ -221,8 +221,8 @@ uv version --output-format json    # 给脚本读：{package_name, version, comm
 
 ```bash
 uv version --bump minor                                # 1) 改版本（pyproject + uv.lock）
-uv run python scripts/release_notes.py finalize 0.2.0  # 2) 未发布页收成该版本页（补日期）
-git add pyproject.toml uv.lock docs/CHANGELOG           # 3) 三处进同一个提交
+uv run python scripts/release_notes.py finalize 0.2.0  # 2) 收口：版本页 + 索引 + mkdocs nav
+git add pyproject.toml uv.lock docs/CHANGELOG mkdocs.yml  # 3) 全部进同一个提交
 git commit -m "chore(release): 0.2.0"
 git tag -a v0.2.0 -m "0.2.0"                           # 4) tag 必须等于 uv version --short
 git push origin main --follow-tags                     # 5) 推 tag 触发 release.yml
@@ -246,8 +246,10 @@ git push origin main --follow-tags                     # 5) 推 tag 触发 relea
 「只允许 `main` 部署」的分支保护规则当第二道锁。
 
 发版时把 `docs/CHANGELOG/unreleased.md` 收成 `docs/CHANGELOG/<版本>.md`（标题补
-`- YYYY-MM-DD`）、在 `docs/CHANGELOG/index.md` 的索引里补一行，再重新开一张未发布页 ——
-`uv run python scripts/release_notes.py finalize <版本>` 一次做完这三件事。
+`- YYYY-MM-DD`）、在 `docs/CHANGELOG/index.md` 的索引里补一行、更新 `mkdocs.yml` 里
+「变更日志」的导航，再重新开一张未发布页 —— `uv run python scripts/release_notes.py
+finalize <版本>` 一次做完这四件事（`mkdocs.yml` 的 nav 由它自动插入，仍需 review 确认
+插在「未发布」之后、缩进与相邻行一致；`strict: true` 下漏一行 docs job 就会红）。
 
 **PyPI 发出去之后，GitHub Release 由 `release.yml` 的 `release` job 自动创建**（同样只在
 tag 推送时跑，`contents: write`）：正文 = 该版本的变更页（相对链接已被脚本转成绝对链接），
