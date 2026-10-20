@@ -45,11 +45,6 @@ NAV_UNRELEASED_LINE = "- 未发布: CHANGELOG/unreleased.md"
 # tests/test_release_notes.py 钉住，免得模板漂移之后发版才发现。
 UNRELEASED_TEMPLATE = """## [Unreleased]
 
-下一版的条目写在这里：人维护，一个 `fix:` / `feat:` 一行。发版时整页收成
-`docs/CHANGELOG/<版本>.md`（标题补日期），本页重新开一张 —— 一条命令做完：
-`uv run python scripts/release_notes.py finalize <版本>`。口径见
-[变更日志的维护口径](../community/changelog.md)。
-
 ### Added
 
 ### Changed
@@ -57,6 +52,15 @@ UNRELEASED_TEMPLATE = """## [Unreleased]
 ### Fixed
 
 [Unreleased]: {repo}/compare/v{previous}...HEAD
+"""
+
+# 写给人看的使用说明：只留在**未发布页**上，发版收口时整段剥掉。
+# 已发布的版本页是发布说明的正文，读者不需要知道本仓库怎么发版。
+UNRELEASED_PREAMBLE = """下一版的条目写在这里：人维护，一个 `fix:` / `feat:` 一行。发版时整页收成
+`docs/CHANGELOG/<版本>.md`（标题补日期），本页重新开一张 —— 一条命令做完：
+`uv run python scripts/release_notes.py finalize <版本>`。口径见
+[变更日志的维护口径](../community/changelog.md)。
+
 """
 
 _INLINE_LINK_RE = re.compile(r"\]\(([^)\s]+)(\s+\"[^\"]*\")?\)")
@@ -129,8 +133,16 @@ def with_absolute_links(text: str, source: Path, root: Path) -> str:
 
 
 def unreleased_text(previous: str) -> str:
-    """返回未发布页应有的全文；``previous`` 是刚发出去的那个版本。"""
-    return UNRELEASED_TEMPLATE.format(repo=REPO_URL, previous=previous)
+    """返回未发布页应有的全文；``previous`` 是刚发出去的那个版本。
+
+    未发布页 = 使用说明 + 模板骨架。说明**只在未发布页上**：发版收口时整段剥掉，
+    所以已发布的版本页里不会出现「本页怎么发版」这种给维护者看的话。
+    """
+    return (
+        UNRELEASED_TEMPLATE.format(repo=REPO_URL, previous=previous).replace(
+            "## [Unreleased]\n\n", "## [Unreleased]\n\n" + UNRELEASED_PREAMBLE, 1
+        )
+    )
 
 
 def build_body(root: Path, version: str) -> str:
@@ -230,6 +242,7 @@ def finalize(root: Path, version: str, date: str | None = None) -> list[str]:
     stamp = date or datetime.now(UTC).astimezone().date().isoformat()
 
     text = unreleased.read_text(encoding="utf-8")
+    text = text.replace(UNRELEASED_PREAMBLE, "", 1)
     text = text.replace("## [Unreleased]", f"## [{version}] - {stamp}", 1)
     old_url = f"[Unreleased]: {REPO_URL}/compare/v{previous}...HEAD"
     if old_url not in text:
