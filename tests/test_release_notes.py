@@ -142,6 +142,8 @@ def test_finalize_moves_the_page_and_reopens_unreleased(tmp_path: Path) -> None:
 
     released = (directory / "2.2.0.md").read_text(encoding="utf-8")
     assert released.startswith("## [2.2.0] - 2026-11-01")
+    assert notes.UNRELEASED_PREAMBLE not in released, "已发布的版本页不该带维护者说明"
+    assert "### Added" in released
     assert f"[2.2.0]: {notes.REPO_URL}/compare/v2.1.0...v2.2.0" in released
     assert (directory / "unreleased.md").read_text(encoding="utf-8") == notes.unreleased_text(
         "2.2.0",
