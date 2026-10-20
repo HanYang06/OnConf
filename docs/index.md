@@ -8,8 +8,9 @@
 > `README.md`、`README.zh-CN.md`、`pyproject.toml` 的 `description`
 > 与本文件的 `site_description`。
 
-**已发布到 PyPI**，发布名 [`OnConf`](https://pypi.org/project/OnConf/)。当前版本 `2.1.0`：
-公开 API 与磁盘格式从 `1.0.0` 起遵循语义化版本，只在**主版本号**变更时才做破坏性变更；
+**已发布到 PyPI**，发布名 [`OnConf`](https://pypi.org/project/OnConf/) —— **当前版本以那里为准**，
+本页跟的是 `main`，不钉版本号。公开 API 与磁盘格式从 `1.0.0` 起遵循语义化版本，
+只在**主版本号**变更时才做破坏性变更；
 命令行已交付七条（`build` / `sync` / `check` / `get` / `set` / `diff` / `format`），
 `add` / `log` 尚未实现
 （以[路线图](roadmap/README.md)为准）。
@@ -27,7 +28,7 @@
 
 | 项 | 现状 |
 |---|---|
-| 版本 | `2.1.0`（2026-10-09 发布，PyPI 上是 [`OnConf`](https://pypi.org/project/OnConf/)） |
+| 版本 | 以 PyPI 上的 [`OnConf`](https://pypi.org/project/OnConf/) 为准；本页描述的是 `main` 的状态 |
 | 开发状态 | 稳定（classifier `Development Status :: 5 - Production/Stable`） |
 | 公开 API | `AutoConf` / `conf` 两个面，`__all__` 共 8 个符号 |
 | 值后端 | JSON（缺省）、YAML、TOML、`.env`（字符串后端）；多文件由 `no_one_file` 开启 |
