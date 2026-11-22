@@ -33,7 +33,7 @@ jobs:
       # fail-on-severity: moderate —— 低危噪声不阻断，中危及以上直接失败。
       # comment-summary-in-pr: on-failure —— 只在拦截时评论，避免每个 PR 都刷一条。
       - name: Dependency review
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
         with:
           fail-on-severity: moderate
           comment-summary-in-pr: on-failure
